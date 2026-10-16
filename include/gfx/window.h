@@ -14,7 +14,7 @@ struct window;
 #define GFX_MAX_WINDOW_NAME_SIZE 20
 #define GFX_WINDOW_BG_COLOR COLOR_BOX_GRAY_DEFAULT
 #define GFX_WINDOW_TITLE_HEIGHT 12
-/* The title bar is drawn this many pixels above window->y */
+/* The title bar and borders are drawn this many pixels above window->y */
 #define GFX_WINDOW_HEADER_OVERHANG 4
 #define GFX_MAX_EVENTS 10
 

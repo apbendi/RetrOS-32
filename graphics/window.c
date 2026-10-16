@@ -75,14 +75,15 @@ void gfx_draw_window(uint8_t* buffer, struct window* window)
         vesa_striped_line_horizontal(buffer, window->x, window->y, window->width, COLOR_VGA_DARKEST_GRAY, 2);
         vesa_striped_line_horizontal(buffer, window->x+2, window->y, window->width-2, COLOR_VGA_LIGHTEST_GRAY, 4);
         
-        vesa_striped_line_horizontal(buffer, window->x, window->y+window->height, window->width, COLOR_VGA_DARKEST_GRAY, 2);
-        vesa_striped_line_horizontal(buffer, window->x+2, window->y+window->height, window->width-2, COLOR_VGA_LIGHTEST_GRAY, 4);
+        /* Bottom and right edges go on the window's last row and column, not past them, so they stay on screen */
+        vesa_striped_line_horizontal(buffer, window->x, window->y+window->height-1, window->width, COLOR_VGA_DARKEST_GRAY, 2);
+        vesa_striped_line_horizontal(buffer, window->x+2, window->y+window->height-1, window->width-2, COLOR_VGA_LIGHTEST_GRAY, 4);
 
         vesa_striped_line_vertical(buffer, window->x, window->y, window->height, COLOR_VGA_DARKEST_GRAY, 2);
         vesa_striped_line_vertical(buffer, window->x, window->y+2, window->height-2, COLOR_VGA_LIGHTEST_GRAY, 4);
 
-        vesa_striped_line_vertical(buffer, window->x+window->width, window->y, window->height, COLOR_VGA_DARKEST_GRAY, 2);
-        vesa_striped_line_vertical(buffer, window->x+window->width, window->y+2, window->height-2, COLOR_VGA_LIGHTEST_GRAY, 4);
+        vesa_striped_line_vertical(buffer, window->x+window->width-1, window->y, window->height, COLOR_VGA_DARKEST_GRAY, 2);
+        vesa_striped_line_vertical(buffer, window->x+window->width-1, window->y+2, window->height-2, COLOR_VGA_LIGHTEST_GRAY, 4);
 
         window->changed = 0;
         return;
@@ -307,10 +308,14 @@ static void gfx_default_hover(struct window* window, int x, int y)
 {
     if(window->is_moving.state == GFX_WINDOW_MOVING && !HAS_FLAG(window->flags, GFX_IS_IMMUATABLE)){
 
+        /**
+         * Keep everything the window draws on screen, including the frame above window->y.
+         * Drawing isn't clipped, so anything off screen would land outside the screen buffer.
+         */
         if(window->x - (window->is_moving.x - x) < 0 || window->x - (window->is_moving.x - x) + window->width > vbe_info->width)
             return;
-        
-        if(window->y - (window->is_moving.y - y) < 0 || window->y - (window->is_moving.y - y) + window->height > vbe_info->height)
+
+        if(window->y - (window->is_moving.y - y) < GFX_WINDOW_HEADER_OVERHANG || window->y - (window->is_moving.y - y) + window->height > vbe_info->height)
             return;
 
         window->x -= window->is_moving.x - x;
@@ -388,7 +393,8 @@ static int gfx_window_maximize(struct window* window)
 {
     ERR_ON_NULL(window);
 
-    gfx_window_resize(window, vbe_info->width-16, vbe_info->height-40);
+    /* Placed at y 26, a window this tall ends exactly at the bottom of the screen */
+    gfx_window_resize(window, vbe_info->width-16, vbe_info->height-42);
 
     window->ops->move(window, 0, 26);
 
