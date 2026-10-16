@@ -343,8 +343,8 @@ static int ws_draw(struct windowserver* ws)
     LEAVE_CRITICAL();
 
     if(mouse_changed){
-        /* internal mouse event for windows */
-        ws->_wm->ops->mouse_event(ws->_wm, ws->m.x, ws->m.y, ws->m.flags);
+        /* internal mouse event for windows, at the cursor's arrow tip */
+        ws->_wm->ops->mouse_event(ws->_wm, ws->m.x+VESA_CURSOR_HOTSPOT_X, ws->m.y+VESA_CURSOR_HOTSPOT_Y, ws->m.flags);
     }
     //vesa_put_icon16((uint8_t*)vbe_info->framebuffer, ws->m.x, ws->m.y);
 

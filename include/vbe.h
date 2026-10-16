@@ -113,4 +113,8 @@ void vesa_init();
 void vesa_put_icon16(uint8_t* buffer, int x, int y);
 void vesa_put_icon32(uint8_t* buffer, int x, int y);
 
+/* Position of the arrow's tip within the 16x16 cursor icon, where clicks land */
+#define VESA_CURSOR_HOTSPOT_X 1
+#define VESA_CURSOR_HOTSPOT_Y 2
+
 #endif /* VBE_H */

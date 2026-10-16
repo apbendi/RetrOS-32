@@ -329,7 +329,7 @@ static void gfx_default_hover(struct window* window, int x, int y)
 
 static void gfx_default_mouse_down(struct window* window, int x, int y)
 {
-    if(gfx_point_in_rectangle(window->x, window->y-2, window->x+window->width-60, window->y+10, x, y)){
+    if(gfx_point_in_rectangle(window->x, window->y-GFX_WINDOW_HEADER_OVERHANG, window->x+window->width-60, window->y+10, x, y)){
         window->is_moving.state = GFX_WINDOW_MOVING;
         window->is_moving.x = x;
         window->is_moving.y = y;
@@ -343,7 +343,7 @@ static void gfx_default_mouse_down(struct window* window, int x, int y)
 
 static void gfx_default_mouse_up(struct window* window, int x, int y)
 {
-    if(gfx_point_in_rectangle(window->x, window->y-2, window->x+window->width, window->y+10, x, y)){
+    if(gfx_point_in_rectangle(window->x, window->y-GFX_WINDOW_HEADER_OVERHANG, window->x+window->width, window->y+10, x, y)){
         window->is_moving.state = GFX_WINDOW_STATIC;
         window->is_moving.x = x;
         window->is_moving.y = y;
