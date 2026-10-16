@@ -34,8 +34,14 @@ int gfx_push_event(struct window* w, struct gfx_event* e)
 	ERR_ON_NULL(w);
 
 	SPINLOCK(w,  {
+		int next_head = (w->events.head + 1) % GFX_MAX_EVENTS;
+		/* When full, drop the oldest event. Letting head catch up to tail would make the queue look empty. */
+		if(next_head == w->events.tail){
+			w->events.tail = (w->events.tail + 1) % GFX_MAX_EVENTS;
+		}
+
 		memcpy(&w->events.list[w->events.head], e, sizeof(*e));
-		w->events.head = (w->events.head + 1) % GFX_MAX_EVENTS;
+		w->events.head = next_head;
 	});
 
 	/* TODO: Check for a block reason */
