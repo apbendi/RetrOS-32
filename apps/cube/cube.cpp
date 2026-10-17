@@ -4,9 +4,9 @@
  * @brief A simple cube demo
  * @version 0.1
  * @date 2024-01-10
- * 
+ *
  * @copyright Copyright (c) 2024
- * 
+ *
  */
 
 #include <utils/Graphics.hpp>
@@ -16,8 +16,13 @@
 extern float sin_60[60];
 extern float cos_60[60];
 
-int angle = 0;
+#define BACKGROUND_COLOR COLOR_VGA_LIGHTEST_GRAY
+#define EDGE_COLOR COLOR_VGA_DARKEST_GRAY
+#define FRAME_DELAY_MS 50
 
+/* The libc tables are offset by 90 degrees: cos_60[i] is sin(6i degrees), and sin_60[i] is -cos(6i degrees) */
+static float sinStep(int step) { return cos_60[step % 60]; }
+static float cosStep(int step) { return -sin_60[step % 60]; }
 
 struct Point3D {
     float x, y, z;
@@ -29,50 +34,50 @@ struct Point2D {
 
 class CubeDemo : public Window {
 public:
-    CubeDemo(int width, int height) : Window(200, 200, "Cube", 1) {
-        this->angle = 0;
+    CubeDemo(int width, int height) : Window(width, height, "Cube", 1) {
         this->width = width;
         this->height = height;
     }
 
     void drawCube() {
-        gfx_draw_rectangle(0, 0, width, height, COLOR_VGA_LIGHTEST_GRAY);
-        for (int i = 0; i < 12; i++) {
-            Point2D p1 = project(cube[edges[i][0]]);
-            Point2D p2 = project(cube[edges[i][1]]);
-            gfx_draw_line(p1.y, p1.x, p2.y, p2.x, COLOR_VGA_DARKEST_GRAY);
+        if (needsClear) {
+            /* First frame, or the window was resized and still holds its old content */
+            gfx_draw_rectangle(0, 0, width, height, BACKGROUND_COLOR);
+            needsClear = false;
+        } else {
+            /* Erase the last frame's edges, which is much cheaper than clearing the whole window */
+            drawEdges(previous, BACKGROUND_COLOR);
+        }
+
+        Point2D current[8];
+        for (int i = 0; i < 8; i++) {
+            current[i] = project(rotate(vertices[i]));
+        }
+        drawEdges(current, EDGE_COLOR);
+
+        for (int i = 0; i < 8; i++) {
+            previous[i] = current[i];
         }
     }
 
+    /* Advance the rotation by one 6 degree step */
     void rotateCube() {
-        /* Currently we only have 60 precalculated sin / cos values. */
-        angle = (angle + 1) % 60;
-        float sinValue = sin_60[angle];
-        float cosValue = cos_60[angle];
-        
-        for (int i = 0; i < 8; i++) {
-            // rotation around the y-axis
-            float newX = cube[i].x * cosValue - cube[i].z * sinValue;
-            float newZ = cube[i].x * sinValue + cube[i].z * cosValue;
-            
-            // rotation around the z-axis
-            float newY = newX * cosValue - cube[i].y * sinValue;
-            newX = newX * sinValue + cube[i].y * cosValue;
-
-            cube[i].x = newX;
-            cube[i].y = newY;
-            cube[i].z = newZ;
-        }
+        step = (step + 1) % 60;
     }
 
     void setSize(int width, int height) {
         this->width = width;
         this->height = height;
+        needsClear = true;
     }
 
 private:
-    int angle;
-    Point3D cube[8] = {
+    int step = 0;
+    int width, height;
+    bool needsClear = true;
+    Point2D previous[8];
+
+    const Point3D vertices[8] = {
         {-1, -1, -1},
         {1, -1, -1},
         {1, 1, -1},
@@ -83,7 +88,7 @@ private:
         {-1, 1, 1},
     };
 
-    int edges[12][2] = {
+    const int edges[12][2] = {
         /* Back face */
         {0, 1}, {1, 2}, {2, 3}, {3, 0},
         /* Front face */
@@ -92,11 +97,32 @@ private:
         {0, 4}, {1, 5}, {2, 6}, {3, 7}
     };
 
-    int width, height;
+    /* Rotate an original vertex around the y-axis, then the x-axis, by the current step */
+    Point3D rotate(Point3D point) {
+        float s = sinStep(step);
+        float c = cosStep(step);
 
-    /* Project 3D cube to 2D */
+        float x = point.x * c + point.z * s;
+        float z = point.z * c - point.x * s;
+
+        float y = point.y * c - z * s;
+        z = point.y * s + z * c;
+
+        return {x, y, z};
+    }
+
+    /* Project 3D cube to 2D, centered, and small enough that a corner (sqrt(3) from the center) stays inside */
     Point2D project(Point3D point) {
-        return {(int)(point.x * (width/4) + height/2), (int)(point.y * (width/4) + height/2)};
+        int scale = (width < height ? width : height) / 4;
+        return {(int)(point.x * scale) + width / 2, (int)(point.y * scale) + height / 2};
+    }
+
+    void drawEdges(const Point2D* points, unsigned char color) {
+        for (int i = 0; i < 12; i++) {
+            const Point2D& a = points[edges[i][0]];
+            const Point2D& b = points[edges[i][1]];
+            gfx_draw_line(a.x, a.y, b.x, b.y, color);
+        }
     }
 
 };
@@ -110,22 +136,24 @@ int main()
     demo.setHeader("3D");
 
     while (1){
-        demo.rotateCube();
-        demo.drawCube();
-        sleep(200);
-
-        gfx_get_event(&e, GFX_EVENT_NONBLOCKING);
-        switch (e.event)
-        {
-        case GFX_EVENT_RESOLUTION:
-            demo.setSize(e.data, e.data2);
-            break;
-        case GFX_EVENT_EXIT:
-            return 0;
+        /* Handle every pending event each frame. Of several resizes, only the latest size matters. */
+        while (gfx_get_event(&e, GFX_EVENT_NONBLOCKING) == 0){
+            switch (e.event)
+            {
+            case GFX_EVENT_RESOLUTION:
+                demo.setSize(e.data, e.data2);
+                break;
+            case GFX_EVENT_EXIT:
+                return 0;
+            default:
+                break;
+            }
         }
 
+        demo.rotateCube();
+        demo.drawCube();
+        sleep(FRAME_DELAY_MS);
     }
-    
 
     return 0;
 }
