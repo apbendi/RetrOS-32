@@ -24,7 +24,7 @@
 
 #define center_x(size) ((110/2) - ((size*8)/2))
 
-static char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Nov", "Dec"};
+static char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
 void __kthread_entry kclock(int argc, char* argv[])
 {   
@@ -39,8 +39,8 @@ void __kthread_entry kclock(int argc, char* argv[])
     struct time now;
     struct gfx_theme* theme;
 
-    int timestamp = 0;
-    timestamp = 0;
+    /* Second of the last redraw, -1 to draw right away */
+    int last_second = -1;
     
     struct window* w = gfx_new_window(110, 140, 0);
     if(w == NULL){
@@ -51,17 +51,29 @@ void __kthread_entry kclock(int argc, char* argv[])
     kernel_gfx_set_title("Clock");
     w->ops->move(w, 450, 50);
     while (1){
-        theme = kernel_gfx_current_theme();
+        /* Handle every pending event on each pass, so closing doesn't wait for the next redraw */
+        struct gfx_event event;
+        while(gfx_event_loop(&event, GFX_EVENT_NONBLOCKING) != -1){
+            if(event.event == GFX_EVENT_EXIT){
+                kernel_exit();
+            }
+        }
 
-        angle_id = (0.5 * (now.hour%12 * 60 + now.minute) / 6);
-        
         get_current_time(&now);
 
-        if(get_time() - timestamp < 2){
+        /**
+         * Redraw each time the second changes, so the second hand ticks.
+         * Unlike a difference of seconds since midnight, this keeps working past midnight.
+         */
+        if(now.second == last_second){
             kernel_yield();
             continue;
         }
-        timestamp = get_time();
+        last_second = now.second;
+
+        theme = kernel_gfx_current_theme();
+
+        angle_id = (0.5 * (now.hour%12 * 60 + now.minute) / 6);
 
         w->draw->rect(w, 0, 0, 110, 140, 30);
 
@@ -89,18 +101,8 @@ void __kthread_entry kclock(int argc, char* argv[])
         w->draw->textf(w, center_x(5), 112, theme->window.text, "%s%d:%s%d", now.hour > 9 ? "" : "0", now.hour, now.minute > 9 ? "" : "0", now.minute);
         w->draw->textf(w, center_x(6), 124, theme->window.text, "%d. %s", now.day, months[ABS(now.month-1)]);
 
-        struct gfx_event event;
-        int ret = gfx_event_loop(&event, GFX_EVENT_NONBLOCKING);
-        if(ret == -1) continue;
-
-        switch (event.event){
-        case GFX_EVENT_EXIT:
-            kernel_exit();
-            break;
-        default:
-            break;
-        }
-
+        /* Mark the window changed, so the screen is redrawn even when nothing else changes */
+        gfx_commit();
     }
 }
 EXPORT_KTHREAD(kclock);
