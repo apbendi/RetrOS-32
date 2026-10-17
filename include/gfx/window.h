@@ -16,6 +16,9 @@ struct window;
 #define GFX_WINDOW_TITLE_HEIGHT 12
 /* The title bar and borders are drawn this many pixels above window->y */
 #define GFX_WINDOW_HEADER_OVERHANG 4
+/* Smallest size a resize allows, leaving room for the title bar's buttons and drag area */
+#define GFX_WINDOW_MIN_WIDTH 128
+#define GFX_WINDOW_MIN_HEIGHT 48
 #define GFX_MAX_EVENTS 10
 
 #define WINDOW_GET_PIXEL(w, x, y) w->inner[x + y * w->pitch]

@@ -20,6 +20,7 @@
 #include <errors.h>
 #include <kutils.h>
 #include <lib/icons.h>
+#include <math.h>
 
 //#define __WINDOWS_95
 
@@ -192,6 +193,17 @@ void gfx_window_set_resizable()
 /* under construction */
 static void gfx_window_resize(struct window* w, int width, int height)
 {
+    /**
+     * Width and height are the content size, 16 px smaller than the window.
+     * Keep the title bar usable, but staying on screen wins: drawing isn't clipped,
+     * so anything off screen would land outside the screen buffer.
+     */
+    width = MIN(MAX(width, GFX_WINDOW_MIN_WIDTH-16), vbe_info->width - w->x - 16);
+    height = MIN(MAX(height, GFX_WINDOW_MIN_HEIGHT-16), vbe_info->height - w->y - 16);
+    if(width <= 0 || height <= 0 || (width == w->inner_width && height == w->inner_height)){
+        return;
+    }
+
     /* Allocate new inner buffer, copy over old buffer, free old buffer, update struct */
     uint8_t* new_buffer = kalloc(width*height);
     if(new_buffer == NULL){
@@ -394,10 +406,11 @@ static int gfx_window_maximize(struct window* window)
 {
     ERR_ON_NULL(window);
 
+    /* Move first, since resizing keeps the window on screen from where it is */
+    window->ops->move(window, 0, 26);
+
     /* Placed at y 26, a window this tall ends exactly at the bottom of the screen */
     gfx_window_resize(window, vbe_info->width-16, vbe_info->height-42);
-
-    window->ops->move(window, 0, 26);
 
     window->changed = 1;
 
