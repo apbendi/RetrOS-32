@@ -131,6 +131,9 @@ static int ws_fullscreen(struct windowserver* ws, struct window* window)
     ERR_ON_NULL(window);
     WS_VALIDATE(ws);
 
+    /* The window's owner may be drawing into it on its own thread, so swap buffers between its draws */
+    spin_lock(&window->buffer_lock);
+
     if(ws->_is_fullscreen){
         
          /* store and backup original window information */
@@ -160,6 +163,8 @@ static int ws_fullscreen(struct windowserver* ws, struct window* window)
 
         ws->_is_fullscreen = true;
     }
+
+    spin_unlock(&window->buffer_lock);
 
     return ERROR_OK;
 }

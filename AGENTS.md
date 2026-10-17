@@ -134,7 +134,14 @@ The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but no
 
 **Redraws:** the window server only redraws the screen when the mouse moves or a window is marked changed. Every gfx drawing syscall marks the app's window changed. Kernel threads that draw with `w->draw->*` must call `gfx_commit()` themselves, or their updates only appear when the mouse moves.
 
-**Concurrency:** resizing swaps a window's buffer on the window server thread while its app may be drawing into it, with no locking (#9). This happens once per resize. Syscalls run with interrupts enabled, so they can be preempted.
+**Concurrency:** the window server thread replaces a window's buffer on a resize, maximize, restore or F10 fullscreen, while the window's owner may be drawing into it on its own thread. `w->buffer_lock` keeps the two apart (#9):
+- **Drawing:** code that writes a window's pixels holds the lock from its bounds check through its last pixel, as the `kernel_gfx_*` functions in `gfxlib.c` do. Code that replaces `inner` holds it for the swap.
+- **No nesting:** the lock isn't reentrant, so don't call a function that takes it while holding it.
+- **Interrupts:** `spin_lock` waits by yielding to other threads (`WAIT` → `kernel_yield`), so don't take it inside `ENTER_CRITICAL`.
+- **Compositing** reads buffers without the lock. That's safe only because every swap also runs on the window server thread. Moving a swap to another thread would mean the compositor has to take the lock too.
+- **The event queue** has its own lock, `w->spinlock`.
+
+Syscalls run with interrupts enabled, so they can be preempted.
 
 **Mouse:** the window manager remembers which window got the press (`pressed_window`). A release always goes to that window, but it only counts as a click if the cursor is still over it. Clicks are handled at the cursor's arrow tip (`VESA_CURSOR_HOTSPOT_X`/`_Y`).
 

@@ -228,6 +228,12 @@ static int gfx_window_resize(struct window* w, int width, int height)
         return -ERROR_ALLOC;
     }
 
+    /**
+     * The owner may be drawing into the buffer on its own thread. Every draw holds buffer_lock,
+     * so taking it waits for a draw in progress to finish, and keeps new ones out until the swap is done.
+     */
+    spin_lock(&w->buffer_lock);
+
     uint8_t* old = w->inner;
 
     /**
@@ -257,6 +263,8 @@ static int gfx_window_resize(struct window* w, int width, int height)
     /* Copy over */
     w->inner = new_buffer;
 
+    spin_unlock(&w->buffer_lock);
+
     struct gfx_event e = {
         .data = width,
         .data2 = height,
@@ -266,6 +274,7 @@ static int gfx_window_resize(struct window* w, int width, int height)
 
     w->changed = 1;
 
+    /* Safe to free: any draw that started after the unlock uses the new buffer */
     kfree(old);
 
     return ERROR_OK;
@@ -533,6 +542,7 @@ struct window* gfx_new_window(int width, int height, window_flag_t flags)
     w->color.header = 0;
     w->color.text = 0;
     w->spinlock = 0;
+    w->buffer_lock = SPINLOCK_UNLOCKED;
 
     w->next = NULL;
 

@@ -114,6 +114,12 @@ struct window {
     struct pcb* owner;
     spinlock_t spinlock;
 
+    /**
+     * Held while drawing into inner or replacing it. Drawing runs on the owner's thread and resizing
+     * on the window server's, so this keeps a resize from swapping the buffer in the middle of a draw.
+     */
+    spinlock_t buffer_lock;
+
     byte_t in_focus;
     
     struct {

@@ -19,6 +19,13 @@
 #include <scheduler.h>
 #include <kutils.h>
 
+/**
+ * Every function here that writes a window's pixels holds w->buffer_lock from its bounds check
+ * through its last pixel. A resize replaces the buffer on the window server thread, and the lock
+ * keeps it from doing that in the middle of a draw. The lock isn't reentrant, so a function
+ * that holds it must not call another one that takes it.
+ */
+
 int gfx_get_window_width()
 {
 	return $process->current->gfx_window->inner_width;
@@ -89,6 +96,7 @@ int gfx_button_ext(int x, int y, int width, int height, char* name, color_t colo
 
 int gfx_put_icon16(unsigned char icon[], int x, int y)
 {
+	spin_lock(&$process->current->gfx_window->buffer_lock);
 	for (int l = 0; l < 16; l++) {
 
 		for (int i = 0; i < 16; i++) {
@@ -101,11 +109,13 @@ int gfx_put_icon16(unsigned char icon[], int x, int y)
 			}
 		}
 	}
+	spin_unlock(&$process->current->gfx_window->buffer_lock);
 	return 0;
 }
 
 int gfx_put_icon32(unsigned char icon[], int x, int y)
 {
+	spin_lock(&$process->current->gfx_window->buffer_lock);
 	for (int l = 0; l < 32; l++) {
 
 		for (int i = 0; i < 32; i++) {
@@ -118,6 +128,7 @@ int gfx_put_icon32(unsigned char icon[], int x, int y)
 			}
 		}
 	}
+	spin_unlock(&$process->current->gfx_window->buffer_lock);
 	return 0;
 }
 
@@ -166,15 +177,20 @@ int kernel_gfx_draw_rectangle(struct window* w, int x, int y, int width, int hei
 {
 	ERR_ON_NULL(w);
 
+	spin_lock(&w->buffer_lock);
+
 	/* only draw rectangle inside window */
-	if(x < 0 || y < 0 || x+width > w->inner_width || y+height > w->inner_height)
+	if(x < 0 || y < 0 || x+width > w->inner_width || y+height > w->inner_height){
+		spin_unlock(&w->buffer_lock);
 		return -2;
+	}
 
 	int i, j;
 	for (j = y; j < (y+height); j++)
 		for (i = x; i < (x+width); i++)
 			putpixel(w->inner, i, j, color, w->pitch);
 
+	spin_unlock(&w->buffer_lock);
 	return 0;
 }
 
@@ -182,12 +198,17 @@ int kernel_gfx_draw_pixel(struct window* w, int x, int y, color_t color)
 {
 	ERR_ON_NULL(w);
 
+	spin_lock(&w->buffer_lock);
+
 	/* only draw rectangle inside window */
-	if(x < 0 || y < 0 || x >= w->inner_width || y >= w->inner_height)
+	if(x < 0 || y < 0 || x >= w->inner_width || y >= w->inner_height){
+		spin_unlock(&w->buffer_lock);
 		return -2;
+	}
 
 	putpixel(w->inner, x, y, color, w->pitch);
 
+	spin_unlock(&w->buffer_lock);
 	return 0;
 }
 
@@ -195,15 +216,20 @@ int kernel_gfx_draw_bitmap(struct window* w, int x, int y, int width, int height
 {
 	ERR_ON_NULL(w);
 
+	spin_lock(&w->buffer_lock);
+
 	/* only draw rectangle inside window */
-	if(x < 0 || y < 0 || x+width > w->inner_width || y+height > w->inner_height)
+	if(x < 0 || y < 0 || x+width > w->inner_width || y+height > w->inner_height){
+		spin_unlock(&w->buffer_lock);
 		return -2;
+	}
 
 	int i, j;
 	for (j = y; j < (y+height); j++)
 		for (i = x; i < (x+width); i++)
 			putpixel(w->inner, i, j, rgb_to_vga(bitmap[(j-y)*width+(i-x)]), w->pitch);
 
+	spin_unlock(&w->buffer_lock);
 	return 0;
 }
 
@@ -221,7 +247,7 @@ int kernel_gfx_draw_char(struct window* w, int x, int y, unsigned char c, unsign
 
 	ERR_ON_NULL(w);
 
-	//ENTER_CRITICAL();
+	spin_lock(&w->buffer_lock);
 	for (int l = 0; l < 8; l++) {
 		for (int i = 8; i >= 0; i--) {
 			if (font8x8_basic[c][l] & (1 << i)) {
@@ -232,7 +258,7 @@ int kernel_gfx_draw_char(struct window* w, int x, int y, unsigned char c, unsign
 			}
 		}
 	}
-	//LEAVE_CRITICAL();
+	spin_unlock(&w->buffer_lock);
 
 	return 0;
 }
@@ -302,7 +328,7 @@ int kernel_gfx_set_header(const char* header)
 #define GFX_LINE_MAX_COORD 4096
 #define GFX_LINE_COORD_OK(v) ((v) >= -GFX_LINE_MAX_COORD && (v) <= GFX_LINE_MAX_COORD)
 
-/* Writes one pixel of a window's content, skipping it if it's outside the window */
+/* Writes one pixel of a window's content, skipping it if it's outside the window. The caller holds w->buffer_lock. */
 static void __window_put_pixel(struct window* w, int x, int y, unsigned char color)
 {
 	if(x < 0 || y < 0 || x >= w->inner_width || y >= w->inner_height) return;
@@ -354,8 +380,9 @@ void kernel_gfx_draw_line(struct window* w, int x0, int y0, int x1, int y1, unsi
 
 	error = dx + dy;
 
-	while(1)  
-	{  
+	spin_lock(&w->buffer_lock);
+	while(1)
+	{
 		/* Row x0, column y0 */
 		__window_put_pixel(w, y0, x0, color);
 		if (x0 == x1 && y0 == y1) break;
@@ -373,7 +400,8 @@ void kernel_gfx_draw_line(struct window* w, int x0, int y0, int x1, int y1, unsi
 			y0 = y0 + sy;
 		}
 	}
-}  
+	spin_unlock(&w->buffer_lock);
+}
 
 static void kernel_gfx_draw_circle_helper(struct window* w, int xc, int yc, int x, int y, unsigned char color, bool_t fill)
 {
@@ -409,6 +437,8 @@ void kernel_gfx_draw_circle(struct window* w, int xc, int yc, int r, unsigned ch
 {
     int x = 0, y = r;
     int d = 3 - 2 * r;
+
+    spin_lock(&w->buffer_lock);
     kernel_gfx_draw_circle_helper(w, xc, yc, x, y, color, fill);
 
     while (y >= x)
@@ -427,6 +457,7 @@ void kernel_gfx_draw_circle(struct window* w, int xc, int yc, int r, unsigned ch
 
         kernel_gfx_draw_circle_helper(w, xc, yc, x, y, color, fill);
     }
+    spin_unlock(&w->buffer_lock);
 }
 
 

@@ -35,6 +35,8 @@ static int screen_draw_cursor(struct window *w, int x, int y, color_t fg) {
     int total_height = 12; /* Total height of the drawing area */
     int offset = (total_height - char_height) / 2; /* Offset to center the character */
 
+    /* Writes the window's buffer directly, so hold it like the gfxlib drawing functions do */
+    spin_lock(&w->buffer_lock);
     for (int l = 0; l < total_height; l++) {
         for (int i = 0; i < 8; i++) {
             /* Check if the current pixel is within the vertical range of the character */
@@ -46,6 +48,7 @@ static int screen_draw_cursor(struct window *w, int x, int y, color_t fg) {
             }
         }
 	}
+    spin_unlock(&w->buffer_lock);
 	return 0;
 }
 
@@ -54,6 +57,7 @@ static int screen_draw_char(struct window *w, int x, int y, unsigned char c, col
     int total_height = 12; /* Total height of the drawing area */
     int offset = (total_height - char_height) / 2; /* Offset to center the character */
 
+    spin_lock(&w->buffer_lock);
     for (int l = 0; l < total_height; l++) {
         for (int i = 0; i < 8; i++) {
             /* Check if the current pixel is within the vertical range of the character */
@@ -77,6 +81,7 @@ static int screen_draw_char(struct window *w, int x, int y, unsigned char c, col
 			}
         }
     }
+    spin_unlock(&w->buffer_lock);
     return 0;
 }
 

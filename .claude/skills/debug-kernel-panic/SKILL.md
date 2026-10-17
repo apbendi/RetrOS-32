@@ -51,7 +51,7 @@ Then find what sits next to the victim:
 
 Common writers, from past bugs:
 - window drawing past a buffer's edge (#4, #7);
-- a buffer swapped during a resize (#9);
+- a buffer swapped during a resize while drawing code wrote to it without holding `buffer_lock` (#9);
 - a window frame drawn off screen.
 
 ## 5. Narrow it down and confirm
