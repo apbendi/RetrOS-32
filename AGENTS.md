@@ -104,7 +104,8 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 **Window geometry** (`include/gfx/window.h`, `graphics/window.c`):
 - **Frame:** the title bar and borders are drawn `GFX_WINDOW_HEADER_OVERHANG` (4 px) above `window->y`.
 - **Content:** the content starts at `x+8, y+8`, and `inner_width`/`inner_height` are the outer size minus 16. A window's buffer is `inner`, with stride `pitch`, which equals `inner_width`.
-- **Size limits:** `gfx_window_resize` clamps to at least `GFX_WINDOW_MIN_WIDTH`×`GFX_WINDOW_MIN_HEIGHT` (128×48) and keeps the window on screen. When there isn't enough memory, it keeps the old size.
+- **Size limits:** `gfx_window_clamp_size` enforces a minimum of `GFX_WINDOW_MIN_WIDTH`×`GFX_WINDOW_MIN_HEIGHT` (128×48) and keeps the window on screen. The resize outline and `gfx_window_resize` both use it, so they agree. When there isn't enough memory, `gfx_window_resize` keeps the old size.
+- **Resizing:** dragging the corner only moves an outline, drawn from `pending_size`. The window keeps its size and buffer until the release, when `gfx_default_mouse_up` calls `gfx_window_resize` once (#10). Maximize and restore resize right away.
 
 **Drawing:**
 - **The `vesa_*` helpers aren't clipped** (`include/vbe.h`, `drivers/vbe.c`; #4). Anything the window server draws off screen lands outside the screen buffer, in the kernel heap.
@@ -128,12 +129,12 @@ The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but no
 **Events:**
 - **Reading:** `gfx_get_event(&e, GFX_EVENT_NONBLOCKING)` returns 0 if it got an event and -1 if there was none. On -1 it leaves `e` untouched.
 - **The queue holds 10 events.** When it's full, the oldest is dropped.
-- **Drain all events every frame.** During a resize drag, every mouse move sends a `GFX_EVENT_RESOLUTION` (#10), so an app that reads one event per frame falls behind.
-- **On a resize,** apply only the latest size, and redraw everything. The kernel keeps the old content that still fits (#14), and the rest is black.
+- **Drain all events every frame.** An app that reads one event per frame falls behind its input, and once the queue is full, events get dropped.
+- **On a resize,** apply only the latest size, and redraw everything. A window gets one `GFX_EVENT_RESOLUTION` per resize: when a corner drag is released (#10), or on maximize or restore. The kernel keeps the old content that still fits (#14), and the rest is black.
 
 **Redraws:** the window server only redraws the screen when the mouse moves or a window is marked changed. Every gfx drawing syscall marks the app's window changed. Kernel threads that draw with `w->draw->*` must call `gfx_commit()` themselves, or their updates only appear when the mouse moves.
 
-**Concurrency:** resizing swaps a window's buffer on the window server thread while its app may be drawing into it, with no locking (#9). Syscalls run with interrupts enabled, so they can be preempted.
+**Concurrency:** resizing swaps a window's buffer on the window server thread while its app may be drawing into it, with no locking (#9). This happens once per resize. Syscalls run with interrupts enabled, so they can be preempted.
 
 **Mouse:** the window manager remembers which window got the press (`pressed_window`). A release always goes to that window, but it only counts as a click if the cursor is still over it. Clicks are handled at the cursor's arrow tip (`VESA_CURSOR_HOTSPOT_X`/`_Y`).
 

@@ -346,7 +346,7 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
          * @brief Special edge case:
          * When a window is moving or resizing (only 1 window should be at a time)
          * and the mouse is not in the window, the window should snap to the mouse.
-         * A resize leaves only 8 px between the mouse and the window's edge, so one fast move can leave it.
+         * A window keeps its old size until a resize is released, so while it grows the mouse is always outside it.
          */
         if(i->is_moving.state == GFX_WINDOW_MOVING || i->resize){
             moving = i;

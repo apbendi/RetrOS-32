@@ -73,18 +73,22 @@ void gfx_draw_window(uint8_t* buffer, struct window* window)
     color_t border_dark = window->color.border == 0 ? theme->window.border_accent_dark : window->color.border;
 
     if((window->is_moving.state == GFX_WINDOW_MOVING || window->resize) && !HAS_FLAG(window->flags, GFX_IS_IMMUATABLE)){
-        vesa_striped_line_horizontal(buffer, window->x, window->y, window->width, COLOR_VGA_DARKEST_GRAY, 2);
-        vesa_striped_line_horizontal(buffer, window->x+2, window->y, window->width-2, COLOR_VGA_LIGHTEST_GRAY, 4);
+        /* During a resize, the outline shows the size the window gets on release */
+        int width = window->resize ? window->pending_size.width+16 : window->width;
+        int height = window->resize ? window->pending_size.height+16 : window->height;
+
+        vesa_striped_line_horizontal(buffer, window->x, window->y, width, COLOR_VGA_DARKEST_GRAY, 2);
+        vesa_striped_line_horizontal(buffer, window->x+2, window->y, width-2, COLOR_VGA_LIGHTEST_GRAY, 4);
         
         /* Bottom and right edges go on the window's last row and column, not past them, so they stay on screen */
-        vesa_striped_line_horizontal(buffer, window->x, window->y+window->height-1, window->width, COLOR_VGA_DARKEST_GRAY, 2);
-        vesa_striped_line_horizontal(buffer, window->x+2, window->y+window->height-1, window->width-2, COLOR_VGA_LIGHTEST_GRAY, 4);
+        vesa_striped_line_horizontal(buffer, window->x, window->y+height-1, width, COLOR_VGA_DARKEST_GRAY, 2);
+        vesa_striped_line_horizontal(buffer, window->x+2, window->y+height-1, width-2, COLOR_VGA_LIGHTEST_GRAY, 4);
 
-        vesa_striped_line_vertical(buffer, window->x, window->y, window->height, COLOR_VGA_DARKEST_GRAY, 2);
-        vesa_striped_line_vertical(buffer, window->x, window->y+2, window->height-2, COLOR_VGA_LIGHTEST_GRAY, 4);
+        vesa_striped_line_vertical(buffer, window->x, window->y, height, COLOR_VGA_DARKEST_GRAY, 2);
+        vesa_striped_line_vertical(buffer, window->x, window->y+2, height-2, COLOR_VGA_LIGHTEST_GRAY, 4);
 
-        vesa_striped_line_vertical(buffer, window->x+window->width-1, window->y, window->height, COLOR_VGA_DARKEST_GRAY, 2);
-        vesa_striped_line_vertical(buffer, window->x+window->width-1, window->y+2, window->height-2, COLOR_VGA_LIGHTEST_GRAY, 4);
+        vesa_striped_line_vertical(buffer, window->x+width-1, window->y, height, COLOR_VGA_DARKEST_GRAY, 2);
+        vesa_striped_line_vertical(buffer, window->x+width-1, window->y+2, height-2, COLOR_VGA_LIGHTEST_GRAY, 4);
 
         window->changed = 0;
         return;
@@ -190,16 +194,23 @@ void gfx_window_set_resizable()
     $process->current->gfx_window->is_resizable = 1;
 }
 
+/**
+ * @brief Limit a content size (16 px smaller than the window) to what a resize allows.
+ * Keep the title bar usable, but staying on screen wins: drawing isn't clipped,
+ * so anything off screen would land outside the screen buffer.
+ * Used by both the resize outline and the resize itself, so they agree.
+ */
+static void gfx_window_clamp_size(struct window* w, int* width, int* height)
+{
+    *width = MIN(MAX(*width, GFX_WINDOW_MIN_WIDTH-16), vbe_info->width - w->x - 16);
+    *height = MIN(MAX(*height, GFX_WINDOW_MIN_HEIGHT-16), vbe_info->height - w->y - 16);
+}
+
 /* under construction */
 static int gfx_window_resize(struct window* w, int width, int height)
 {
-    /**
-     * Width and height are the content size, 16 px smaller than the window.
-     * Keep the title bar usable, but staying on screen wins: drawing isn't clipped,
-     * so anything off screen would land outside the screen buffer.
-     */
-    width = MIN(MAX(width, GFX_WINDOW_MIN_WIDTH-16), vbe_info->width - w->x - 16);
-    height = MIN(MAX(height, GFX_WINDOW_MIN_HEIGHT-16), vbe_info->height - w->y - 16);
+    /* Width and height are the content size, 16 px smaller than the window. */
+    gfx_window_clamp_size(w, &width, &height);
     if(width <= 0 || height <= 0){
         return -ERROR_INVALID_ARGUMENTS;
     }
@@ -365,8 +376,19 @@ static void gfx_default_hover(struct window* window, int x, int y)
         window->changed = 1;
     }
 
+    /**
+     * Only the outline follows the cursor. Reallocating the buffer on every move fragmented the
+     * small kernel heap, so gfx_default_mouse_up resizes it once, on release.
+     */
     if(window->resize && window->is_resizable){
-        window->ops->resize(window, x-window->x-8, y-window->y-8);
+        int width = x-window->x-8;
+        int height = y-window->y-8;
+        gfx_window_clamp_size(window, &width, &height);
+        if(width > 0 && height > 0){
+            window->pending_size.width = width;
+            window->pending_size.height = height;
+            window->changed = 1;
+        }
     }
 }
 
@@ -381,6 +403,10 @@ static void gfx_default_mouse_down(struct window* window, int x, int y)
     if(gfx_point_in_rectangle(window->x+window->width-8,  window->y+window->height-8, window->x+window->width,  window->y+window->height, x, y) && window->is_resizable){
         dbgprintf("Clicked resize\n");
         window->resize = 1;
+
+        /* Until the cursor moves, the outline shows the current size */
+        window->pending_size.width = window->inner_width;
+        window->pending_size.height = window->inner_height;
     }
 }
 
@@ -398,6 +424,9 @@ static void gfx_default_mouse_up(struct window* window, int x, int y)
     if(window->resize){
         dbgprintf("Unclicked resize\n");
         window->resize = 0;
+
+        /* Resize the buffer once, to the size the outline showed. Without enough memory, the window keeps its old size. */
+        window->ops->resize(window, window->pending_size.width, window->pending_size.height);
         window->changed = 1;
     }
 }
@@ -513,6 +542,8 @@ struct window* gfx_new_window(int width, int height, window_flag_t flags)
         w->is_resizable = 0;
     }
     w->resize = 0;
+    w->pending_size.width = 0;
+    w->pending_size.height = 0;
     
     w->events.head = 0;
     w->events.tail = 0;

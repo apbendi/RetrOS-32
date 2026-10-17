@@ -105,6 +105,12 @@ struct window {
     uint8_t is_resizable;
     uint8_t resize;    
 
+    /* Content size the outline shows during a resize. The buffer is only resized to it on release. */
+    struct {
+        uint16_t width;
+        uint16_t height;
+    } pending_size;
+
     struct pcb* owner;
     spinlock_t spinlock;
 
