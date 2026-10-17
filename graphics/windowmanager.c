@@ -320,7 +320,15 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
     for (struct window* i = wm->windows; i != NULL; i = i->next){
         /* if mouse is in window, including the title bar drawn above it */
         int top = HAS_FLAG(i->flags, GFX_HIDE_HEADER) ? i->y : i->y-GFX_WINDOW_HEADER_OVERHANG;
-        if(gfx_point_in_rectangle(i->x, top, i->x+i->width, i->y+i->height, x, y)){
+        int bottom = i->y+i->height;
+
+        /* A minimized window only draws its title bar, so only the title bar takes the mouse */
+        if(HAS_FLAG(i->flags, GFX_IS_HIDDEN)){
+            if(HAS_FLAG(i->flags, GFX_HIDE_HEADER)) continue;
+            bottom = top+GFX_WINDOW_TITLE_HEIGHT;
+        }
+
+        if(gfx_point_in_rectangle(i->x, top, i->x+i->width, bottom, x, y)){
             /* get coordinates inside of the window */
             int offset = HAS_FLAG(i->flags, GFX_HIDE_HEADER) ? 0 : 8;
             x2 = CLAMP( (x - (i->x+offset)), 0,  i->inner_width);
