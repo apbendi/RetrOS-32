@@ -219,9 +219,24 @@ static int gfx_window_resize(struct window* w, int width, int height)
 
     uint8_t* old = w->inner;
 
-    //memcpy(new_buffer, old, w->inner_height*w->inner_width > width*width ? width*width : w->inner_height*w->inner_width);
+    /**
+     * kalloc doesn't clear memory. Keep the part of the old content that still fits, and clear
+     * the rest the way gfx_new_window does, so until the app redraws, the window shows its
+     * last frame instead of leftover memory.
+     */
+    uint8_t fill = HAS_FLAG(w->flags, GFX_IS_TRANSPARENT) ? 255 : 0;
+    int copy_width = MIN(width, w->inner_width);
+    int copy_height = MIN(height, w->inner_height);
+    for(int row = 0; row < height; row++){
+        uint8_t* dest = new_buffer + row*width;
+        int copied = 0;
+        if(row < copy_height){
+            memcpy(dest, old + row*w->pitch, copy_width);
+            copied = copy_width;
+        }
+        memset(dest + copied, fill, width - copied);
+    }
 
-    /* problem: if resizing from a larger to smaller window, what happens to data that will be "offscreen" */
     w->inner_height = height;
     w->inner_width = width;
     w->width = width + 16;
