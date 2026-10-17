@@ -110,6 +110,14 @@ static int ws_remove(struct windowserver* ws, struct window* window)
     ERR_ON_NULL(window);
     WS_VALIDATE(ws);
 
+    /**
+     * Only reached when the window is destroyed, so a later release must not reach it.
+     * Not done in wm remove, which push_front and push_back also use.
+     */
+    if(ws->_wm->pressed_window == window){
+        ws->_wm->pressed_window = NULL;
+    }
+
     if(ws->_wm->ops->remove(ws->_wm, window) < 0){
         return -ERROR_OPS_CORRUPTED;
     }

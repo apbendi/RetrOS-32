@@ -73,6 +73,8 @@ struct windowmanager {
     } mouse;    
 
     int mouse_state;
+    /* window that got the current press, which also gets its release */
+    struct window* pressed_window;
 };
 
 struct windowmanager* wm_new(int flags);

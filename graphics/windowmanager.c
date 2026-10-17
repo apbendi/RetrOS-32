@@ -65,6 +65,7 @@ int init_windowmanager(struct windowmanager* wm, int flags)
     wm->windows = NULL;
     wm->window_count = 0;
     wm->mouse_state = 0;
+    wm->pressed_window = NULL;
 
     /* workspaces */
     wm->workspace = 0;
@@ -312,53 +313,26 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
     }
     /* NOTE: no spinlock needed as windows are not changed */
 
-    /* iterate over windows and check if a window was clicked, from front to back. */
+    /* find the window under the mouse, from front to back. */
+    struct window* window = NULL;
+    struct window* moving = NULL;
+    uint16_t x2 = 0, y2 = 0;
     for (struct window* i = wm->windows; i != NULL; i = i->next){
         /* if mouse is in window, including the title bar drawn above it */
         int top = HAS_FLAG(i->flags, GFX_HIDE_HEADER) ? i->y : i->y-GFX_WINDOW_HEADER_OVERHANG;
         if(gfx_point_in_rectangle(i->x, top, i->x+i->width, i->y+i->height, x, y)){
             /* get coordinates inside of the window */
             int offset = HAS_FLAG(i->flags, GFX_HIDE_HEADER) ? 0 : 8;
-            uint16_t x2 = CLAMP( (x - (i->x+offset)), 0,  i->inner_width);
-            uint16_t y2 = CLAMP( (y - (i->y+offset)), 0,  i->inner_height);
-            
+            x2 = CLAMP( (x - (i->x+offset)), 0,  i->inner_width);
+            y2 = CLAMP( (y - (i->y+offset)), 0,  i->inner_height);
+
             /* check if the pixel is transparent (255) */
             if(WINDOW_GET_PIXEL(i, x2, y2) == 255 && HAS_FLAG(i->flags, GFX_IS_TRANSPARENT)){
                 continue;
             }
 
-            /* on click when left mouse down */
-            if((flags & MOUSE_LEFT) && wm->mouse_state == 0){
-                wm->mouse_state = 1;
-                i->ops->mousedown(i, x, y);
-                
-                /* If clicked window is not in front, push it. */
-                if(i != wm->windows){
-                    wm->ops->push_front(wm, i);
-                }
-
-            } else if(!(flags & MOUSE_LEFT) && wm->mouse_state == 1) {
-                /* If mouse state is "down" send click event */
-                wm->mouse_state = 0;
-                i->ops->click(i, x, y);
-                i->ops->mouseup(i, x, y);
-
-                /* Send mouse event to all windows that are not hidden */
-                if(!HAS_FLAG(i->flags, GFX_IS_HIDDEN)){
-                     /* Send mouse event */
-                    struct gfx_event e = {
-                        .data = x2,
-                        .data2 = y2,
-                        .event = GFX_EVENT_MOUSE
-                    };
-                    gfx_push_event(i, &e);
-                }
-            }
-
-            /* always send a hover event */
-            i->ops->hover(i, x, y);
-
-            return ERROR_OK;
+            window = i;
+            break;
         }
         /**
          * @brief Special edge case:
@@ -366,10 +340,59 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
          * and the mouse is not in the window, the window should snap to the mouse.
          */
         if(i->is_moving.state == GFX_WINDOW_MOVING){
-            i->ops->hover(i, x, y);
-            return ERROR_OK;
+            moving = i;
+            break;
         }
     }
+
+    /* A release goes to the window that got the press, wherever the mouse is now. */
+    if(!(flags & MOUSE_LEFT) && wm->mouse_state == 1){
+        struct window* pressed = wm->pressed_window;
+        wm->mouse_state = 0;
+        wm->pressed_window = NULL;
+
+        if(pressed != NULL){
+            /* It's only a click if the mouse is still over the pressed window. */
+            if(pressed == window){
+                pressed->ops->click(pressed, x, y);
+            }
+            pressed->ops->mouseup(pressed, x, y);
+
+            /* Send mouse event to all windows that are not hidden */
+            if(pressed == window && !HAS_FLAG(pressed->flags, GFX_IS_HIDDEN)){
+                struct gfx_event e = {
+                    .data = x2,
+                    .data2 = y2,
+                    .event = GFX_EVENT_MOUSE
+                };
+                gfx_push_event(pressed, &e);
+            }
+        }
+    }
+
+    if(moving != NULL){
+        moving->ops->hover(moving, x, y);
+        return ERROR_OK;
+    }
+
+    if(window == NULL){
+        return ERROR_OK;
+    }
+
+    /* on click when left mouse down */
+    if((flags & MOUSE_LEFT) && wm->mouse_state == 0){
+        wm->mouse_state = 1;
+        wm->pressed_window = window;
+        window->ops->mousedown(window, x, y);
+
+        /* If clicked window is not in front, push it. */
+        if(window != wm->windows){
+            wm->ops->push_front(wm, window);
+        }
+    }
+
+    /* always send a hover event */
+    window->ops->hover(window, x, y);
 
     return ERROR_OK;
 }
