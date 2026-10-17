@@ -4,6 +4,11 @@ RetrOS-32 is a 32-bit x86 hobby OS: kernel, window server, drivers, networking, 
 
 This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens on the `development` branch, and issues are tracked on the fork (`gh issue list --repo apbendi/RetrOS-32`).
 
+`.claude/skills/` has step-by-step procedures for recurring tasks:
+- `debug-kernel-panic`: working out a crash from the serial log.
+- `check-change`: checking a change without booting. Its `check.sh` runs the clang check described below.
+- `file-issue`: this fork's issue format and the `gh` steps.
+
 ## Layout
 
 | Path | What's there |
@@ -51,7 +56,7 @@ HOSTFWD_PORT=8081 make qemu    # if port 8080 is taken (the default forward to t
 
 ## Checking a change without a full build
 
-These were fast and caught real problems.
+These were fast and caught real problems. `.claude/skills/check-change/check.sh` automates the first two: the clang check, compared with HEAD, and the runtime-library check for apps.
 
 **Syntax-check kernel C with clang**, using the kernel's flags:
 
