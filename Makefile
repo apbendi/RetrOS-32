@@ -52,7 +52,8 @@ multiboot_kernel: $(BUILD_DIR)/multiboot.o $(KERNELOBJ)
 	@echo "[kernel] linking multiboot kernel..."
 	$(QUIET)$(LD) -o $(BUILD_DIR)/kernelout $^ $(LDFLAGS) -T ./boot/multiboot.ld
 
-symbols: $(BUILD_DIR)/multiboot.o $(KERNELOBJ)
+# Same objects in the same order as the kernel target, so the map's function addresses match the booted kernel.
+symbols: $(BUILD_DIR)/kcrt0.o $(KERNELOBJ)
 	@echo "[kernel] generating symbols..."
 	$(QUIET)$(LD) -o $(BUILD_DIR)/symbols $^ $(LDFLAGS) -T ./kernel/linkersym.ld
 	$(QUIET)nm -C -n $(BUILD_DIR)/symbols | grep ' [Tt] ' | sed 's/ [Tt] / /' > rootfs/sysutil/symbols.map

@@ -193,13 +193,18 @@ void __backtrace_from(uintptr_t* ebp)
         ebp = (uintptr_t *)*ebp;
     }
 
+    /* An exception can hit before symbols.map is loaded */
+    int num_symbols = __symbols != NULL ? __symbols->num_symbols : 0;
+    /* The map ends with _code_end, so an address at or past its last symbol isn't kernel code */
+    uintptr_t code_end = num_symbols > 0 ? __symbols->max : 0;
+
     for (int i = 0; i < depth; i++) {
         uintptr_t addr = stack[i];
         
         // Find the closest symbol
         int found = 0;
-        for (int j = 0; j < __symbols->num_symbols; j++) {
-            if (__symbols->symtable[j].addr <= addr && (j == __symbols->num_symbols - 1 || __symbols->symtable[j + 1].addr > addr)) {
+        for (int j = 0; j < num_symbols && addr < code_end; j++) {
+            if (__symbols->symtable[j].addr <= addr && (j == num_symbols - 1 || __symbols->symtable[j + 1].addr > addr)) {
                 
                 dbgprintf("%s: 0x%x - 0x%x = 0x%x\n", 
                     __symbols->symtable[j].name, 

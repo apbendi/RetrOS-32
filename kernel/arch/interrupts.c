@@ -142,10 +142,22 @@ void interrupt_install_handler(int i, void (*handler)())
 	handlers[i] = handler;
 }
 
-static void __interrupt_exception_handler(int i)
+static void __interrupt_exception_handler(struct registers* regs)
 {
+	int i = regs->int_no;
 	interrupt_counter[i]++;
 	dbgprintf("[exception] %d %s (%s)\n", i, __exceptions_names[i], $process->current->name);
+
+	/* Coming from user mode, the CPU switched stacks and pushed the old esp. Otherwise the old stack continues right above eflags. */
+	uint32_t esp = (regs->cs & 3) ? regs->useresp : (uint32_t)&regs->useresp;
+	dbgprintf("eip: 0x%x  error code: 0x%x  cs: 0x%x  eflags: 0x%x\n", regs->eip, regs->err_code, regs->cs, regs->eflags);
+	dbgprintf("eax: 0x%x  ebx: 0x%x  ecx: 0x%x  edx: 0x%x\n", regs->eax, regs->ebx, regs->ecx, regs->edx);
+	dbgprintf("esi: 0x%x  edi: 0x%x  ebp: 0x%x  esp: 0x%x\n", regs->esi, regs->edi, regs->frame_ebp, esp);
+
+	/* The ISR stub's ebp leads to the faulting eip first, then the callers. */
+	dbgprintf("Backtrace:\n");
+	__backtrace_from((uintptr_t*)regs->ebp);
+
 	pcb_dbg_print($process->current);
 	if($process->current->is_process){
 		kernel_exit();
@@ -165,7 +177,8 @@ void isr_handler(struct registers regs)
 {	
 	interrupt_counter[regs.int_no]++;
 	if(regs.int_no < 32){
-		__interrupt_exception_handler(regs.int_no);
+		/* regs is the frame the ISR stub built on the stack, not a copy */
+		__interrupt_exception_handler(&regs);
 		EOI(regs.int_no);
 		return;
 	}

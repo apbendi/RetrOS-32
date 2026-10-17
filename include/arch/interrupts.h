@@ -18,9 +18,10 @@
 struct registers
 {
     uint32_t ds;                  /*  Data segment selector */
-    uint32_t edi, esi, ebp, esp, ebx, edx, ecx, eax; /*  Pushed by pusha. */
-    uint32_t int_no, err_code;    /*  Interrupt number and error code (if applicable) */
-    uint32_t eip, cs, eflags, useresp, ss; /*  Pushed by the processor automatically. */
+    uint32_t edi, esi, ebp, esp, ebx, edx, ecx, eax; /*  Pushed by pusha. ebp is the ISR stub's, pointing at frame_ebp. */
+    uint32_t int_no, err_code;    /*  Interrupt number and error code (0 if the CPU doesn't push one) */
+    uint32_t frame_ebp;           /*  ebp when the interrupt hit, saved by the ISR stub */
+    uint32_t eip, cs, eflags, useresp, ss; /*  Pushed by the processor automatically. useresp and ss only when interrupting user mode. */
 };
 
 void init_interrupts();

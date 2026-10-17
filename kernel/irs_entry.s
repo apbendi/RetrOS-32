@@ -12,6 +12,11 @@ idt_flush:
 	lidt (%eax)
 	ret
 
+/*
+	Both stubs leave the same frame (struct registers): interrupt number, error code, then ebp
+	pushed like a function prologue, right below the eip pushed by the CPU. ebp points at it,
+	so a backtrace from ebp starts at the interrupted instruction.
+*/
 .macro ISR_NO_ERR index
 	.global isr\index
 	isr\index:
@@ -23,13 +28,14 @@ idt_flush:
 		jmp isr_entry
 .endm
 
+/* The CPU has already pushed an error code. Swap it with ebp, so it ends up above ebp as in ISR_NO_ERR. */
 .macro ISR_ERR index
 	.global isr\index
 	isr\index:
 		cli
+    xchgl %ebp, (%esp)
     pushl %ebp
-    movl %esp, %ebp
-		push $0
+    leal 4(%esp), %ebp
 		push $\index
 		jmp isr_entry
 .endm

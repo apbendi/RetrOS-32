@@ -308,7 +308,8 @@ EXPORT_SYSCALL(SYSCALL_AWAIT_PROCESS, pcb_await);
 
 void pcb_dbg_print(struct pcb* pcb)
 {
-	dbgprintf("\n###### PCB ######\npid: %d\nname: %s\nesp: 0x%x\nebp: 0x%x\nkesp: 0x%x\nkebp: 0x%x\neip: 0x%x\nstate: %s\nstack limit: 0x%x\nstack size: 0x%x (0x%x - 0x%x)\nPage Directory: 0x%x\nCS: %d\nDS:%d\n",
+	/* eip is only set when the PCB is created, and esp/ebp only on a context switch, so none of them say where a crash happened */
+	dbgprintf("\n###### PCB ######\npid: %d\nname: %s\nesp at last switch: 0x%x\nebp at last switch: 0x%x\nkesp: 0x%x\nkebp: 0x%x\nentry point: 0x%x\nstate: %s\nstack limit: 0x%x\nstack used at last switch: 0x%x (0x%x - 0x%x)\nPage Directory: 0x%x\nCS: %d\nDS:%d\n",
 		pcb->pid, pcb->name, pcb->ctx.esp, pcb->ctx.ebp, pcb->kesp, pcb->kebp, pcb->ctx.eip, pcb_status[pcb->state], pcb->stackptr, (int)((pcb->stackptr+PCB_STACK_SIZE-1) - pcb->ctx.esp), (pcb->stackptr+PCB_STACK_SIZE-1), pcb->ctx.esp,  pcb->page_dir, pcb->cs, pcb->ds
 	);
 }
