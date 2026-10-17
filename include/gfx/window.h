@@ -94,10 +94,11 @@ struct window {
         uint8_t text;
     } color;
 
+    /* While moving, where the window was grabbed, relative to x and y. y is negative on the frame drawn above y. */
     struct {
         char state;
-        uint16_t x;
-        uint16_t y;
+        int16_t x;
+        int16_t y;
     } is_moving; 
 
     /* Pointer to inner memory where applications draw. */

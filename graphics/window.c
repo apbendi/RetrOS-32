@@ -351,8 +351,6 @@ static void gfx_default_click(struct window* window, int x, int y)
         gfx_push_event(window, &e);
 
         window->is_moving.state = GFX_WINDOW_STATIC;
-        window->is_moving.x = x;
-        window->is_moving.y = y;
 
         window->resize = 0;
 
@@ -367,21 +365,14 @@ static void gfx_default_hover(struct window* window, int x, int y)
     if(window->is_moving.state == GFX_WINDOW_MOVING && !HAS_FLAG(window->flags, GFX_IS_IMMUATABLE)){
 
         /**
-         * Keep everything the window draws on screen, including the frame above window->y.
+         * Keep the point where the window was grabbed under the cursor. Each axis is clamped on its own,
+         * so a window pushed against an edge slides along it instead of stopping.
+         * Everything the window draws stays on screen, including the frame above window->y.
          * Drawing isn't clipped, so anything off screen would land outside the screen buffer.
          */
-        if(window->x - (window->is_moving.x - x) < 0 || window->x - (window->is_moving.x - x) + window->width > vbe_info->width)
-            return;
+        window->x = MAX(MIN(x - window->is_moving.x, vbe_info->width - window->width), 0);
+        window->y = MAX(MIN(y - window->is_moving.y, vbe_info->height - window->height), GFX_WINDOW_HEADER_OVERHANG);
 
-        if(window->y - (window->is_moving.y - y) < GFX_WINDOW_HEADER_OVERHANG || window->y - (window->is_moving.y - y) + window->height > vbe_info->height)
-            return;
-
-        window->x -= window->is_moving.x - x;
-        window->y -= window->is_moving.y - y;
-
-        window->is_moving.x = x;
-        window->is_moving.y = y;
-        
         window->changed = 1;
     }
 
@@ -405,8 +396,8 @@ static void gfx_default_mouse_down(struct window* window, int x, int y)
 {
     if(gfx_point_in_rectangle(window->x, window->y-GFX_WINDOW_HEADER_OVERHANG, window->x+window->width-60, window->y+10, x, y)){
         window->is_moving.state = GFX_WINDOW_MOVING;
-        window->is_moving.x = x;
-        window->is_moving.y = y;
+        window->is_moving.x = x - window->x;
+        window->is_moving.y = y - window->y;
     }
 
     if(gfx_point_in_rectangle(window->x+window->width-8,  window->y+window->height-8, window->x+window->width,  window->y+window->height, x, y) && window->is_resizable){
@@ -424,8 +415,6 @@ static void gfx_default_mouse_up(struct window* window, int x, int y)
 {
     if(window->is_moving.state == GFX_WINDOW_MOVING){
         window->is_moving.state = GFX_WINDOW_STATIC;
-        window->is_moving.x = x;
-        window->is_moving.y = y;
 
         window->changed = 1;
     }

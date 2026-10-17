@@ -106,6 +106,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - **Content:** the content starts at `x+8, y+8`, and `inner_width`/`inner_height` are the outer size minus 16. A window's buffer is `inner`, with stride `pitch`, which equals `inner_width`.
 - **Size limits:** `gfx_window_clamp_size` enforces a minimum of `GFX_WINDOW_MIN_WIDTH`×`GFX_WINDOW_MIN_HEIGHT` (128×48) and keeps the window on screen. The resize outline and `gfx_window_resize` both use it, so they agree. When there isn't enough memory, `gfx_window_resize` keeps the old size.
 - **Resizing:** dragging the corner only moves an outline, drawn from `pending_size`. The window keeps its size and buffer until the release, when `gfx_default_mouse_up` calls `gfx_window_resize` once (#10). Maximize and restore resize right away.
+- **Moving:** `is_moving.x`/`y` hold where the title bar was grabbed, relative to the window's position. `gfx_default_hover` keeps that point under the cursor, clamping each axis to the screen on its own, so a window pushed against an edge slides along it. The whole window has to stay on screen because drawing isn't clipped (#4). #18 covers letting windows hang off the edge.
 
 **Drawing:**
 - **The `vesa_*` helpers aren't clipped** (`include/vbe.h`, `drivers/vbe.c`; #4). Anything the window server draws off screen lands outside the screen buffer, in the kernel heap.
