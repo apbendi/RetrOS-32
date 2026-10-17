@@ -56,6 +56,7 @@ struct gfx_circle {
 struct gfx_line {
     int x0, y0, x1, y1;
     unsigned char color;
+    unsigned char palette;
 };
 
 #define GFX_TEXT_MAX 100
@@ -78,6 +79,7 @@ int gfx_draw_rectangle(int x, int y, int width, int height, unsigned char color)
 int gfx_draw_rectangle_rgb(int x, int y, int width, int height, unsigned char color);
 int gfx_draw_circle(int x, int y, int r, unsigned char color, char fill);
 int gfx_draw_line(int x0, int y0, int x1, int y1, unsigned char color);
+int gfx_draw_line_rgb(int x0, int y0, int x1, int y1, unsigned char color);
 int gfx_get_event(struct gfx_event*, gfx_event_flag_t flags);
 int gfx_draw_pixel(int x, int y, unsigned char color);
 

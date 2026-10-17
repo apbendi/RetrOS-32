@@ -148,7 +148,7 @@ private:
             float dirY = -sin(FixAng(rayAngle));
 
             /* draw ray */
-            gfx_draw_line(playerX, playerY, playerX + dirX * 8, playerY + dirY * 8, COLOR_BLUE);
+            gfx_draw_line_rgb(playerX, playerY, playerX + dirX * 8, playerY + dirY * 8, COLOR_BLUE);
         }
     }
 

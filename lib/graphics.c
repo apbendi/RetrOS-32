@@ -59,19 +59,33 @@ int gfx_draw_circle(int x, int y, int r, unsigned char color, char fill)
 	return 0;
 }
 
-int gfx_draw_line(int x0, int y0, int x1, int y1, unsigned char color)
+static int __gfx_draw_line(int x0, int y0, int x1, int y1, unsigned char color, unsigned char palette)
 {
+	/* The kernel draws x as the row and y as the column, so swap them */
 	struct gfx_line line = {
 		.x0 = y0,
 		.y0 = x0,
 		.y1 = x1,
 		.x1 = y1,
-		.color = color
+		.color = color,
+		.palette = palette
 	};
 
 	gfx_draw_syscall(GFX_DRAW_LINE_OPT, &line, 0);
 
 	return 0;
+}
+
+/* color is a VGA palette index, like gfx_draw_rectangle's */
+int gfx_draw_line(int x0, int y0, int x1, int y1, unsigned char color)
+{
+	return __gfx_draw_line(x0, y0, x1, y1, color, GFX_VGA);
+}
+
+/* color is RGB332, like gfx_draw_rectangle_rgb's */
+int gfx_draw_line_rgb(int x0, int y0, int x1, int y1, unsigned char color)
+{
+	return __gfx_draw_line(x0, y0, x1, y1, color, GFX_RGB);
 }
 
 int gfx_draw_rectangle_rgb(int x, int y, int width, int height, unsigned char color)

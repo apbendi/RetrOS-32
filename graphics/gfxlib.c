@@ -298,6 +298,10 @@ int kernel_gfx_set_header(const char* header)
 
 #define ABS(N) ((N<0)?(-N):(N))
 
+/* Line coordinates beyond this are rejected, so one line can't keep the pixel loop running for long */
+#define GFX_LINE_MAX_COORD 4096
+#define GFX_LINE_COORD_OK(v) ((v) >= -GFX_LINE_MAX_COORD && (v) <= GFX_LINE_MAX_COORD)
+
 /* Writes one pixel of a window's content, skipping it if it's outside the window */
 static void __window_put_pixel(struct window* w, int x, int y, unsigned char color)
 {
@@ -332,10 +336,12 @@ plotLine(x0, y0, x1, y1)
 
 void kernel_gfx_draw_line(struct window* w, int x0, int y0, int x1, int y1, unsigned char color)
 {  
-	if(x0 < 0 || y0 < 0 || x1 < 0 || y1 < 0)
-		return;
-	
-	if(x0 > w->inner_width || y0 > w->inner_height || x1 > w->inner_width || y1 > w->inner_height)
+	/**
+	 * x is the row and y the column (see the pixel write below), and callers rely on that.
+	 * Every pixel is clipped to the window, so a line crossing an edge is cut off there
+	 * instead of being dropped.
+	 */
+	if(!GFX_LINE_COORD_OK(x0) || !GFX_LINE_COORD_OK(y0) || !GFX_LINE_COORD_OK(x1) || !GFX_LINE_COORD_OK(y1))
 		return;
 
 	int dx, dy, sx, sy, error;
@@ -350,10 +356,7 @@ void kernel_gfx_draw_line(struct window* w, int x0, int y0, int x1, int y1, unsi
 
 	while(1)  
 	{  
-		/**
-		 * x is the row and y the column here, and callers rely on that, so the endpoint
-		 * checks above don't keep the line inside the window. Clip each pixel instead.
-		 */
+		/* Row x0, column y0 */
 		__window_put_pixel(w, y0, x0, color);
 		if (x0 == x1 && y0 == y1) break;
 		int e2 = 2*error;
