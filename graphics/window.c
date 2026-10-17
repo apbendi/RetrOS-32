@@ -30,7 +30,7 @@ static void gfx_default_click(struct window* window, int x, int y);
 static void gfx_default_mouse_down(struct window* window, int x, int y);
 static void gfx_default_mouse_up(struct window* window, int x, int y);
 static void gfx_default_hover(struct window* window, int x, int y);
-static void gfx_window_resize(struct window* w, int width, int height);
+static int gfx_window_resize(struct window* w, int width, int height);
 static int gfx_window_maximize(struct window* window);
 
 /* default window ops struct */
@@ -191,7 +191,7 @@ void gfx_window_set_resizable()
 }
 
 /* under construction */
-static void gfx_window_resize(struct window* w, int width, int height)
+static int gfx_window_resize(struct window* w, int width, int height)
 {
     /**
      * Width and height are the content size, 16 px smaller than the window.
@@ -200,15 +200,21 @@ static void gfx_window_resize(struct window* w, int width, int height)
      */
     width = MIN(MAX(width, GFX_WINDOW_MIN_WIDTH-16), vbe_info->width - w->x - 16);
     height = MIN(MAX(height, GFX_WINDOW_MIN_HEIGHT-16), vbe_info->height - w->y - 16);
-    if(width <= 0 || height <= 0 || (width == w->inner_width && height == w->inner_height)){
-        return;
+    if(width <= 0 || height <= 0){
+        return -ERROR_INVALID_ARGUMENTS;
+    }
+    if(width == w->inner_width && height == w->inner_height){
+        return ERROR_OK;
     }
 
-    /* Allocate new inner buffer, copy over old buffer, free old buffer, update struct */
-    uint8_t* new_buffer = kalloc(width*height);
+    /**
+     * Allocate new inner buffer, copy over old buffer, free old buffer, update struct.
+     * Window buffers can be large, so running out of memory here keeps the old size instead of panicking.
+     */
+    uint8_t* new_buffer = kalloc_try(width*height);
     if(new_buffer == NULL){
-        warningf("Failed to allocate new buffer for window resize\n");
-        return;
+        warningf("Not enough memory to resize %s to %dx%d\n", w->name, width, height);
+        return -ERROR_ALLOC;
     }
 
     uint8_t* old = w->inner;
@@ -235,6 +241,8 @@ static void gfx_window_resize(struct window* w, int width, int height)
     w->changed = 1;
 
     kfree(old);
+
+    return ERROR_OK;
 }
 
 /**
@@ -283,18 +291,21 @@ static void gfx_default_click(struct window* window, int x, int y)
     if (x >= window->x + window->width - 46 + 6 && x <= window->x + window->width - 46 + 6 + 10 && y >= window->y - 3 && y <= window->y - 3 + 9 && window->is_resizable) {
         dbgprintf("[GFX WINDOW] Clicked %s full screen button\n", window->name);
         if(window->is_maximized.state == 0){
-            window->is_maximized.state = 1;
             window->is_maximized.width = window->width+4;
             window->is_maximized.height = window->height;
 
-            window->ops->maximize(window);
+            /* Without enough memory for the bigger buffer, the window stays as it is */
+            if(window->ops->maximize(window) < 0){
+                return;
+            }
+            window->is_maximized.state = 1;
 
         } else {
+            /* resize sets width and height, and leaves them alone if it fails */
+            if(window->ops->resize(window, window->is_maximized.width-16, window->is_maximized.height-16) < 0){
+                return;
+            }
             window->is_maximized.state = 0;
-            window->width = window->is_maximized.width;
-            window->height = window->is_maximized.height;
-
-            window->ops->resize(window, window->width-16, window->height-16);
         }
 
         struct gfx_event e = {
@@ -406,11 +417,17 @@ static int gfx_window_maximize(struct window* window)
 {
     ERR_ON_NULL(window);
 
+    int x = window->x, y = window->y;
+
     /* Move first, since resizing keeps the window on screen from where it is */
     window->ops->move(window, 0, 26);
 
     /* Placed at y 26, a window this tall ends exactly at the bottom of the screen */
-    gfx_window_resize(window, vbe_info->width-16, vbe_info->height-42);
+    int ret = gfx_window_resize(window, vbe_info->width-16, vbe_info->height-42);
+    if(ret < 0){
+        window->ops->move(window, x, y);
+        return ret;
+    }
 
     window->changed = 1;
 

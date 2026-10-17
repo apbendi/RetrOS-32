@@ -113,6 +113,7 @@ void vmem_init();
 
 /* Kernel memory*/
 void* kalloc(int size);
+void* kalloc_try(int size);
 void* kcalloc(int size);
 void* krealloc(void* ptr, int new_size);
 void kfree(void* ptr);

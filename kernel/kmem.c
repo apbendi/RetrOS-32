@@ -78,12 +78,13 @@ static inline void __kmemory_write_metadata(int start_block, int num_blocks)
  * contiguous region of free blocks that is large enough to accommodate the requested memory size. If such a region
  * is found, the function marks the corresponding blocks as used in the bitmap, writes the size of the allocated
  * block to a metadata block, and returns a pointer to the allocated memory block. If no contiguous region of memory
- * is found, the function returns NULL.
+ * is found, the function panics, or with panic_when_full false, returns NULL.
  * 
  * @param size The amount of memory to allocate, in bytes. It is recommended that this value be 4KB-aligned.
- * @return A void pointer to the allocated memory block, or NULL if no contiguous region of memory was found.
+ * @param panic_when_full Whether to panic or return NULL when no contiguous region of memory is found.
+ * @return A void pointer to the allocated memory block, or NULL if size isn't positive or no region was found.
  */
-void* kalloc(int size)
+static void* __kalloc(int size, int panic_when_full)
 {
     if (size <= 0) return NULL;
 
@@ -96,6 +97,11 @@ void* kalloc(int size)
     int start_block = __kmemory_find_blocks(num_blocks, total_blocks);
     if (start_block == -1) {
         /* No contiguous free region of memory was found */
+        if(!panic_when_full){
+            spin_unlock(&__kmemory_lock);
+            return NULL;
+        }
+
         uint32_t *ebp = (uint32_t*) __builtin_frame_address(0);
    	    __backtrace_from((uintptr_t*)ebp);
 
@@ -123,6 +129,18 @@ void* kalloc(int size)
     spin_unlock(&__kmemory_lock);
 
     return ptr;
+}
+
+/* Panics when no contiguous region of memory is big enough */
+void* kalloc(int size)
+{
+    return __kalloc(size, 1);
+}
+
+/* For allocations that can fail without bringing down the system, like a window's buffer: returns NULL instead of panicking */
+void* kalloc_try(int size)
+{
+    return __kalloc(size, 0);
 }
 
 void* kcalloc(int size)
