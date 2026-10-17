@@ -95,7 +95,7 @@ int gfx_put_icon16(unsigned char icon[], int x, int y)
 			/* for new icons we use 0xfa for transparent */
 			if (icon[l*16+i] != 0xfa) {
 
-				if((x)+i < 0 || (y)+l < 0 || (x)+i > $process->current->gfx_window->inner_width || (y)+l > $process->current->gfx_window->inner_height)
+				if((x)+i < 0 || (y)+l < 0 || (x)+i >= $process->current->gfx_window->inner_width || (y)+l >= $process->current->gfx_window->inner_height)
 					continue;
 				putpixel($process->current->gfx_window->inner, (x)+i, (y)+l, rgb_to_vga(icon[l*16+i]), $process->current->gfx_window->pitch);
 			}
@@ -112,7 +112,7 @@ int gfx_put_icon32(unsigned char icon[], int x, int y)
 			/* for new icons we use 0xfa for transparent */
 			if (icon[l*32+i] != 0xfa) {
 
-				if((x)+i < 0 || (y)+l < 0 || (x)+i > $process->current->gfx_window->inner_width || (y)+l > $process->current->gfx_window->inner_height)
+				if((x)+i < 0 || (y)+l < 0 || (x)+i >= $process->current->gfx_window->inner_width || (y)+l >= $process->current->gfx_window->inner_height)
 					continue;
 				putpixel($process->current->gfx_window->inner, (x)+i, (y)+l, rgb_to_vga(icon[l*32+i]), $process->current->gfx_window->pitch);
 			}
@@ -183,7 +183,7 @@ int kernel_gfx_draw_pixel(struct window* w, int x, int y, color_t color)
 	ERR_ON_NULL(w);
 
 	/* only draw rectangle inside window */
-	if(x < 0 || y < 0 || x > w->inner_width || y > w->inner_height)
+	if(x < 0 || y < 0 || x >= w->inner_width || y >= w->inner_height)
 		return -2;
 
 	putpixel(w->inner, x, y, color, w->pitch);
@@ -226,7 +226,7 @@ int kernel_gfx_draw_char(struct window* w, int x, int y, unsigned char c, unsign
 		for (int i = 8; i >= 0; i--) {
 			if (font8x8_basic[c][l] & (1 << i)) {
 
-				if((x)+i < 0 || (y)+l < 0 || (x)+i > w->inner_width || (y)+l > w->inner_height)
+				if((x)+i < 0 || (y)+l < 0 || (x)+i >= w->inner_width || (y)+l >= w->inner_height)
 					continue;
 				putpixel(w->inner, (x)+i, (y)+l, color, w->pitch);
 			}
@@ -298,6 +298,13 @@ int kernel_gfx_set_header(const char* header)
 
 #define ABS(N) ((N<0)?(-N):(N))
 
+/* Writes one pixel of a window's content, skipping it if it's outside the window */
+static void __window_put_pixel(struct window* w, int x, int y, unsigned char color)
+{
+	if(x < 0 || y < 0 || x >= w->inner_width || y >= w->inner_height) return;
+	putpixel(w->inner, x, y, color, w->pitch);
+}
+
 /**
 plotLine(x0, y0, x1, y1)
 	dx = abs(x1 - x0)
@@ -343,7 +350,11 @@ void kernel_gfx_draw_line(struct window* w, int x0, int y0, int x1, int y1, unsi
 
 	while(1)  
 	{  
-		putpixel(w->inner, y0, x0, color, w->pitch); 
+		/**
+		 * x is the row and y the column here, and callers rely on that, so the endpoint
+		 * checks above don't keep the line inside the window. Clip each pixel instead.
+		 */
+		__window_put_pixel(w, y0, x0, color);
 		if (x0 == x1 && y0 == y1) break;
 		int e2 = 2*error;
 
@@ -364,27 +375,27 @@ void kernel_gfx_draw_line(struct window* w, int x0, int y0, int x1, int y1, unsi
 static void kernel_gfx_draw_circle_helper(struct window* w, int xc, int yc, int x, int y, unsigned char color, bool_t fill)
 {
     // Draw the circle outline
-    putpixel(w->inner, xc + x, yc + y, color, w->pitch);
-    putpixel(w->inner, xc - x, yc + y, color, w->pitch);
-    putpixel(w->inner, xc + x, yc - y, color, w->pitch);
-    putpixel(w->inner, xc - x, yc - y, color, w->pitch);
-    putpixel(w->inner, xc + y, yc + x, color, w->pitch);
-    putpixel(w->inner, xc - y, yc + x, color, w->pitch);
-    putpixel(w->inner, xc + y, yc - x, color, w->pitch);
-    putpixel(w->inner, xc - y, yc - x, color, w->pitch);
+    __window_put_pixel(w, xc + x, yc + y, color);
+    __window_put_pixel(w, xc - x, yc + y, color);
+    __window_put_pixel(w, xc + x, yc - y, color);
+    __window_put_pixel(w, xc - x, yc - y, color);
+    __window_put_pixel(w, xc + y, yc + x, color);
+    __window_put_pixel(w, xc - y, yc + x, color);
+    __window_put_pixel(w, xc + y, yc - x, color);
+    __window_put_pixel(w, xc - y, yc - x, color);
 
     // Fill the circle if the flag is set
     if (fill)
     {
         for (int i = xc - x; i <= xc + x; i++) {
             for (int j = yc - y + 1; j < yc + y; j++) {
-                putpixel(w->inner, i, j, color, w->pitch);
+                __window_put_pixel(w, i, j, color);
             }
         }
 
         for (int i = xc - y; i <= xc + y; i++) {
             for (int j = yc - x + 1; j < yc + x; j++) {
-                putpixel(w->inner, i, j, color, w->pitch);
+                __window_put_pixel(w, i, j, color);
             }
         }
     }
