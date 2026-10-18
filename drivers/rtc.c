@@ -73,3 +73,16 @@ int get_time()
     get_current_time(&t);
 	return (t.hour*3600)+(t.minute*60)+t.second;
 }
+
+/**
+ * Returns the three-letter name of a month from 1 to 12, or "???" for anything else.
+ */
+const char* rtc_month_name(int month)
+{
+    static const char* names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+    if (month < 1 || month > 12) {
+        return "???";
+    }
+    return names[month - 1];
+}

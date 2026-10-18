@@ -369,7 +369,8 @@ static void __kthread_entry taskbar(void)
 
     struct time time;
     struct gfx_event event;
-    int timedate_length = strlen("00:00:00 00/00/0000");
+    /* The longest the clock text can be */
+    int timedate_length = strlen("12:00 PM Sep 30, 2000");
 
     w->draw->rect(w, 0, 1, vbe_info->width, TASKBAR_HEIGHT, 30);
     w->draw->rect(w, 0, 0, vbe_info->width, 2, COLOR_VGA_LIGHTER_GRAY+1);
@@ -387,13 +388,13 @@ static void __kthread_entry taskbar(void)
     
     gfx_put_icon16(wlan_16, w->inner_width - (timedate_length*8) - 20, 2);
 
-    /* Second of the last clock redraw, -1 to draw right away */
-    int last_second = -1;
+    /* Minute of the last clock redraw, -1 to draw right away */
+    int last_minute = -1;
 
     while (1){
         bool_t changed = false;
 
-        /* Handle pending events without waiting for one, so the clock keeps ticking when nothing happens */
+        /* Handle pending events without waiting for one, so the clock keeps updating when nothing happens */
         while(gfx_event_loop(&event, GFX_EVENT_NONBLOCKING) != -1){
             if(event.event == GFX_EVENT_MOUSE){
                 taskbar_mouse_event(w, event.data, event.data2);
@@ -403,15 +404,18 @@ static void __kthread_entry taskbar(void)
         }
 
         get_current_time(&time);
-        if(time.second != last_second){
-            last_second = time.second;
+        if(time.minute != last_minute){
+            last_minute = time.minute;
 
+            /* 12-hour clock: hour 0 is 12 AM, and hour 12 is 12 PM */
+            int hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
+
+            /* e.g. "2:05 PM Oct 18, 2026". The RTC's year has two digits, and the century register isn't read. */
             w->draw->rect(w, w->inner_width - (timedate_length*8), 5, timedate_length*8, 10, 30);
             w->draw->textf(w, w->inner_width - (timedate_length*8), 5, COLOR_BLACK,
-                "%s%d:%s%d:%s%d %s%d/%s%d/%d",
-                TIME_PREFIX(time.hour), time.hour, TIME_PREFIX(time.minute),time.minute,
-                TIME_PREFIX(time.second), time.second, TIME_PREFIX(time.day), time.day,
-                TIME_PREFIX(time.month), time.month, time.year
+                "%d:%s%d %s %s %d, %d",
+                hour, TIME_PREFIX(time.minute), time.minute, time.hour < 12 ? "AM" : "PM",
+                rtc_month_name(time.month), time.day, 2000 + time.year
             );
             changed = true;
         }
