@@ -31,6 +31,10 @@ uint8_t __rtc_get_register(int reg)
 }
 
 
+/**
+ * Returns exactly what the RTC holds, with no time zone handling. The Makefile starts QEMU with
+ * -rtc base=localtime, so that's the host's local time. #20 covers keeping it in UTC with an offset setting.
+ */
 int get_current_time(struct time* time)
 {
     uint8_t reg_b;
@@ -38,7 +42,7 @@ int get_current_time(struct time* time)
     while (__rtc_check_in_progress());
     time->second = __rtc_get_register(0x00);
     time->minute = __rtc_get_register(0x02); 
-    time->hour = __rtc_get_register(0x04)+2; 
+    time->hour = __rtc_get_register(0x04); 
     time->day = __rtc_get_register(0x07); 
     time->month = __rtc_get_register(0x08); 
     time->year = __rtc_get_register(0x09); 
@@ -49,7 +53,7 @@ int get_current_time(struct time* time)
     {
         time->second = (time->second & 0x0F) + ((time->second / 16) * 10);
         time->minute = (time->minute & 0x0F) + ((time->minute / 16) * 10);
-        time->hour = (( (time->hour & 0x0F) + (((time->hour & 0x70) / 16) * 10) ) | (time->hour & 0x80)) - 1;
+        time->hour = (( (time->hour & 0x0F) + (((time->hour & 0x70) / 16) * 10) ) | (time->hour & 0x80));
         time->day = (time->day & 0x0F) + ((time->day / 16) * 10);
         time->month = (time->month & 0x0F) + ((time->month / 16) * 10);
         time->year = (time->year & 0x0F) + ((time->year / 16) * 10);

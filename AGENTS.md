@@ -154,6 +154,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - `kalloc` panics with "Out of memory!" rather than returning NULL.
   - Use `kalloc_try` for large allocations that are allowed to fail.
   - Every window's buffer comes from this heap, apps' included. At 1024×768 a maximized window's buffer is ~715 KB.
+- **The time of day:** `get_current_time` (`drivers/rtc.c`) returns exactly what the CMOS real-time clock holds; the OS has no time zones. The Makefile starts QEMU with `-rtc base=localtime`, so the clock shows the host's local time (#19). #20 covers keeping the RTC in UTC with an offset setting.
 - **Timers and sleeping:** the timer runs at 1000 Hz, so `sleep(ms)` and ticks are milliseconds. PCB sleep deadlines are `uint32_t`; a 16-bit field used to overflow after ~65 s.
 - **Fixed offsets:** `struct pcb` fields above the "DO NOT CHANGE ABOVE" marker are read by assembly at fixed offsets. The ISR stubs in `kernel/irs_entry.s` build exactly the frame described by `struct registers`.
 - **Freeing pages:** a process exit currently double-frees a stack page and leaks another (#12), which logs `[VMEM] Double free or invalid free`.

@@ -11,7 +11,7 @@ LDFLAGS := $(ARCH_LDFLAGS)
 
 HOSTFWD_PORT ?= 8080
 QEMU_NETDEV = -netdev user,id=net0,hostfwd=tcp::$(HOSTFWD_PORT)-:80
-QEMU_OPS = -device e1000,netdev=net0 -serial stdio $(QEMU_NETDEV) -object filter-dump,id=net0,netdev=net0,file=dump.dat -m 32m
+QEMU_OPS = -device e1000,netdev=net0 -serial stdio $(QEMU_NETDEV) -object filter-dump,id=net0,netdev=net0,file=dump.dat -m 32m -rtc base=localtime
 
 ifeq ($(UNAME_S),Darwin)
   GRUB ?= grub-mkrescue /usr/local/lib/grub/i386-pc/ -o myos.iso legacy/multiboot
