@@ -59,9 +59,10 @@ int get_current_time(struct time* time)
         time->year = (time->year & 0x0F) + ((time->year / 16) * 10);
     }
 
-    if (!(reg_b & 0x02) && (time->hour & 0x80)) {
-            time->hour = ((time->hour & 0x7F) + 12) % 24;
-      }
+    /* 12-hour mode stores 1-12 with bit 7 set for PM, so midnight is 12 and noon is 12 | 0x80 */
+    if (!(reg_b & 0x02)) {
+        time->hour = (time->hour & 0x7F) % 12 + ((time->hour & 0x80) ? 12 : 0);
+    }
 
     return 1;
 }
