@@ -315,6 +315,44 @@ static void taskbar_hdr_opt_event(struct window* w, struct taskbar_header* heade
 }
 
 /**
+ * @brief taskbar_mouse_event handles a click on the taskbar
+ * Closes any open menu, running the option clicked, then opens the menu of the header clicked
+ * @param w window
+ * @param x x position of mouse
+ * @param y y position of mouse
+ */
+static void taskbar_mouse_event(struct window* w, int x, int y)
+{
+    /* check if mouse event is inside a header */
+    for (int i = 0; i < TASKBAR_MAX_HEADERS; i++){
+        if(default_taskbar.headers[i].name[0] == 0) continue;
+        /* clear all extended options*/
+        if(default_taskbar.headers[i].extended){
+            taskbar_hdr_opt_event(w, &default_taskbar.headers[i], x, y);
+            default_taskbar.headers[i].extended = false;
+            w->draw->rect(w,
+                default_taskbar.headers[i].x,
+                default_taskbar.headers[i].y+20,
+                TASKBAR_EXT_OPT_WIDTH, 
+                TASKBAR_EXT_OPT_HEIGHT,
+                COLOR_TRANSPARENT
+            );
+        }
+    }
+
+    for (int i = 0; i < TASKBAR_MAX_HEADERS; i++){
+        /* continue for empty headers */
+        if(default_taskbar.headers[i].name[0] == '\0') continue;
+        /* I have no idea why this needs to be here... :/ */
+        if(default_taskbar.headers[i].extended){
+            taskbar_hdr_opt_event(w, &default_taskbar.headers[i], x, y);
+        }
+
+        taskbar_hdr_event(w, &default_taskbar.headers[i], x, y);
+    }
+}
+
+/**
  * @brief taskbar is the main taskbar thread
  */
 static void __kthread_entry taskbar(void)
@@ -347,58 +385,44 @@ static void __kthread_entry taskbar(void)
         }
     }
     
+    gfx_put_icon16(wlan_16, w->inner_width - (timedate_length*8) - 20, 2);
+
+    /* Second of the last clock redraw, -1 to draw right away */
+    int last_second = -1;
+
     while (1){
+        bool_t changed = false;
 
-        gfx_put_icon16(wlan_16, w->inner_width - (timedate_length*8) - 20, 2);
-
-        get_current_time(&time);
-        w->draw->rect(w, w->inner_width - (timedate_length*8), 5, timedate_length*8, 10, 30);
-        w->draw->textf(w, w->inner_width - (timedate_length*8), 5, COLOR_BLACK,
-            "%s%d:%s%d:%s%d %s%d/%s%d/%d",
-            TIME_PREFIX(time.hour), time.hour, TIME_PREFIX(time.minute),time.minute,
-            TIME_PREFIX(time.second), time.second, TIME_PREFIX(time.day), time.day,
-            TIME_PREFIX(time.month), time.month, time.year
-        );
-        
-        /* draw options */
-        gfx_event_loop(&event, GFX_EVENT_BLOCKING);
-        switch (event.event){
-        case GFX_EVENT_MOUSE:{
-                /* check if mouse event is inside a header */
-                for (int i = 0; i < TASKBAR_MAX_HEADERS; i++){
-                    if(default_taskbar.headers[i].name[0] == 0) continue;
-                    /* clear all extended options*/
-                    if(default_taskbar.headers[i].extended){
-                        taskbar_hdr_opt_event(w, &default_taskbar.headers[i], event.data, event.data2);
-                        default_taskbar.headers[i].extended = false;
-                        w->draw->rect(w,
-                            default_taskbar.headers[i].x,
-                            default_taskbar.headers[i].y+20,
-                            TASKBAR_EXT_OPT_WIDTH, 
-                            TASKBAR_EXT_OPT_HEIGHT,
-                            COLOR_TRANSPARENT
-                        );
-                    }
-                }
-
-                for (int i = 0; i < TASKBAR_MAX_HEADERS; i++){
-                    /* continue for empty headers */
-                    if(default_taskbar.headers[i].name[0] == '\0') continue;
-                    /* I have no idea why this needs to be here... :/ */
-                    if(default_taskbar.headers[i].extended){
-                        taskbar_hdr_opt_event(w, &default_taskbar.headers[i], event.data, event.data2);
-                    }
-
-                    taskbar_hdr_event(w, &default_taskbar.headers[i], event.data, event.data2);
-                }
+        /* Handle pending events without waiting for one, so the clock keeps ticking when nothing happens */
+        while(gfx_event_loop(&event, GFX_EVENT_NONBLOCKING) != -1){
+            if(event.event == GFX_EVENT_MOUSE){
+                taskbar_mouse_event(w, event.data, event.data2);
+                dbgprintf("Mouse event: %d %d\n", event.data, event.data2);
+                changed = true;
             }
-            dbgprintf("Mouse event: %d %d\n", event.data, event.data2);
-            break;
-        default:
-            break;
         }
 
-        kernel_yield();
+        get_current_time(&time);
+        if(time.second != last_second){
+            last_second = time.second;
+
+            w->draw->rect(w, w->inner_width - (timedate_length*8), 5, timedate_length*8, 10, 30);
+            w->draw->textf(w, w->inner_width - (timedate_length*8), 5, COLOR_BLACK,
+                "%s%d:%s%d:%s%d %s%d/%s%d/%d",
+                TIME_PREFIX(time.hour), time.hour, TIME_PREFIX(time.minute),time.minute,
+                TIME_PREFIX(time.second), time.second, TIME_PREFIX(time.day), time.day,
+                TIME_PREFIX(time.month), time.month, time.year
+            );
+            changed = true;
+        }
+
+        /* Kernel drawing doesn't mark the window changed, so without this the screen waits for the mouse to move */
+        if(changed){
+            gfx_commit();
+        }
+
+        /* Events don't wake a sleeping thread, so this is also the longest a click waits */
+        kernel_sleep(50);
     }
 }
 EXPORT_KTHREAD(taskbar);

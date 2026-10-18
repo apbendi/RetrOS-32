@@ -129,6 +129,7 @@ The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but no
 
 **Events:**
 - **Reading:** `gfx_get_event(&e, GFX_EVENT_NONBLOCKING)` returns 0 if it got an event and -1 if there was none. On -1 it leaves `e` untouched.
+- **Blocking:** `GFX_EVENT_BLOCKING` blocks the thread until an event arrives, so nothing else in its loop runs meanwhile. A thread with timed work, like the taskbar's clock, reads with `GFX_EVENT_NONBLOCKING` and calls `kernel_sleep(ms)`. Events don't wake a sleeping thread, so the sleep is also the longest it takes to respond.
 - **The queue holds 10 events.** When it's full, the oldest is dropped.
 - **Drain all events every frame.** An app that reads one event per frame falls behind its input, and once the queue is full, events get dropped.
 - **On a resize,** apply only the latest size, and redraw everything. A window gets one `GFX_EVENT_RESOLUTION` per resize: when a corner drag is released (#10), or on maximize or restore. The kernel keeps the old content that still fits (#14), and the rest is black.
