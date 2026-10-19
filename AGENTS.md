@@ -141,6 +141,7 @@ The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but no
 - **No nesting:** the lock isn't reentrant, so don't call a function that takes it while holding it.
 - **Interrupts:** `spin_lock` waits by yielding to other threads (`WAIT` → `kernel_yield`), so don't take it inside `ENTER_CRITICAL`.
 - **Compositing** reads buffers without the lock. That's safe only because every swap also runs on the window server thread. Moving a swap to another thread would mean the compositor has to take the lock too.
+  - So it can copy a window halfway through a redraw, which then shows on screen until the next composite. `gfx_draw_window` clears `changed` before copying, not after, so a commit made during the copy still gets the finished frame composited.
 - **The event queue** has its own lock, `w->spinlock`.
 
 Syscalls run with interrupts enabled, so they can be preempted.

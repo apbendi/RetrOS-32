@@ -65,6 +65,12 @@ static struct window_draw_ops default_window_draw_ops = {
  */
 void gfx_draw_window(uint8_t* buffer, struct window* window)
 {
+    /**
+     * Clear changed before copying the window, not after. Its owner may commit while the copy is under way,
+     * and clearing it afterwards would drop that commit, leaving a half-drawn frame on screen until something else changes.
+     */
+    window->changed = 0;
+
     struct gfx_theme* theme = kernel_gfx_current_theme();
     int padding = HAS_FLAG(window->flags, GFX_HIDE_HEADER) ? 0 : 8;
     int background_color = window->in_focus ? window->color.border == 0 ? theme->window.border : window->color.border : theme->window.border;
@@ -90,7 +96,6 @@ void gfx_draw_window(uint8_t* buffer, struct window* window)
         vesa_striped_line_vertical(buffer, window->x+width-1, window->y, height, COLOR_VGA_DARKEST_GRAY, 2);
         vesa_striped_line_vertical(buffer, window->x+width-1, window->y+2, height-2, COLOR_VGA_LIGHTEST_GRAY, 4);
 
-        window->changed = 0;
         return;
     }
 
@@ -185,7 +190,6 @@ void gfx_draw_window(uint8_t* buffer, struct window* window)
         vesa_write_str(buffer, window->x+window->width-20+6,  window->y-2, "X", COLOR_VGA_DARK_GRAY);
     }
 
-    window->changed = 0;
     return;
 }   
 
