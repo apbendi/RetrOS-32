@@ -66,7 +66,8 @@ void __kthread_entry kclock(int argc, char* argv[])
          * Unlike a difference of seconds since midnight, this keeps working past midnight.
          */
         if(now.second == last_second){
-            kernel_yield();
+            /* Check again in 50 ms rather than spinning. Events don't wake a sleeping thread, so closing can take that long. */
+            kernel_sleep(50);
             continue;
         }
         last_second = now.second;

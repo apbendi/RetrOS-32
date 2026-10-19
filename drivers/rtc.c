@@ -12,6 +12,7 @@
 
 #include <rtc.h>
 #include <arch/io.h>
+#include <kutils.h>
 
 enum {
     RTC_ADDRESS = 0x70,
@@ -39,7 +40,20 @@ int get_current_time(struct time* time)
 {
     uint8_t reg_b;
 
-    while (__rtc_check_in_progress());
+    /**
+     * Selecting a register and reading it are separate port accesses, so another thread reading the RTC
+     * in between would change which register gets read. Interrupts stay off from the update check through
+     * the last read, so no other thread runs, and the reads finish well within the 244 microseconds the RTC
+     * guarantees after the update-in-progress bit clears. An update takes up to 2 ms, so interrupts come
+     * back on between checks.
+     */
+    while (1) {
+        ENTER_CRITICAL();
+        if (!__rtc_check_in_progress()) {
+            break;
+        }
+        LEAVE_CRITICAL();
+    }
     time->second = __rtc_get_register(0x00);
     time->minute = __rtc_get_register(0x02); 
     time->hour = __rtc_get_register(0x04); 
@@ -48,6 +62,7 @@ int get_current_time(struct time* time)
     time->year = __rtc_get_register(0x09); 
 
     reg_b = __rtc_get_register(0x0B);
+    LEAVE_CRITICAL();
 
     if (!(reg_b & 0x04))
     {

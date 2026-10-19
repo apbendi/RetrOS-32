@@ -59,7 +59,6 @@ struct windowserver {
 
     /* states */
     struct mouse m;
-    struct time time;
     int window_changes;
     
     byte_t flags;
