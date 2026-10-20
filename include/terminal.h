@@ -50,9 +50,16 @@ struct terminal_ops {
     unsigned char (*getchar)(struct terminal* term);
 };
 
+/* Longest line copied to the serial log in one piece; longer lines are split */
+#define TERMINAL_SERIAL_LINE_SIZE 128
+
 struct terminal {
     char* textbuffer;
     int textbuffer_size;
+
+    /* The line being written, copied to the serial log when it ends */
+    char serial_line[TERMINAL_SERIAL_LINE_SIZE];
+    int serial_line_length;
 
     int tail;
     int head;

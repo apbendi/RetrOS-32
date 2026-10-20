@@ -43,8 +43,10 @@ $Q stop
 - **Keyboard input goes to the front window.** A new window opens in front, so after `exec -d` the app has the keyboard, not the shell.
   - **`shell`** brings the shell back first.
   - **`focus`** works by pressing Tab, which sends the front window to the back and logs `Pushing window <name> to back`. It presses Tab until the window order repeats, then stops with NAME in front. That takes up to two rounds of Tabs, a couple of seconds.
-- **Shell output isn't in the serial log.** Kernel commands print with `twritef`, which only draws on the screen, so read it from a screenshot. An app's `printf` does go to the serial log.
-- **Text mode is an alternative for kernel commands.** In text mode (`start --res text`), `text` prints the shell's screen as text. Text mode has no windows, so use `type` rather than `shell` or `focus`.
+- **Terminal output is in the serial log,** one line at a time, as `term[<writer>]: <text>`. That includes the shell's echo of each command (`term[shell]: kernel> exec ...`), kernel commands' output, and apps' `printf`. So `$Q wait "term\[shell\]: .*File too large"` checks a command's result without a screenshot.
+  - A line is logged when it ends with a newline, so a prompt without one waits for the next newline.
+  - Lines over 127 characters are split across log lines.
+- **Text mode has no windows,** so use `type` rather than `shell` or `focus` there. `text` prints its screen.
 - **`log` and `wait` start from your last action:** `type`, `key`, `shell`, `focus`, `click`, `move` or `drag`.
   - So a `wait` can't match a line from before the command you just ran.
   - Use `--all` for everything since boot.

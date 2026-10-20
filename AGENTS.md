@@ -75,6 +75,7 @@ HOSTFWD_PORT=8081 make qemu    # if port 8080 is taken (the default forward to t
 ```
 
 - **The serial log** goes to the terminal (`-serial stdio`). Every `dbgprintf`/`warningf` line appears there as `function(): message`. It's the main debugging tool.
+  - Terminal output appears there too, one line at a time, as `term[<writer>]: <text>`. That covers the shell's echo of each command, the commands' output and apps' `printf`.
 - **`make qemu` is interactive** and opens a window. The maintainer usually runs it and pastes the serial log. Ask before booting it yourself. When asked whether a build worked, check the build output and artifacts; don't boot it.
 - **Without a display:** when the human says you may boot it, `.claude/skills/run-in-qemu/qctl.py` boots a copy of the image in a headless QEMU and drives it. It picks the resolution, types into the shell, clicks, saves screenshots you can look at, and reads the serial log. See the `run-in-qemu` skill.
 - **Starting apps:** from the shell, `exec -d /bin/<app>.o` starts an app without waiting for it; without `-d`, the shell waits until it exits. Kernel threads start by name, e.g. `exec kclock`. The Start menu entries are defined in `kernel/kthreads/taskbar.c`.

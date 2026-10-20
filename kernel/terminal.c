@@ -120,11 +120,32 @@ static int __terminal_grow_textbuffer(struct terminal* term, int min_capacity)
 	return 0;
 }
 
+/**
+ * Copies what the terminal shows to the serial log a line at a time, as "term[<writer>]: <line>",
+ * so the output of shell commands and apps can be read from the log. Every character a terminal
+ * shows comes through __terminal_store_char, in graphics and text mode.
+ */
+static void __terminal_copy_to_serial(struct terminal* term, char c)
+{
+	if(c != '\n'){
+		term->serial_line[term->serial_line_length++] = c;
+		if(term->serial_line_length < TERMINAL_SERIAL_LINE_SIZE-1) return;
+	}
+	term->serial_line[term->serial_line_length] = 0;
+
+	/* One call, and serial_printf runs with interrupts off, so other threads' log lines can't split the line */
+	serial_printf("\033[36mterm[%s]: \033[37m%s\n", $process->current != NULL ? $process->current->name : "?", term->serial_line);
+	term->serial_line_length = 0;
+}
+
 static int __terminal_store_char(struct terminal* term, char c)
 {
 	if(term == NULL){
 		return -1;
 	}
+
+	/* Before storing, so the log still gets the text when the text buffer can't grow */
+	__terminal_copy_to_serial(term, c);
 
 	if(term->head >= term->textbuffer_size){
 		if(__terminal_grow_textbuffer(term, term->head + 1) < 0){
@@ -145,7 +166,7 @@ void terminal_putchar(char c)
 {
 	if($process->current == NULL || $process->current->term == NULL) return;
 	
-	serial_put(c);
+	/* putchar stores the character, which also copies it to the serial log */
 	$process->current->term->ops->putchar($process->current->term, c);
 }
 
