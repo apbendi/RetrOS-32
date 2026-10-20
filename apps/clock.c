@@ -19,7 +19,8 @@
 
 #define center_x(size) ((110/2) - ((size*8)/2))
 
-static char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Nov", "Dec"};
+/* Apps can't call the kernel's rtc_month_name, so this is its own copy */
+static char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
 static volatile int shared;
 
@@ -45,7 +46,7 @@ int main()
 		gfx_draw_line(55, 55, 55+ (50*cos_60[now.second])/1.1, 55 + (50*sin_60[now.second])/1.1, COLOR_VGA_RED);
 
         gfx_draw_format_text(center_x(5), 112, COLOR_VGA_MEDIUM_GRAY, "%s%d:%s%d", now.hour > 9 ? "" : "0", now.hour, now.minute > 9 ? "" : "0", now.minute);
-        gfx_draw_format_text(center_x(6), 124, COLOR_VGA_MEDIUM_GRAY, "%d. %s", now.day, months[now.month]);
+        gfx_draw_format_text(center_x(6), 124, COLOR_VGA_MEDIUM_GRAY, "%d. %s", now.day, now.month >= 1 && now.month <= 12 ? months[now.month - 1] : "???");
 
         gfx_draw_format_text(0, 0, COLOR_WHITE, "%d", shared);
         sleep(100);

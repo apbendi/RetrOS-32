@@ -34,7 +34,8 @@ static int FS_START_LOCATION = 0;
 static int FS_INODE_BMAP_LOCATION = 0;
 static int FS_BLOCK_BMAP_LOCATION = 0;
 
-static char* months[] = {"NAN", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Nov", "Dec"};
+/* Indexed by month, 1-12. Not rtc_month_name, so the host tests that link this file don't need the RTC driver. */
+static char* months[] = {"NAN", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
 #define CHECK_DISK() if(!disk_attached()){\
 		dbgprintf("[FS]: No disk device found.\n");\
@@ -464,7 +465,7 @@ void listdir()
 		struct time* time = &inode->time;
 		twritef("%p %s %d, %d:%d - %s%s\n",
 			inode->size,
-			months[time->month],
+			time->month <= 12 ? months[time->month] : "???",
 			time->day, time->hour, time->minute,
 			entry.name,
 			inode->type == FS_TYPE_DIRECTORY ? "/" : ""
