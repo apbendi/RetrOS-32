@@ -32,6 +32,7 @@ $Q stop
 - **`start` options:** `--res 640|800|1024|text` picks the resolution. `--rtc 2026-10-20T10:05:00` starts the clock at a given time, e.g. to test the taskbar clock at a two-digit hour.
 - **`type TEXT`** types text; `\n` is Enter.
 - **`key NAME...`** presses keys by QEMU's names: `ret`, `tab`, `esc`, `f10`, `backspace`, `shift-a`, `ctrl-c`.
+- **`windows`** lists the windows front to back, with each one's position, size and owner, and where to click to bring it to the front. It presses F12, which makes the window server log the list.
 - **`focus NAME`** brings the window titled NAME to the front.
 - **`move X Y`** and **`drag X1 Y1 X2 Y2`** move the mouse; dragging a title bar moves the window.
 - **`text`** prints the VGA text screen, for the boot menu and text mode.
@@ -41,8 +42,10 @@ $Q stop
 
 - **The boot menu waits for a key,** and a key pressed before the menu is on screen is lost. `start` and `pick` read the menu from video memory, press the key once it's up, and press it again if the kernel doesn't start.
 - **Keyboard input goes to the front window.** A new window opens in front, so after `exec -d` the app has the keyboard, not the shell.
-  - **`shell`** brings the shell back first.
-  - **`focus`** works by pressing Tab, which sends the front window to the back and logs `Pushing window <name> to back`. It presses Tab until the window order repeats, then stops with NAME in front. That takes up to two rounds of Tabs, a couple of seconds.
+  - **`shell`** brings the shell back first. The shell isn't always in front after boot, because kernel threads open their windows in no fixed order.
+  - **`focus`** lists the windows (F12), then clicks a part of NAME's title bar that no window in front covers, and checks the log for `Pushing window <name> to front`. That takes about half a second.
+  - If the title bar is covered everywhere, `focus` falls back to Tab, which sends the front window to the back. It presses Tab until the window order repeats, then stops with NAME in front. That takes a couple of seconds.
+  - **F12 and the shell's `windows` command** list the windows. F12 is handled by the window server, so it works whatever has focus. Its lines look like `wm_log_windows(): 1 "Clock" x=450 y=50 w=126 h=156 pid=6`.
 - **Terminal output is in the serial log,** one line at a time, as `term[<writer>]: <text>`. That includes the shell's echo of each command (`term[shell]: kernel> exec ...`), kernel commands' output, and apps' `printf`. So `$Q wait "term\[shell\]: .*File too large"` checks a command's result without a screenshot.
   - A line is logged when it ends with a newline, so a prompt without one waits for the next newline.
   - Lines over 127 characters are split across log lines.
@@ -63,7 +66,10 @@ $Q stop
   | Start | 30, 9 |
   | Start menu items | x 50; y 33 Terminal, 49 Finder, 65 SysInfo, 81 Editor, 97 Cube, 113 Colors, 129 Clock, 145 Calc, 161 Users, 177 Wolfstein |
 
-  Windows open near the top left. A window's title bar is its top 12 or so pixels; check a screenshot for exact positions.
+  For windows, use `windows`: it prints each window's rectangle and a point to click.
+  - `x`, `y`, `w` and `h` are the window's outer rectangle. Its title bar starts 4 px above `y` and is 12 px tall.
+  - The maximize, minimize and close buttons take the title bar from `x+w-40` rightwards.
+  - The taskbar is a transparent window across the top of the screen. Only its bar, the top 20 or so pixels, takes clicks.
 - **Each command takes a few hundred milliseconds.** That's fine for checking behaviour, but it can't judge smoothness, flicker or how something feels. Leave that to the human.
 
 ## Repeating an action until something fails

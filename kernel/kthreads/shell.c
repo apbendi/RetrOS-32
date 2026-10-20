@@ -150,6 +150,23 @@ void ps(int argc, char* argv[])
 }
 EXPORT_KSYMBOL(ps);
 
+/* Lists the windows on screen, front to back. F12 logs the same list to the serial log, whatever has focus. */
+void windows(int argc, char* argv[])
+{
+	struct wm_window_info list[WM_LIST_MAX_WINDOWS];
+	int count = gfx_get_windows(list, WM_LIST_MAX_WINDOWS);
+	if(count < 0){
+		twritef("No windows: the window server isn't running\n");
+		return;
+	}
+
+	twritef("%d windows, front to back:\n", count);
+	for (int i = 0; i < count && i < WM_LIST_MAX_WINDOWS; i++){
+		twritef("%d %s x=%d y=%d w=%d h=%d pid=%d\n", i, list[i].name, list[i].x, list[i].y, list[i].width, list[i].height, list[i].pid);
+	}
+}
+EXPORT_KSYMBOL(windows);
+
 /* Function to print the lines and corners */
 static void print_branches(int level) {
     for (int i = 0; i < level; i++) {

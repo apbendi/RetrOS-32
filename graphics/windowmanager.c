@@ -21,6 +21,7 @@
 #include <mouse.h>
 #include <math.h>
 #include <vbe.h>
+#include <pcb.h>
 
 /* default static prototype functions for windowmanager ops */
 
@@ -404,6 +405,74 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
     window->ops->hover(window, x, y);
 
     return ERROR_OK;
+}
+
+/**
+ * @brief Copies the current workspace's windows, front to back, so they can be listed after the lock is released
+ * 
+ * @param wm windowmanager
+ * @param out where to copy up to max windows
+ * @param max how many fit in out
+ * @return int how many windows there are, which can be more than max
+ */
+int wm_get_windows(struct windowmanager* wm, struct wm_window_info* out, int max)
+{
+    ERR_ON_NULL(wm);
+    ERR_ON_NULL(out);
+
+    int count = 0;
+    spin_lock(&wm->spinlock);
+    for (struct window* i = wm->windows; i != NULL; i = i->next){
+        if(count < max){
+            struct wm_window_info* info = &out[count];
+            memcpy(info->name, i->name, GFX_MAX_WINDOW_NAME_SIZE);
+            info->name[GFX_MAX_WINDOW_NAME_SIZE-1] = 0;
+            info->x = i->x;
+            info->y = i->y;
+            info->width = i->width;
+            info->height = i->height;
+            info->pid = i->owner != NULL ? i->owner->pid : -1;
+            info->flags = i->flags;
+            info->maximized = i->is_maximized.state;
+        }
+        count++;
+    }
+    spin_unlock(&wm->spinlock);
+
+    return count;
+}
+
+/**
+ * @brief Logs the current workspace's windows to the serial log, front to back, one line each:
+ * <index> "<title>" x=<x> y=<y> w=<width> h=<height> pid=<owner>, then any of
+ * minimized, maximized, no-title-bar and transparent.
+ * x, y, w and h are the window's outer rectangle. The title bar is drawn GFX_WINDOW_HEADER_OVERHANG
+ * pixels above y and is GFX_WINDOW_TITLE_HEIGHT tall, and a minimized window shows only its title bar.
+ * The F12 key calls this, so tools can find windows whatever has focus.
+ * 
+ * @param wm windowmanager
+ */
+void wm_log_windows(struct windowmanager* wm)
+{
+    struct wm_window_info windows[WM_LIST_MAX_WINDOWS];
+    int count = wm_get_windows(wm, windows, WM_LIST_MAX_WINDOWS);
+    if(count < 0){
+        return;
+    }
+
+    dbgprintf("%d windows in workspace %d, front to back\n", count, wm->workspace);
+    for (int i = 0; i < count && i < WM_LIST_MAX_WINDOWS; i++){
+        struct wm_window_info* w = &windows[i];
+        dbgprintf("%d \"%s\" x=%d y=%d w=%d h=%d pid=%d%s%s%s%s\n", i, w->name, w->x, w->y, w->width, w->height, w->pid,
+            HAS_FLAG(w->flags, GFX_IS_HIDDEN) ? " minimized" : "",
+            w->maximized ? " maximized" : "",
+            HAS_FLAG(w->flags, GFX_HIDE_HEADER) ? " no-title-bar" : "",
+            HAS_FLAG(w->flags, GFX_IS_TRANSPARENT) ? " transparent" : ""
+        );
+    }
+    if(count > WM_LIST_MAX_WINDOWS){
+        dbgprintf("and %d more\n", count - WM_LIST_MAX_WINDOWS);
+    }
 }
 
 /**

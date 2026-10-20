@@ -303,6 +303,10 @@ static int __ws_key_event(struct windowserver* ws, unsigned char key)
             gfx_push_event(w, &e);
         }
         break;
+    case F12:
+        /* Log the window list, for finding windows without a screenshot */
+        wm_log_windows(ws->_wm);
+        break;
     case TAB: {
             dbgprintf("[WSERVER] Switching focus.\n");
             struct windowmanager* wm = ws->_wm;

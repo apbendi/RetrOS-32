@@ -90,6 +90,19 @@ int gfx_set_taskbar(pid_t pid)
     return ERROR_OK;
 }
 
+/**
+ * @brief Copies the windows on screen, front to back (see wm_get_windows).
+ * @return int how many windows there are, or -1 when there's no window server, e.g. in text mode
+ */
+int gfx_get_windows(struct wm_window_info* out, int max)
+{
+    if(ws == NULL || ws->_wm == NULL || ws->_wm->state != WM_INITIALIZED){
+        return -1;
+    }
+
+    return wm_get_windows(ws->_wm, out, max);
+}
+
 void __kthread_entry gfx_compositor_main()
 {
     ws = ws_new();

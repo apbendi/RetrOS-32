@@ -177,6 +177,8 @@ Syscalls run with interrupts enabled, so they can be preempted.
 
 **Mouse:** the window manager remembers which window got the press (`pressed_window`). A release always goes to that window, but it only counts as a click if the cursor is still over it. Clicks are handled at the cursor's arrow tip (`VESA_CURSOR_HOTSPOT_X`/`_Y`).
 
+**Listing windows:** F12 logs the current workspace's windows to the serial log, front to back, with each one's rectangle, owner and flags (`wm_log_windows`). The shell's `windows` command prints the same list. Both copy the list under `wm->spinlock` with `wm_get_windows`, then print after releasing it.
+
 ## Kernel facts that have mattered
 
 - **The kernel heap is small, and `kalloc` panics when full.**

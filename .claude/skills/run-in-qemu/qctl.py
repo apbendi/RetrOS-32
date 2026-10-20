@@ -21,7 +21,8 @@ monitor over TCP to press keys, move the mouse and take screenshots.
 
   type TEXT               type TEXT; \\n is Enter
   key NAME...             press keys by QEMU name: ret tab esc f10 ctrl-c shift-a ...
-  focus NAME              press Tab until the window titled NAME is in front
+  windows                 list the windows front to back, with where to click each (presses F12)
+  focus NAME              bring the window titled NAME to the front
   shell CMD               focus the shell, then type CMD and Enter
   click X Y [--right]     click at screen pixel X,Y
   move X Y                move the mouse to screen pixel X,Y
@@ -262,7 +263,8 @@ def start(args):
     if "entering event loop" not in line:
         die("The kernel crashed while booting:\n  " + line + "\nSee: qctl.py log --all")
     set_mark()
-    print("Desktop is up; the shell has focus")
+    # Kernel threads start their windows in no fixed order, so the shell isn't always in front; shell and focus handle that
+    print("Desktop is up")
 
 
 def stop(_):
@@ -374,7 +376,106 @@ def drag(x1, y1, x2, y2):
     m.close()
 
 
+WINDOW_LINE = re.compile(r'wm_log_windows\(\): (\d+) "(.*)" x=(\d+) y=(\d+) w=(\d+) h=(\d+) pid=(-?\d+)(.*)')
+
+# The taskbar is a transparent window across the top of the screen. Clicks go through its transparent
+# pixels, so only its bar (TASKBAR_HEIGHT in kernel/kthreads/taskbar.c) takes them. This ignores an open Start menu.
+TASKBAR_BAR = 22
+
+
+def list_windows():
+    """F12 makes the window server log the current workspace's windows, front to back (wm_log_windows)."""
+    since = serial_size()
+    m = Monitor()
+    press(m, "f12")
+    m.close()
+    _, match = wait_for(r"wm_log_windows\(\): (\d+) windows in workspace", 3, since)
+    if not match:
+        die("F12 didn't log a window list. In text mode there are no windows.")
+    count = min(int(match.group(1)), 32)
+    end = time.time() + 3
+    while True:
+        found = [WINDOW_LINE.search(l) for l in serial_lines(since)]
+        windows = [{"index": int(w.group(1)), "name": w.group(2), "x": int(w.group(3)), "y": int(w.group(4)),
+                    "w": int(w.group(5)), "h": int(w.group(6)), "pid": int(w.group(7)), "flags": w.group(8).split()}
+                   for w in found if w]
+        if len(windows) >= count or time.time() > end:
+            return windows
+        sleep(0.1)
+
+
+def takes_click(w, x, y):
+    """Whether window w would take a click at screen pixel x,y (see wm_default_mouse_event)."""
+    if "transparent" in w["flags"]:
+        top, bottom = w["y"], w["y"] + TASKBAR_BAR
+    elif "no-title-bar" in w["flags"]:
+        top, bottom = w["y"], w["y"] + w["h"]
+    elif "minimized" in w["flags"]:
+        # Only the title bar is drawn: it starts GFX_WINDOW_HEADER_OVERHANG (4) above y and is 12 tall
+        top, bottom = w["y"] - 4, w["y"] + 8
+    else:
+        top, bottom = w["y"] - 4, w["y"] + w["h"]
+    return w["x"] <= x <= w["x"] + w["w"] and top <= y <= bottom
+
+
+def title_bar_point(windows, target):
+    """A point on target's title bar that no window in front of it covers, or None.
+    Clicking a title bar brings the window to the front without sending the app a click.
+    The maximize, minimize and close buttons take its right end from x+w-40 on (gfx_default_click)."""
+    if "no-title-bar" in target["flags"]:
+        return None
+    y = target["y"] + 2
+    for x in range(target["x"] + 8, target["x"] + target["w"] - 42, 4):
+        if not any(takes_click(w, x, y) for w in windows[:target["index"]]):
+            return x, y
+    return None
+
+
+def windows_cmd():
+    """Print the window list, front to back, with where to click to bring each window to the front."""
+    set_mark()
+    windows = list_windows()
+    for w in windows:
+        if w["index"] == 0:
+            where = "in front"
+        elif "no-title-bar" in w["flags"]:
+            where = "no title bar"
+        else:
+            point = title_bar_point(windows, w)
+            where = f"click {point[0]} {point[1]} to focus" if point else "title bar covered"
+        flags = " " + " ".join(w["flags"]) if w["flags"] else ""
+        print(f'{w["index"]:2} {w["name"]!r:22} x={w["x"]} y={w["y"]} w={w["w"]} h={w["h"]} pid={w["pid"]}{flags}  ({where})')
+
+
 def focus(name, quiet=False):
+    """Bring the frontmost window titled NAME to the front by clicking a visible part of its title bar.
+    Falls back to Tab cycling when its title bar is covered."""
+    windows = list_windows()
+    matches = [w for w in windows if w["name"] == name]
+    if not matches:
+        die(f"No window titled {name!r}. Windows, front to back: {', '.join(w['name'] for w in windows)}")
+    target = matches[0]
+    if target["index"] > 0:
+        point = title_bar_point(windows, target)
+        if point is None:
+            focus_by_tab(name, quiet)
+            return
+        since = serial_size()
+        m = Monitor()
+        mouse_to(m, *point)
+        m.run("mouse_button 1")
+        sleep(0.1)
+        m.run("mouse_button 0")
+        m.close()
+        if not wait_for(r"Pushing window " + re.escape(name) + " to front", 2, since)[0]:
+            focus_by_tab(name, quiet)
+            return
+    set_mark()
+    if not quiet:
+        print(f"{name} is in front")
+
+
+def focus_by_tab(name, quiet=False):
     """Tab sends the front window to the back and logs "Pushing window <name> to back".
     Press Tab until the sequence of names repeats, so the window order is known, then
     stop when NAME is next in line, which means it's in front."""
@@ -470,6 +571,7 @@ def main():
     sub.add_parser("text")
     s = sub.add_parser("type"); s.add_argument("text")
     s = sub.add_parser("key"); s.add_argument("names", nargs="+")
+    sub.add_parser("windows")
     s = sub.add_parser("focus"); s.add_argument("name")
     s = sub.add_parser("shell"); s.add_argument("command")
     s = sub.add_parser("click"); s.add_argument("x", type=int); s.add_argument("y", type=int)
@@ -491,6 +593,7 @@ def main():
     elif a.op == "text": print("\n".join(vga_text()).rstrip("\n"))
     elif a.op == "type": type_text(a.text.encode().decode("unicode_escape"))
     elif a.op == "key": keys(a.names)
+    elif a.op == "windows": windows_cmd()
     elif a.op == "focus": focus(a.name)
     elif a.op == "shell": shell(a.command)
     elif a.op == "click": click(a.x, a.y, 2 if a.right else 1)

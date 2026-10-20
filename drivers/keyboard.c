@@ -60,7 +60,7 @@ static const unsigned char kbdus[128] = {
     0,                               /* Insert Key */
     0,                               /* Delete Key */
     0,          0,           0,   0, /* F11 Key */
-    0,                               /* F12 Key */
+    F12,                             /* F12 Key */
     0,                               /* All other keys are undefined */
 };
 static const unsigned char kbdus_shift[128] = {
@@ -93,7 +93,7 @@ static const unsigned char kbdus_shift[128] = {
     0,                               /* Insert Key */
     0,                               /* Delete Key */
     0,          0,           0,   0, /* F11 Key */
-    0,                               /* F12 Key */
+    F12,                             /* F12 Key */
     0,                               /* All other keys are undefined */
 };
 static int __keyboard_presses = 0;

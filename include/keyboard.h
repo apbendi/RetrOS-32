@@ -17,6 +17,8 @@
 #define F8 243
 #define F9 242 /* CTRL r */
 #define F10 241 /* CTRL q */
+/* Ctrl+key is 128 plus the key's character, and no key's character is 1-7, so 129-135 can't be a Ctrl+key */
+#define F12 134
 
 #define TAB 9
 

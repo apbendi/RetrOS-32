@@ -79,6 +79,22 @@ struct windowmanager {
 
 struct windowmanager* wm_new(int flags);
 
+/* Most windows wm_log_windows and the windows command list */
+#define WM_LIST_MAX_WINDOWS 32
+
+/* A copy of a window's place on screen, so windows can be listed without holding the window manager's lock */
+struct wm_window_info {
+    char name[GFX_MAX_WINDOW_NAME_SIZE];
+    uint16_t x, y;
+    uint16_t width, height;
+    int pid;
+    unsigned char flags;
+    unsigned char maximized;
+};
+
+int wm_get_windows(struct windowmanager* wm, struct wm_window_info* out, int max);
+void wm_log_windows(struct windowmanager* wm);
+
 int wm_destroy(struct windowmanager* wm);
 
 /* TODO: remove when not needed anymore */
