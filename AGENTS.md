@@ -60,6 +60,7 @@ docker compose up
 - **What it runs:** `make img` in a container, with the repo mounted at `/RetrOS-32`. It compiles the kernel, libraries and apps, generates `rootfs/sysutil/symbols.map`, builds `RetrOS-32-debug.img`, and copies `rootfs/` into it.
 - **Incremental builds are reliable:**
   - Objects track header dependencies (`-MMD -MP`), and the kernel always relinks.
+  - `fs/` and `net/` have their own Makefiles. The top-level Makefile runs them on every build, through the phony targets `fs_objects` and `net_objects`, so their header tracking works too. A rule for a subdirectory's objects without a prerequisite like that only ever builds them once. That's how `list` crashed after #33 changed `struct terminal`: `fs/` still had the old layout compiled in.
   - The app static libraries (`apps/lib*.a`) are re-archived on every build, so every app relinks too. That matters when you change a struct shared between `lib/` and the kernel.
   - You don't need `make clean`.
 - **Toolchain:** the host (macOS) has no i386 cross toolchain. Use the container for real builds, and clang for quick checks (below).

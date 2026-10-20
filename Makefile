@@ -35,7 +35,7 @@ KERNEL_SUPPORT := $(addprefix $(BUILD_DIR)/,kcrt0.o multiboot.o)
 ALL_OBJS := $(BOOTOBJ) $(KERNELOBJ) $(LIBOBJ) $(KERNEL_SUPPORT)
 DEPS := $(ALL_OBJS:.o=.d)
 
-.PHONY: all iso compile kernel multiboot_kernel bootblock symbols apps tools tests build img filesystem create_fs bare re_apps clean test bindir grub grub_fix qemu qemu-headless qemu_kernel docker docker-rebuild reset sync rsync mount run ls git vdi
+.PHONY: all iso compile kernel net_objects fs_objects multiboot_kernel bootblock symbols apps tools tests build img filesystem create_fs bare re_apps clean test bindir grub grub_fix qemu qemu-headless qemu_kernel docker docker-rebuild reset sync rsync mount run ls git vdi
 
 all: img
 
@@ -76,10 +76,16 @@ tools: bin/build
 tests: compile
 	$(MAKE) -C tests
 
-$(BUILD_DIR)/net.o:
+# net/ and fs/ build these with their own Makefiles, which track header dependencies.
+# The phony targets run those Makefiles on every build, once each, and they rebuild what changed.
+$(BUILD_DIR)/net.o: net_objects ;
+
+$(BUILD_DIR)/ext.o $(BUILD_DIR)/fat16.o $(BUILD_DIR)/fs.o: fs_objects ;
+
+net_objects:
 	$(MAKE) -C net
 
-$(BUILD_DIR)/ext.o $(BUILD_DIR)/fat16.o $(BUILD_DIR)/fs.o:
+fs_objects:
 	$(MAKE) -C fs
 
 apps:
