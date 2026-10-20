@@ -5,7 +5,7 @@ description: Use when someone shares a RetrOS-32 serial log or screen showing a 
 
 # Debugging a RetrOS-32 kernel panic
 
-Work from the serial log. Don't boot QEMU yourself unless asked; ask for the full log instead. See `AGENTS.md` ("Debugging crashes") for background.
+Work from the serial log. Don't boot QEMU yourself unless asked; ask for the full log instead. When you may boot it, the `run-in-qemu` skill can reproduce a crash without a display and stop in the kernel with lldb. See `AGENTS.md` ("Debugging crashes") for background.
 
 ## 1. Collect
 

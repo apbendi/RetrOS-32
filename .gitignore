@@ -85,3 +85,6 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# QEMU runs started by .claude/skills/run-in-qemu/qctl.py
+.qemu/

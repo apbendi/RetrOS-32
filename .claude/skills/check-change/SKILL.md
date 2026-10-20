@@ -5,7 +5,7 @@ description: Use after editing RetrOS-32 kernel, library or app code, before han
 
 # Checking a RetrOS-32 change without booting
 
-The real build runs GCC in Docker, and testing means booting QEMU. Both are slow, and booting needs the human. Do these steps first, then tell the human exactly what's left for them to test.
+The real build runs GCC in Docker, and testing means booting QEMU. Both are slow, and booting needs the human's OK; with it, the `run-in-qemu` skill can boot it for you. Do these steps first, then tell the human exactly what's left for them to test.
 
 ## 1. Syntax and warnings: always
 
