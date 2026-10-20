@@ -21,10 +21,9 @@
 #include <kutils.h>
 #include <scheduler.h>
 #include <math.h>
+#include <timefmt.h>
 
-#define center_x(size) ((110/2) - ((size*8)/2))
-
-static char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+#define center_x(size) ((110/2) - (((size)*8)/2))
 
 void __kthread_entry kclock(int argc, char* argv[])
 {   
@@ -37,6 +36,7 @@ void __kthread_entry kclock(int argc, char* argv[])
 
     int angle_id;
     struct time now;
+    char text[TIME_FORMAT_DATE_MAX + 1];
     struct gfx_theme* theme;
 
     /* Second of the last redraw, -1 to draw right away */
@@ -99,8 +99,11 @@ void __kthread_entry kclock(int argc, char* argv[])
 		w->draw->line(w, 55, 55, 55 + (50*sin_60[now.minute])/1.1, 55+ (50*cos_60[now.minute])/1.1, theme->window.text);
 		w->draw->line(w, 55, 55, 55 + (50*sin_60[now.second])/1.1, 55+ (50*cos_60[now.second])/1.1, COLOR_VGA_RED);
 
-        w->draw->textf(w, center_x(5), 112, theme->window.text, "%s%d:%s%d", now.hour > 9 ? "" : "0", now.hour, now.minute > 9 ? "" : "0", now.minute);
-        w->draw->textf(w, center_x(6), 124, theme->window.text, "%d. %s", now.day, months[ABS(now.month-1)]);
+        /* e.g. "2:05 PM" and "Oct 18", or "14:05" and "18 Oct", centered by their length */
+        time_format_time(text, sizeof(text), &now, false);
+        w->draw->text(w, center_x(strlen(text)), 112, text, theme->window.text);
+        time_format_date(text, sizeof(text), &now, TIME_DATE_SHORT);
+        w->draw->text(w, center_x(strlen(text)), 124, text, theme->window.text);
 
         /* Mark the window changed, so the screen is redrawn even when nothing else changes */
         gfx_commit();

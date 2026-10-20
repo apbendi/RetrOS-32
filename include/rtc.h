@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 struct time {
-    uint8_t centuary;
+    uint8_t centuary;   /* e.g. 20, so the full year is centuary * 100 + year */
     uint8_t second;
     uint8_t minute;
     uint8_t hour;

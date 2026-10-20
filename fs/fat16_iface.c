@@ -17,8 +17,7 @@
 #include <memory.h>
 
 #include <terminal.h>
-
-static char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Nov", "Dec"};
+#include <timefmt.h>
 
 /* filesystem_ops prototypes */
 static int fat16_write(struct filesystem* fs, struct file* file, const void* buf, int size);
@@ -117,8 +116,9 @@ static int fat16_write(struct filesystem* fs, struct file* file, const void* buf
         return -4;
     }
 
-    /* update the file size */
+    /* update the file size and the time of the last write */
     entry.file_size = offset + written;
+    fat16_stamp_entry(&entry);
 
     fat16_sync_directory_entry(file->directory, file->identifier, &entry);
 
@@ -407,6 +407,17 @@ static int fat16_stat(struct filesystem* fs, const char* path, struct file* file
     return 0;
 }
 
+/* Spaces that pad text out to width characters, for lining up columns. The kernel's printf has no field widths. */
+static const char* __padding(const char* text, int width)
+{
+    static const char spaces[] = "                ";
+    int pad = width - strlen(text);
+
+    if(pad < 0) pad = 0;
+    if(pad > (int)sizeof(spaces) - 1) pad = sizeof(spaces) - 1;
+    return spaces + (sizeof(spaces) - 1 - pad);
+}
+
 /**
  * @brief Lists the contents of a directory.
  * 
@@ -445,8 +456,8 @@ static int fat16_list(struct filesystem* fs, const char* path, char* buf, int si
      * would need to use a different method to list the contents of a directory.
      */
 
-    /* print the directory contents */
-    twritef("Size  Date    Time    Name\n");
+    /* print the directory contents, with the time right-aligned so 12-hour times line up */
+    twritef("Size    Date%s %sTime  Name\n", __padding("Date", TIME_FORMAT_NUMERIC_DATE_MAX), __padding("Time", TIME_FORMAT_TIME_MAX));
     for (int i = 0; i < (int)ENTRIES_PER_BLOCK; i++) {
         struct fat16_directory_entry _list_entry = {0};
         struct fat16_directory_entry* dir_entry = &_list_entry;
@@ -474,26 +485,24 @@ static int fat16_list(struct filesystem* fs, const char* path, char* buf, int si
 
             name[j] = '\0';
 
-            /* get time */
-            uint16_t time = dir_entry->created_time;
-            //uint8_t seconds = (time & 0x1F) * 2;
-            uint8_t minutes = (time >> 5) & 0x3F;
-            uint8_t hours = (time >> 11) & 0x1F;
-
-            /* get date */
-            uint16_t date = dir_entry->created_date;
-            uint8_t day = date & 0x1F;
-            uint8_t month = (date >> 5) & 0x0F;
-            //uint16_t year = 1980 + ((date >> 9) & 0x7F);
+            /* The ROOT entry fat16_read_entry makes up for the root directory has no date, so leave its columns blank */
+            char date[TIME_FORMAT_DATE_MAX + 1] = "";
+            char time[TIME_FORMAT_TIME_MAX + 1] = "";
+            if(dir_entry->write_date != 0){
+                struct time written;
+                fat16_entry_time(dir_entry, &written);
+                time_format_date(date, sizeof(date), &written, TIME_DATE_NUMERIC);
+                time_format_time(time, sizeof(time), &written, false);
+            }
 
             /* get size unit */
             struct unit size_unit = calculate_size_unit(dir_entry->file_size);
 
-            twritef("%p%s %s %d, %d:%d - %s%s\n",
+            twritef("%p%s %s%s %s%s  %s%s\n",
                 size_unit.size,
                 size_unit.unit,
-                months[month-1],
-                day, hours, minutes,
+                date, __padding(date, TIME_FORMAT_NUMERIC_DATE_MAX),
+                __padding(time, TIME_FORMAT_TIME_MAX), time,
                 name,
                 dir_entry->attributes & FAT16_FLAG_SUBDIRECTORY ? "/" : ""
             );

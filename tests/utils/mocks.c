@@ -67,8 +67,10 @@ int get_current_time(struct time* time_s){
     time_t t = time(NULL);
     struct tm tm = *localtime(&t);
 
-    time_s->year = tm.tm_year;
-    time_s->month = tm.tm_mon;
+    /* Like the RTC: a two-digit year with the century separate, and months from 1 */
+    time_s->centuary = (1900 + tm.tm_year) / 100;
+    time_s->year = tm.tm_year % 100;
+    time_s->month = tm.tm_mon + 1;
     time_s->day = tm.tm_mday;
     time_s->hour = tm.tm_hour;
     time_s->minute = tm.tm_min;

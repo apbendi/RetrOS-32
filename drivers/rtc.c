@@ -79,6 +79,9 @@ int get_current_time(struct time* time)
         time->hour = (time->hour & 0x7F) % 12 + ((time->hour & 0x80) ? 12 : 0);
     }
 
+    /* Where the RTC keeps the century, if anywhere, depends on the machine, so assume 20xx */
+    time->centuary = 20;
+
     return 1;
 }
 

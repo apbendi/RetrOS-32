@@ -195,6 +195,16 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - Every window's buffer comes from this heap, apps' included. At 1024×768 a maximized window's buffer is ~715 KB.
 - **The time of day:** `get_current_time` (`drivers/rtc.c`) returns exactly what the CMOS real-time clock holds; the OS has no time zones. The Makefile starts QEMU with `-rtc base=localtime`, so the clock shows the host's local time (#19). #20 covers keeping the RTC in UTC with an offset setting.
   - It reads the RTC with interrupts off. Selecting a register (port `0x70`) and reading it (`0x71`) are separate accesses, and a thread switch between them lets another thread change which register gets read.
+  - `struct time`'s `year` has two digits. `get_current_time` sets `centuary` to 20, so the full year is `centuary * 100 + year`.
+- **Showing a time or date:** use `time_format_time` and `time_format_date` (`include/timefmt.h`), not your own format string. The taskbar, the Clock window and `list` all use them.
+  - **Settings:** they follow the `[time]` section of `rootfs/sysutil/default.cfg`:
+    - `clock=12h` or `24h`;
+    - `date=mdy`, `dmy` or `ymd`.
+    The defaults are 12h and mdy.
+  - **Changing them:** the settings are read on every call, so `conf load sysutil/default.cfg` applies them right away. The taskbar redraws its clock once a minute.
+  - **Screen space:** size buffers and screen space with the `TIME_FORMAT_*_MAX` lengths, which cover every setting. The kernel's printf has no `%02d`, so the formatters pad the numbers themselves.
+- **File dates:** FAT16 entries keep the time of the last write (`write_date`/`write_time`). `fat16_stamp_entry` sets them when an entry is created and when a file is written, and `fat16_entry_time` decodes them into a `struct time`.
+  - Files `make img` copies in get the build container's clock, which is UTC. So they look a few hours off from files created in RetrOS, which use the host's local time.
 - **Timers and sleeping:** the timer runs at 1000 Hz, so `sleep(ms)` and ticks are milliseconds. PCB sleep deadlines are `uint32_t`; a 16-bit field used to overflow after ~65 s.
 - **Fixed offsets:** `struct pcb` fields above the "DO NOT CHANGE ABOVE" marker are read by assembly at fixed offsets. The ISR stubs in `kernel/irs_entry.s` build exactly the frame described by `struct registers`.
 - **Freeing pages:** a process exit currently double-frees a stack page and leaks another (#12), which logs `[VMEM] Double free or invalid free`.

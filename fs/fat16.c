@@ -37,8 +37,8 @@ static struct fat16_directory_entry root_directory = {
     .attributes = FAT16_FLAG_SUBDIRECTORY,
     .first_cluster = 0,
     .file_size = 512,
-    .created_date = 0,
-    .created_time = 0
+    .write_date = 0,
+    .write_time = 0
 };
 
 /* HELPER FUNCTIONS */
@@ -376,14 +376,7 @@ int fat16_add_entry(uint16_t block, char *filename, const char *extension, byte_
             dir_entry->attributes = attributes;
             dir_entry->first_cluster = start_cluster;
             dir_entry->file_size = file_size;
-
-            uint16_t local_date = dir_entry->created_date;
-            fat16_set_date(&local_date, 2023, 5, 31);
-            dir_entry->created_date = local_date;
-
-            uint16_t local_time = dir_entry->created_time;
-            fat16_set_time(&local_time, 12, 0, 0);
-            dir_entry->created_time = local_time;
+            fat16_stamp_entry(dir_entry);
 
             dbgprintf("Adding entry %s.%s (%d bytes) Attributes: 0x%x Cluster: %d %s to %d index %d\n", dir_entry->filename, dir_entry->extension, dir_entry->file_size, dir_entry->attributes, dir_entry->first_cluster, dir_entry->attributes & 0x10 ? "<DIR>" : "", block, entry);
 
@@ -508,8 +501,8 @@ int fat16_directory_entry_debug(struct fat16_directory_entry* entry)
     dbgprintf("  Extension: %s\n", entry->extension);
     dbgprintf("  Attributes: 0x%x\n", entry->attributes);
     dbgprintf("  Reserved: 0x%x\n", entry->reserved);
-    dbgprintf("  Created time: 0x%x\n", entry->created_time);
-    dbgprintf("  Created date: 0x%x\n", entry->created_date);
+    dbgprintf("  Write time: 0x%x\n", entry->write_time);
+    dbgprintf("  Write date: 0x%x\n", entry->write_date);
     dbgprintf("  First cluster: %d\n", entry->first_cluster);
     return 0;
 }
@@ -851,30 +844,52 @@ int fat16_format(char* label, int reserved)
 }
 
 
+/* Replaces the whole field, so an existing time is overwritten rather than mixed in */
 void fat16_set_time(uint16_t *time, ubyte_t hours, ubyte_t minutes, ubyte_t seconds)
 {
-    /* Clear the existing time bits */
-    *time &= 0xFC00;
-    /* Set the hours bits */
-    *time |= (hours & 0x1F) << 11;
-    /* Set the minutes bits */
-    *time |= (minutes & 0x3F) << 5;
-
-    /* Set the seconds bits (converted to two-second periods) */
-    ubyte_t twoSecondPeriods = seconds / 2;
-    *time |= twoSecondPeriods & 0x1F;
+    *time = ((hours & 0x1F) << 11)      /* bits 11-15: hours */
+          | ((minutes & 0x3F) << 5)     /* bits 5-10: minutes */
+          | ((seconds / 2) & 0x1F);     /* bits 0-4: two-second periods */
 }
 
+/* Replaces the whole field, so an existing date is overwritten rather than mixed in */
 void fat16_set_date(uint16_t *date, uint16_t year, ubyte_t month, ubyte_t day)
 {
-    /* Clear the existing date bits */
-    *date &= 0xFE00;
-    /* Set the year bits (offset from 1980) */
-    *date |= ((year - 1980) & 0x7F) << 9;
-    /* Set the month bits */
-    *date |= (month & 0x0F) << 5;
-    /* Set the day bits */
-    *date |= (day & 0x1F);
+    *date = (((year - 1980) & 0x7F) << 9)   /* bits 9-15: years since 1980 */
+          | ((month & 0x0F) << 5)           /* bits 5-8: month */
+          | (day & 0x1F);                   /* bits 0-4: day */
+}
+
+/**
+ * Sets an entry's write date and time to now. FAT keeps local time, and that's what the RTC holds
+ * (QEMU's -rtc base=localtime; #20 covers keeping it in UTC).
+ */
+void fat16_stamp_entry(struct fat16_directory_entry* entry)
+{
+    struct time now;
+    uint16_t date_bits, time_bits;
+
+    get_current_time(&now);
+    fat16_set_date(&date_bits, now.centuary * 100 + now.year, now.month, now.day);
+    fat16_set_time(&time_bits, now.hour, now.minute, now.second);
+
+    /* Through locals, since the entry is packed and its fields may be unaligned */
+    entry->write_date = date_bits;
+    entry->write_time = time_bits;
+}
+
+/* Decodes an entry's write date and time */
+void fat16_entry_time(const struct fat16_directory_entry* entry, struct time* time_out)
+{
+    int year = 1980 + (entry->write_date >> 9);
+
+    time_out->centuary = year / 100;
+    time_out->year = year % 100;
+    time_out->month = (entry->write_date >> 5) & 0x0F;
+    time_out->day = entry->write_date & 0x1F;
+    time_out->hour = entry->write_time >> 11;
+    time_out->minute = (entry->write_time >> 5) & 0x3F;
+    time_out->second = (entry->write_time & 0x1F) * 2;
 }
 
 int fat16_load()

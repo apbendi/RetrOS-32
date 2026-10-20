@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <mbr.h>
+#include <rtc.h>
 
 /**
  * @brief FAT16 Filesystem
@@ -69,8 +70,8 @@ struct fat16_directory_entry {
     };
     uint8_t attributes;                 /* 1 byte - File attributes */
     uint8_t reserved[10];               /* 10 bytes - Reserved for use by Windows NT */
-    uint16_t created_time;              /* 2 bytes - Time file was created */
-    uint16_t created_date;              /* 2 bytes - Date file was created */
+    uint16_t write_time;                /* 2 bytes - Time of the last write, set on create and on write */
+    uint16_t write_date;                /* 2 bytes - Date of the last write, set on create and on write */
     uint16_t first_cluster;             /* 2 bytes - First cluster in the file's FAT chain */
     uint32_t file_size;                 /* 4 bytes - File size in bytes */
 } __attribute__((packed));
@@ -101,6 +102,8 @@ int fat16_write_data(int first_cluster, int offset, void* data, int data_length)
 
 void fat16_set_time(uint16_t *time, uint8_t hours, uint8_t minutes, uint8_t seconds);
 void fat16_set_date(uint16_t *date, uint16_t year, uint8_t month, uint8_t day);
+void fat16_stamp_entry(struct fat16_directory_entry* entry);
+void fat16_entry_time(const struct fat16_directory_entry* entry, struct time* time_out);
 
 int fat16_read_entry(uint32_t block, uint32_t index, struct fat16_directory_entry* entry_out);
 int fat16_sync_directory_entry(uint16_t block, uint32_t index, const struct fat16_directory_entry* entry);

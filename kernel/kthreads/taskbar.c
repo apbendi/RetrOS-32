@@ -17,6 +17,7 @@
 #include <vbe.h>
 #include <colors.h>
 #include <rtc.h>
+#include <timefmt.h>
 #include <timer.h>
 #include <gfx/component.h>
 #include <kutils.h>
@@ -35,8 +36,6 @@
 
 #define TASKBAR_EXT_OPT_WIDTH 100
 #define TASKBAR_EXT_OPT_HEIGHT 170
-
-#define TIME_PREFIX(unit) unit < 10 ? "0" : ""
 
 /* prototypes to callbacks */
 static void __callback taskbar_terminal();
@@ -369,8 +368,8 @@ static void __kthread_entry taskbar(void)
 
     struct time time;
     struct gfx_event event;
-    /* The longest the clock text can be */
-    int timedate_length = strlen("12:00 PM Sep 30, 2000");
+    /* The longest the clock text can be, in any of the [time] formats in sysutil/default.cfg */
+    int timedate_length = TIME_FORMAT_TIME_MAX + 1 + TIME_FORMAT_DATE_MAX;
     /* Text wraps to the left edge within 10 px of the right one, so keep the clock's last character out of there */
     int timedate_x = w->inner_width - (timedate_length*8) - 8;
 
@@ -409,16 +408,14 @@ static void __kthread_entry taskbar(void)
         if(time.minute != last_minute){
             last_minute = time.minute;
 
-            /* 12-hour clock: hour 0 is 12 AM, and hour 12 is 12 PM */
-            int hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
+            /* e.g. "2:05 PM Oct 18, 2026", or "14:05 18 Oct 2026" */
+            char time_text[TIME_FORMAT_TIME_MAX + 1];
+            char date_text[TIME_FORMAT_DATE_MAX + 1];
+            time_format_time(time_text, sizeof(time_text), &time, false);
+            time_format_date(date_text, sizeof(date_text), &time, TIME_DATE_LONG);
 
-            /* e.g. "2:05 PM Oct 18, 2026". The RTC's year has two digits, and the century register isn't read. */
             w->draw->rect(w, timedate_x, 5, timedate_length*8, 10, 30);
-            w->draw->textf(w, timedate_x, 5, COLOR_BLACK,
-                "%d:%s%d %s %s %d, %d",
-                hour, TIME_PREFIX(time.minute), time.minute, time.hour < 12 ? "AM" : "PM",
-                rtc_month_name(time.month), time.day, 2000 + time.year
-            );
+            w->draw->textf(w, timedate_x, 5, COLOR_BLACK, "%s %s", time_text, date_text);
             changed = true;
         }
 
