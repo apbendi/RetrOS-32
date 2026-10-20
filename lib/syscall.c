@@ -18,6 +18,7 @@ extern "C"
 #include <lib/syscall.h>
 #include <stdint.h>
 #include <libc.h>
+#include <lib/printf.h>
 #include <rtc.h>
 
 int invoke_syscall(int i, int arg1, int arg2, int arg3)
@@ -59,7 +60,9 @@ void gfx_create_window(int width, int height, int flags)
 {
     void* ptr = (void*) invoke_syscall(SYSCALL_GFX_WINDOW, width, height, flags);
     if (ptr == NULL) {
-        return;
+        /* Usually out of memory. An app without a window can't be seen or closed, so exit instead of running on. */
+        printf("Not enough memory to open a window.\n");
+        exit();
     }
 }
 

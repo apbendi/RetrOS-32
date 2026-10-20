@@ -658,11 +658,17 @@ void vmem_init_process_thread(struct pcb* parent, struct pcb* thread)
  * @param pcb A pointer to the process control block (PCB) for which memory needs to be initialized.
  * @param data in memory data to be copied into the process data section.
  * @param size size of the data to be copied.
+ * @return ERROR_OK, or -ERROR_ALLOC when out of pages or memory, after freeing what it allocated.
  * TODO: Should probably be on demand paging.
  */
-void vmem_init_process(struct pcb* pcb, byte_t* data, int size)
+int vmem_init_process(struct pcb* pcb, byte_t* data, int size)
 {
 	int allocated_pages = 0;
+	/* Pages mapped into the data table, for freeing them on failure */
+	int data_pages = 0;
+	uint32_t* process_data_page;
+	uint32_t* process_stack_page = NULL;
+	uint32_t* process_stack_page2 = NULL;
 
 	/* Allocate directory and tables for data and stack */
 	uint32_t* process_directory = vmem_default->ops->alloc(vmem_default);
@@ -673,6 +679,9 @@ void vmem_init_process(struct pcb* pcb, byte_t* data, int size)
 	allocated_pages++;
 	uint32_t* process_heap_table = vmem_default->ops->alloc(vmem_default);
 	allocated_pages++;
+	if(process_directory == NULL || process_data_table == NULL || process_stack_table == NULL || process_heap_table == NULL){
+		goto out_of_memory;
+	}
 
 	dbgprintf("[INIT PROCESS] Directory: 0x%x\n", process_directory);
 	dbgprintf("[INIT PROCESS] Data: 	 0x%x\n", process_data_table);
@@ -684,34 +693,39 @@ void vmem_init_process(struct pcb* pcb, byte_t* data, int size)
 		if(kernel_page_dir[i] != 0) process_directory[i] = kernel_page_dir[i];
 	}
 
-	uint32_t* process_data_page;
 	/* Map the process data to a page */
 	int i = 0;
 	while (size > PAGE_SIZE){
 		process_data_page = vmem_default->ops->alloc(vmem_default);
+		if(process_data_page == NULL) goto out_of_memory;
 		allocated_pages++;
 		/* copy in process data. */
 		memcpy(process_data_page, &data[i*PAGE_SIZE], PAGE_SIZE);
 		vmem_map(process_data_table, VMEM_DATA+(i*PAGE_SIZE), (uint32_t) process_data_page, USER);
+		data_pages++;
 		size -= PAGE_SIZE;
 		i++;
 	}
 	/* fill in rest. */
 	process_data_page = vmem_default->ops->alloc(vmem_default);
+	if(process_data_page == NULL) goto out_of_memory;
 	allocated_pages++;
 	memcpy(process_data_page, &data[i*PAGE_SIZE], size);
 	vmem_map(process_data_table, VMEM_DATA+(i*PAGE_SIZE), (uint32_t) process_data_page, USER);
+	data_pages++;
 	dbgprintf("[INIT PROCESS] Finished mapping data.\n");
 
 	/* Map the process stack 8Kb to a page */
-	uint32_t* process_stack_page = vmem_default->ops->alloc(vmem_default);
+	process_stack_page = vmem_default->ops->alloc(vmem_default);
+	if(process_stack_page == NULL) goto out_of_memory;
 	allocated_pages++;
 	memset(process_stack_page, 0, PAGE_SIZE);
 	dbgprintf("[INIT PROCESS] Finished allocating 1/2 stack page.\n");
 	vmem_map(process_stack_table, VMEM_STACK, (uint32_t) process_stack_page, USER);
 	dbgprintf("[INIT PROCESS] Finished mapping 1/2 stack page.\n");
 
-	uint32_t* process_stack_page2 = vmem_default->ops->alloc(vmem_default);
+	process_stack_page2 = vmem_default->ops->alloc(vmem_default);
+	if(process_stack_page2 == NULL) goto out_of_memory;
 	allocated_pages++;
 	dbgprintf("[INIT PROCESS] Finished allocating 2/2 stack page.\n");
 	memset(process_stack_page2, 0, PAGE_SIZE);
@@ -724,16 +738,30 @@ void vmem_init_process(struct pcb* pcb, byte_t* data, int size)
 	vmem_add_table(process_directory, VMEM_STACK, process_stack_table, USER);
 	vmem_add_table(process_directory, VMEM_DATA, process_data_table, USER); 
 
-	pcb->allocations = create(struct virtual_allocations);
-	if(pcb->allocations == NULL){
-		kernel_panic("Out of memory while allocating virtual memory allocations.");
-	}
+	pcb->allocations = kalloc_try(sizeof(struct virtual_allocations));
+	if(pcb->allocations == NULL) goto out_of_memory;
 	pcb->allocations->head = NULL;
+	pcb->allocations->tail = NULL;
 	pcb->allocations->spinlock = 0;
 
 
 	dbgprintf("[INIT PROCESS] Process paging setup done: allocated %d pages.\n", allocated_pages);
 	pcb->page_dir = (uint32_t*)process_directory;
+	return ERROR_OK;
+
+out_of_memory:
+	/* Free what was allocated before running out. The data pages are found through the data table, as in vmem_cleanup_process, and vmem_free ignores NULL. */
+	for (int j = 0; j < data_pages; j++){
+		vmem_default->ops->free(vmem_default, (void*)(process_data_table[TABLE_INDEX((VMEM_DATA+(j*PAGE_SIZE)))] & ~PAGE_MASK));
+	}
+	vmem_default->ops->free(vmem_default, process_stack_page);
+	vmem_default->ops->free(vmem_default, process_stack_page2);
+	vmem_default->ops->free(vmem_default, process_heap_table);
+	vmem_default->ops->free(vmem_default, process_stack_table);
+	vmem_default->ops->free(vmem_default, process_data_table);
+	vmem_default->ops->free(vmem_default, process_directory);
+	warningf("[INIT PROCESS] Out of memory after allocating %d pages\n", allocated_pages);
+	return -ERROR_ALLOC;
 }
 
 /**

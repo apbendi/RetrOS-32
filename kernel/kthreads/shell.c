@@ -298,6 +298,11 @@ void exec(int argc, char* argv[])
 		twritef("Kernel thread started\n");
 		return;
 	}
+	/* -ERROR_KTHREAD_START means there's no kernel thread by that name. Anything else, like running out of memory, is why it didn't start. */
+	if(pid != -ERROR_KTHREAD_START){
+		twritef("Couldn't start %s: %s\n", argv[idx], error_get_string(pid));
+		return;
+	}
 
 	pid = pcb_create_process(argv[idx], argc-idx, &argv[idx], 0 /* PCB_FLAG_KERNEL */);
 	if(pid > 0){
@@ -307,6 +312,15 @@ void exec(int argc, char* argv[])
 
 	void (*ptr)(int argc, char* argv[]) = (void (*)(int argc, char* argv[])) ksyms_resolve_symbol(argv[idx]);
 	if(ptr == NULL){
+		/**
+		 * Not a kernel function either, so say why the program didn't start, unless there's no such program.
+		 * This is checked after the kernel functions because pcb_create_process allocates before it opens the file,
+		 * so it can run out of memory for a name that was never a program.
+		 */
+		if(pid < 0 && pid != -ERROR_FILE_NOT_FOUND){
+			twritef("Couldn't start %s: %s\n", argv[idx], error_get_string(pid));
+			return;
+		}
 		twritef("Unknown command\n");
 		return;
 	}
@@ -314,6 +328,10 @@ void exec(int argc, char* argv[])
 	pid = pcb_create_kthread(ptr, argv[idx], argc-idx, &argv[idx]);
 	if(pid > 0){
 		if(kthread_as_deamon) pcb_await(pid);
+		return;
+	}
+	if(pid < 0){
+		twritef("Couldn't start %s: %s\n", argv[idx], error_get_string(pid));
 		return;
 	}
 	

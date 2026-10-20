@@ -433,12 +433,37 @@ static void __kthread_entry taskbar(void)
 }
 EXPORT_KTHREAD(taskbar);
 
+/* Starts a program from the Start menu, and says in a message box why if it can't */
+static void taskbar_start_program(char* program, char* title)
+{
+    int pid = pcb_create_process(program, 0, NULL, 0);
+    if(pid >= 0) return;
+
+    warningf("Couldn't start %s: %s\n", program, error_get_string(pid));
+
+    /* The message box keeps a pointer to its text, so these are literals. About 25 characters fit on its line. */
+    char* message;
+    switch (pid){
+    case -ERROR_ALLOC:
+        message = "Not enough memory.";
+        break;
+    case -ERROR_PCB_FULL:
+        message = "Too many programs open.";
+        break;
+    case -ERROR_FILE_NOT_FOUND:
+        message = "Program not found.";
+        break;
+    default:
+        message = "Couldn't start it.";
+        break;
+    }
+    msgbox_show(msgbox_create(MSGBOX_TYPE_ERROR, MSGBOX_BUTTON_OK, title, message, NULL));
+}
+
 
 static void __callback taskbar_wolfstein()
 {
-    int pid = pcb_create_process("/bin/wolf3d.o", 0, NULL, 0);
-    if(pid < 0)
-        dbgprintf("%s does not exist\n", "wolf.o");
+    taskbar_start_program("/bin/wolf3d.o", "Wolfstein");
 }
 
 static void __callback taskbar_terminal()
@@ -450,30 +475,22 @@ static void __callback taskbar_terminal()
 
 static void __callback taskbar_finder()
 {
-    int pid = pcb_create_process("/bin/finder.o", 0, NULL, 0);
-    if(pid < 0)
-        dbgprintf("%s does not exist\n", "finder.o");
+    taskbar_start_program("/bin/finder.o", "Finder");
 }
 
 static void __callback taskbar_editor()
 {
-    int pid = pcb_create_process("/bin/edit.o", 0, NULL, 0);
-	if(pid < 0)
-		dbgprintf("%s does not exist\n", "edit.o");
+    taskbar_start_program("/bin/edit.o", "Editor");
 }
 
 static void __callback taskbar_cube()
 {
-    int pid = pcb_create_process("/bin/cube.o", 0, NULL, 0);
-    if(pid < 0)
-        dbgprintf("%s does not exist\n", "cube");
+    taskbar_start_program("/bin/cube.o", "Cube");
 }
 
 static void __callback taskbar_colors()
 {
-    int pid = pcb_create_process("/bin/colors.o", 0, NULL, 0);
-    if(pid < 0)
-        dbgprintf("%s does not exist\n", "colors");
+    taskbar_start_program("/bin/colors.o", "Colors");
 }
 
 static void __callback taskbar_clock()
@@ -506,9 +523,7 @@ static void __attribute__((unused)) __callback taskbar_bg_retro()
 
 static void __callback taskbar_users()
 {
-    int pid = pcb_create_process("/bin/users.o", 0, NULL, 0);
-    if(pid < 0)
-        dbgprintf("%s does not exist\n", "users.o");
+    taskbar_start_program("/bin/users.o", "Users");
 }
 
 static void __attribute__((unused)) __callback taskbar_bg_default_color()
@@ -523,9 +538,7 @@ static void __attribute__((unused)) __callback taskbar_bg_default_color_gray()
 
 static void __callback taskbar_bg_calc()
 {
-    int pid = pcb_create_process("/bin/calc.o", 0, NULL, 0);
-    if(pid < 0)
-        dbgprintf("%s does not exist\n", "calc.o");
+    taskbar_start_program("/bin/calc.o", "Calc");
 }
 
 static void __callback taskbar_sysinf()

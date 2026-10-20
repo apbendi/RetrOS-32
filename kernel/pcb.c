@@ -61,9 +61,19 @@ static void __pcb_free(struct pcb* pcb)
 	pcb->prev = NULL;
 }
 
+/* Frees the kernel stack and slot of a PCB that failed before reaching the scheduler */
+static void __pcb_discard(struct pcb* pcb)
+{
+	kfree((void*)pcb->stackptr);
+	CRITICAL_SECTION({
+		__pcb_free(pcb);
+	});
+}
+
 static int __pcb_init_kernel_stack(struct pcb* pcb)
 {
-	int32_t stack = (uint32_t) kalloc(PCB_STACK_SIZE);
+	/* kalloc_try, so running out of memory fails the new thread or process instead of panicking */
+	int32_t stack = (uint32_t) kalloc_try(PCB_STACK_SIZE);
 	if((void*)stack == NULL){
 		return -ERROR_ALLOC;
 	}
@@ -146,20 +156,20 @@ static struct pcb* __pcb_get_free()
 	return NULL;
 }
 
-static struct pcb* __pcb_init_process(byte_t flags, uint32_t entry_point)
+static error_t __pcb_init_process(byte_t flags, uint32_t entry_point, struct pcb** out)
 {
     ENTER_CRITICAL();
 
     struct pcb* pcb = __pcb_get_free();
     if (pcb == NULL) {
         LEAVE_CRITICAL();
-        return NULL;
+        return -ERROR_PCB_FULL;
     }
 
     if (__pcb_init_kernel_stack(pcb) < 0) {
         __pcb_free(pcb);
         LEAVE_CRITICAL();
-        return NULL;
+        return -ERROR_ALLOC;
     }
 
 	pcb->ctx.esp = 0xEFFFFFF0;
@@ -177,7 +187,8 @@ static struct pcb* __pcb_init_process(byte_t flags, uint32_t entry_point)
     }
 
     LEAVE_CRITICAL();
-    return pcb;
+    *out = pcb;
+    return ERROR_OK;
 }
 
 static int __pcb_init_virt_args(struct pcb* pcb, int argc, char** argv)
@@ -389,9 +400,10 @@ error_t pcb_create_thread(struct pcb* parent, void (*entry)(), void* arg, byte_t
 	AUTHORIZED_GUARD(CTRL_PROC_CREATE | SYSTEM_FULL_ACCESS | ADMIN_FULL_ACCESS);
 
 	/* Initialize PCB and set privileges */
-    struct pcb* pcb = __pcb_init_process(flags, VMEM_DATA);
-	if(pcb == NULL){
-        return -ERROR_NULL_POINTER;
+    struct pcb* pcb;
+    error_t ret = __pcb_init_process(flags, VMEM_DATA, &pcb);
+	if(ret < 0){
+        return ret;
     }
     
     /* Inherit parent's attributes */
@@ -430,8 +442,8 @@ error_t pcb_create_process(char* program, int argc, char** argv, pcb_flag_t flag
 	int ret, size;
 	struct pcb* pcb;
 
-	/* Load program into memory */
-	buf = kalloc(MAX_PROGRAM_SIZE);
+	/* Load program into memory. kalloc_try, so running out of memory fails the launch instead of panicking. */
+	buf = kalloc_try(MAX_PROGRAM_SIZE);
 	if(buf == NULL){return -ERROR_ALLOC;}
 	
 	ret = fs_load_from_file(program, buf, MAX_PROGRAM_SIZE);
@@ -443,10 +455,10 @@ error_t pcb_create_process(char* program, int argc, char** argv, pcb_flag_t flag
 	}
 	size = ret;
 
-	pcb = __pcb_init_process(flags, VMEM_DATA);
-	if(pcb == NULL){
+	ret = __pcb_init_process(flags, VMEM_DATA, &pcb);
+	if(ret < 0){
 		kfree(buf);
-        return -ERROR_NULL_POINTER;
+        return ret;
     }
 
 	pcb->data_size = size;
@@ -459,12 +471,19 @@ error_t pcb_create_process(char* program, int argc, char** argv, pcb_flag_t flag
 	pcb->thread_eip = 0;
 
 	/* Memory map data */
-	vmem_init_process(pcb, buf, size);
+	ret = vmem_init_process(pcb, buf, size);
+	if(ret < 0){
+		kfree(buf);
+		__pcb_discard(pcb);
+
+		return ret;
+	}
 
 	ret = __pcb_init_virt_args(pcb, argc, argv);
 	if(ret < 0){
 		kfree(buf);
-		__pcb_free(pcb);
+		vmem_cleanup_process(pcb);
+		__pcb_discard(pcb);
 
 		return -ERROR_ALLOC;
 	}
@@ -505,7 +524,9 @@ error_t pcb_create_kthread(void (*entry)(), char* name, int argc, char** argv)
 	/* Set up stack */
 	int ret = __pcb_init_kernel_stack(pcb);
 	if(ret < 0){
+		__pcb_free(pcb);
 		dbgprintf("[PCB] Failed to allocate stack\n");
+		LEAVE_CRITICAL();
 		return -ERROR_ALLOC;
 	}
 

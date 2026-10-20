@@ -42,7 +42,11 @@ void msgbox_show(struct msgbox* box)
 
     char buffer[256];
     itoa((int)box, buffer);
-    pcb_create_kthread(__msgbox, "msgbox", ARGS("msgbox", buffer));
+    if(pcb_create_kthread(__msgbox, "msgbox", ARGS("msgbox", buffer)) < 0){
+        /* e.g. out of memory, so nothing will show or free the box */
+        warningf("Failed to show message box: %s\n", box->message);
+        kfree(box);
+    }
 }
 
 #define BUTTON(x, y, _text) \
@@ -60,7 +64,8 @@ static void __kthread_entry __msgbox(int argc, char* argv[])
 
     struct window* w = gfx_new_window(width, height, GFX_NO_OPTIONS);
     if(w == NULL){
-        warningf("Failed to create window for msgbox");
+        warningf("Failed to create window for msgbox: %s\n", box->message);
+        kfree(box);
         return;
     }
 

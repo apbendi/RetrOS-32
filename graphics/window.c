@@ -498,7 +498,8 @@ struct window* gfx_new_window(int width, int height, window_flag_t flags)
         return NULL;
     }
 
-    w->inner = kalloc(width*height);
+    /* kalloc_try, so running out of memory fails the new window instead of panicking. Apps exit when they don't get one. */
+    w->inner = kalloc_try(width*height);
     if(w->inner == NULL){
         warningf("Inner window is NULL\n");
         kfree(w);

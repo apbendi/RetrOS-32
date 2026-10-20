@@ -140,7 +140,7 @@ void vmem_cleanup_process(struct pcb* pcb);
 void vmem_cleanup_process_thead(struct pcb* thread);
 
 void vmem_init_process_thread(struct pcb* parent, struct pcb* thread);
-void vmem_init_process(struct pcb* pcb, byte_t* data, int size);
+int vmem_init_process(struct pcb* pcb, byte_t* data, int size);
 void vmem_stack_free(struct pcb* pcb, void* ptr);
 void* vmem_stack_alloc(struct pcb* pcb, int size);
 void vmem_dump_heap(struct allocation* allocation);
