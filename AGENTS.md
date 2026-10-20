@@ -116,7 +116,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - Its backtrace starts at `_page_fault_entry`. The next entry is the return address *in the faulting function's caller*, so the faulting function itself is missing.
   - To find it, disassemble around that return address and see which call it follows.
 - **Mapping addresses to code:**
-  - `symbols.map` and `bin/symbols` (ELF) match the booted `bin/kernelout` for code addresses. String and data addresses differ by a few KB between the two links.
+  - `bin/kernelout`, the flat image that boots, is copied out of the ELF `bin/symbols` with `objcopy -O binary`. So every address in `bin/symbols` and `symbols.map` is the booted kernel's, data included.
   - Disassemble with the host's `objdump`, e.g. `objdump -d --no-show-raw-insn --start-address=0x2fcf0 --stop-address=0x2fd30 bin/symbols`. Data symbols are listed by `nm -n -S bin/symbols`.
 - **The PCB dump isn't the crash location.** `entry point` is the thread's entry, and `esp`/`ebp` are from its last context switch.
 - **Memory corruption usually shows up somewhere else.** An overflow in one subsystem crashes another.

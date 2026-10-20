@@ -52,15 +52,16 @@ multiboot_kernel: $(BUILD_DIR)/multiboot.o $(KERNELOBJ)
 	@echo "[kernel] linking multiboot kernel..."
 	$(QUIET)$(LD) -o $(BUILD_DIR)/kernelout $^ $(LDFLAGS) -T ./boot/multiboot.ld
 
-# Same objects in the same order as the kernel target, so the map's function addresses match the booted kernel.
-symbols: $(BUILD_DIR)/kcrt0.o $(KERNELOBJ)
-	@echo "[kernel] generating symbols..."
-	$(QUIET)$(LD) -o $(BUILD_DIR)/symbols $^ $(LDFLAGS) -T ./kernel/linkersym.ld
-	$(QUIET)nm -C -n $(BUILD_DIR)/symbols | grep ' [Tt] ' | sed 's/ [Tt] / /' > rootfs/sysutil/symbols.map
-
+# The kernel is linked once, as an ELF (bin/symbols), and the flat image that boots is copied out of it,
+# so every address nm, objdump, lldb and symbols.map give, data included, is the booted kernel's.
 kernel: $(BUILD_DIR)/kcrt0.o $(KERNELOBJ)
 	@echo "[kernel] linking kernel..."
-	$(QUIET)$(LD) -o $(BUILD_DIR)/kernelout $^ $(LDFLAGS) -T ./kernel/linker.ld
+	$(QUIET)$(LD) -o $(BUILD_DIR)/symbols $^ $(LDFLAGS) -T ./kernel/linker.ld
+	$(QUIET)$(OBJCOPY) -O binary $(BUILD_DIR)/symbols $(BUILD_DIR)/kernelout
+
+symbols: kernel
+	@echo "[kernel] generating symbols..."
+	$(QUIET)nm -C -n $(BUILD_DIR)/symbols | grep ' [Tt] ' | sed 's/ [Tt] / /' > rootfs/sysutil/symbols.map
 
 build: bin/build
 

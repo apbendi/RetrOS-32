@@ -16,6 +16,7 @@ CXX ?= $(CROSS_PREFIX)g++
 AS  ?= $(CROSS_PREFIX)as
 LD  ?= $(CROSS_PREFIX)ld
 AR  ?= $(CROSS_PREFIX)ar
+OBJCOPY ?= $(CROSS_PREFIX)objcopy
 
 # Architecture defaults.
 ARCH_CFLAGS  ?= -m32

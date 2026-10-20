@@ -25,7 +25,7 @@ The PCB dump's `entry point` and its `esp`/`ebp` "at last switch" are **not** th
 
 ## 3. Map addresses to code
 
-1. Check that `bin/symbols` comes from the kernel that booted: compare its timestamp with the last build and with `git log -1`. Code addresses in `symbols.map` and `bin/symbols` match `bin/kernelout`. String and data addresses can differ by a few KB.
+1. Check that `bin/symbols` comes from the kernel that booted: compare its timestamp with the last build and with `git log -1`. `bin/kernelout` is copied out of `bin/symbols`, so the addresses in it and in `symbols.map` are the booted kernel's, data included.
 2. Find the function containing an address with `rootfs/sysutil/symbols.map`, or with the backtrace's own `name: addr - base = offset` lines.
 3. Disassemble around the address:
    ```

@@ -111,7 +111,7 @@ cat .qemu/lldb.out
 - **Breakpoints and backtraces work:** set them by function name or by address (`breakpoint set -a 0x10000` stops at the kernel's first instruction).
   - Frames above `_start` are leftover stack, not callers.
   - `bin/symbols` has no debug info, so you get function names, not source lines.
-- **Don't trust lldb for global variables.** `bin/symbols` has the same code addresses as the booted `bin/kernelout`, but its data addresses are off, by 0x1000 in recent builds.
-  - To find a global's real address, disassemble a function that uses it and read the address from the instruction.
-  - Or read it from `bin/kernelout`'s bytes, the way the `debug-kernel-panic` skill does.
+- **Globals:** `bin/kernelout` is copied out of `bin/symbols`, so a global's address in `bin/symbols` is its address in the running kernel.
+  - Without debug info, lldb doesn't know a global's type, so read raw memory at its symbol. `image lookup -s netd` prints the address. `memory read -f x -s 1 -c 1 '(char*)&netd + 0x30'` reads `netd.if_count`, which is 2 once `eth0` and `lo0` are registered.
+  - To stop at a moment you choose after boot, break on `wm_log_windows` and press F12 (`$Q key f12`).
 - **`process detach`** lets the OS keep running; `kill` stops QEMU.
