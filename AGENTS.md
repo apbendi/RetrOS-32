@@ -24,6 +24,29 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
 | `tests/` | Host-side tests (`make test`). Not exercised recently; the CI workflow has them commented out |
 | `apps/C-Compiler` | Git submodule |
 
+## Architecture
+
+- **Kernel threads do most of the work.** The window server (`wind`), networking (`netd`, `dhcpd`, `tcpd`), the work queue (`workd`) and the windowed tools in `kernel/kthreads/` are all kernel threads. They run in ring 0 in the kernel's address space, allocate from the kernel heap and call kernel functions directly. The tools draw with `w->draw->*`.
+- **Apps are processes.** `pcb_create_process` loads a flat binary at `0x1000000` into its own page directory and runs it in ring 3. Apps reach the kernel only through `int $48` (`lib/syscall.c`), drawing included.
+- **Any thread can be preempted.** The timer interrupt runs at 1000 Hz and calls `kernel_yield()` on every tick. There's one CPU, so `ENTER_CRITICAL()`, which turns interrupts off, is what keeps other threads out.
+- **Boot:** `boot/bootloader.s` → `kernel/kcrt0.s` → `kernel()` in `kernel/kernel.c`.
+  - `kernel()` initializes each subsystem, starts `idled`, `workd`, `wind` and, if `default.cfg` enables it, `netd`, then starts the timer.
+  - `wind` starts `login`, which runs `rootfs/sysutil/startup.sh`.
+- **Files register themselves.** The macros below add a constructor to the `.kctor_table` section, and `init_kctors()` runs them all at boot. There's no central list; grep for a macro to find everything it registers.
+  - `EXPORT_KTHREAD(fn)`: a kernel thread, launched by `start("fn", …)` or the shell's `exec fn`.
+  - `EXPORT_SYSCALL(index, fn)`: a syscall. The core syscalls are added by hand in `kernel()`.
+  - `EXPORT_KSYMBOL(fn)`: a shell command.
+- **Shell commands:** `exec_cmd` (`kernel/kutils.c`) splits a line into `argc`/`argv`, looks up the first word with `ksyms_resolve_symbol`, and calls the result on the caller's thread. `sh` scripts and the `system` syscall go through it too.
+  - The lookup tries `EXPORT_KSYMBOL` names first, then every function in `symbols.map`. So any kernel function's name runs as a command, with `(argc, argv)` as its arguments. For example, `mkdir` runs the unused filesystem's `mkdir` in `fs/vfs.c`.
+- **Where data comes in:**
+  - **Input:** the keyboard and mouse interrupts fill buffers, and `wind` polls them every frame.
+  - **Network:** the e1000 interrupt queues each packet for `netd`, which hands it to `workd` to run up the stack in `net/`. Apps use the socket syscalls in `net/api.c`.
+  - **Files:** `fs/fs.c` is the file layer, and FAT16 (`fs/fat16*.c`) is the only filesystem registered with it. `fs/ext.c`, `inode.c` and `vfs.c` are an older filesystem that's still linked in but never mounted.
+- **Globals** (`include/kernel.h`, `include/pcb.h`):
+  - `$kernel` holds the graphics context and window server.
+  - `$services` holds the scheduler, networking, user manager and event log.
+  - `$process->current` is the running PCB.
+
 ## Build
 
 Build inside the Docker image (Debian 12 with `gcc-multilib`):
