@@ -69,11 +69,13 @@ int build_load_kernel()
 
     fseek(kernel, 0, SEEK_END);
     kernel_size = ftell(kernel);
-    kernel_block_count = kernel_size / 512;
+    /* Round up, so the last partial block is written too. Without it, the bootloader reads the start of the FAT in its place. */
+    kernel_block_count = (kernel_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
     fseek(kernel, 0, SEEK_SET);
     printf("Kernel size: %d\n", kernel_size);
 
-    char* kernel_data = malloc(kernel_size);
+    /* Whole blocks, zeroed, so the last block is padded with zeros */
+    char* kernel_data = calloc(kernel_block_count, BLOCK_SIZE);
     if(kernel_data == NULL){
         return -2;
     }
