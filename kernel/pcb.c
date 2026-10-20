@@ -442,18 +442,37 @@ error_t pcb_create_process(char* program, int argc, char** argv, pcb_flag_t flag
 	int ret, size;
 	struct pcb* pcb;
 
-	/* Load program into memory. kalloc_try, so running out of memory fails the launch instead of panicking. */
-	buf = kalloc_try(MAX_PROGRAM_SIZE);
-	if(buf == NULL){return -ERROR_ALLOC;}
-	
-	ret = fs_load_from_file(program, buf, MAX_PROGRAM_SIZE);
-	if(ret < 0){
-		dbgprintf("Error loading %s\n", program);
-		
+	/* Load program into a buffer of its own size. kalloc_try, so running out of memory fails the launch instead of panicking. */
+	int fd = fs_open(program, FS_FILE_FLAG_READ);
+	if(fd < 0){
+		dbgprintf("Error opening %s\n", program);
+		return -ERROR_FILE_NOT_FOUND;
+	}
+
+	size = fs_size(fd);
+	if(size <= 0){
+		fs_close(fd);
+		return -ERROR_FILE_NOT_FOUND;
+	}
+	if(size > MAX_PROGRAM_SIZE){
+		warningf("%s is %d bytes, more than a program can be (%d)\n", program, size, MAX_PROGRAM_SIZE);
+		fs_close(fd);
+		return -ERROR_FILE_TOO_LARGE;
+	}
+
+	buf = kalloc_try(size);
+	if(buf == NULL){
+		fs_close(fd);
+		return -ERROR_ALLOC;
+	}
+
+	ret = fs_read(fd, buf, size);
+	fs_close(fd);
+	if(ret != size){
+		dbgprintf("Error loading %s: read %d of %d bytes\n", program, ret, size);
 		kfree(buf);
 		return -ERROR_FILE_NOT_FOUND;
 	}
-	size = ret;
 
 	ret = __pcb_init_process(flags, VMEM_DATA, &pcb);
 	if(ret < 0){

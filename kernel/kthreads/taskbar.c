@@ -453,6 +453,9 @@ static void taskbar_start_program(char* program, char* title)
     case -ERROR_FILE_NOT_FOUND:
         message = "Program not found.";
         break;
+    case -ERROR_FILE_TOO_LARGE:
+        message = "Program too large.";
+        break;
     default:
         message = "Couldn't start it.";
         break;

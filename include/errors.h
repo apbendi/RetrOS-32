@@ -35,6 +35,7 @@ enum errors {
     ERROR_OUT_OF_MEMORY,
     ERROR_ACCESS_DENIED,
     ERROR_TIMEOUT,
+    ERROR_FILE_TOO_LARGE,
 };
 
 char* error_get_string(error_t err);

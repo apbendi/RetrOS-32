@@ -312,11 +312,7 @@ void exec(int argc, char* argv[])
 
 	void (*ptr)(int argc, char* argv[]) = (void (*)(int argc, char* argv[])) ksyms_resolve_symbol(argv[idx]);
 	if(ptr == NULL){
-		/**
-		 * Not a kernel function either, so say why the program didn't start, unless there's no such program.
-		 * This is checked after the kernel functions because pcb_create_process allocates before it opens the file,
-		 * so it can run out of memory for a name that was never a program.
-		 */
+		/* Not a kernel function either, so say why the program didn't start, unless there's no such program */
 		if(pid < 0 && pid != -ERROR_FILE_NOT_FOUND){
 			twritef("Couldn't start %s: %s\n", argv[idx], error_get_string(pid));
 			return;

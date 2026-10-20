@@ -38,7 +38,9 @@ static char* error_string[] = {
     "Window not found.",
     "Window operations are corrupted.",
     "Out of memory.",
-    "Access denied."
+    "Access denied.",
+    "Timed out.",
+    "File too large."
 };
 
 char* error_get_string(error_t err)
