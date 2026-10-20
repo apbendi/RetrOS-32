@@ -371,6 +371,8 @@ static void __kthread_entry taskbar(void)
     struct gfx_event event;
     /* The longest the clock text can be */
     int timedate_length = strlen("12:00 PM Sep 30, 2000");
+    /* Text wraps to the left edge within 10 px of the right one, so keep the clock's last character out of there */
+    int timedate_x = w->inner_width - (timedate_length*8) - 8;
 
     w->draw->rect(w, 0, 1, vbe_info->width, TASKBAR_HEIGHT, 30);
     w->draw->rect(w, 0, 0, vbe_info->width, 2, COLOR_VGA_LIGHTER_GRAY+1);
@@ -386,7 +388,7 @@ static void __kthread_entry taskbar(void)
         }
     }
     
-    gfx_put_icon16(wlan_16, w->inner_width - (timedate_length*8) - 20, 2);
+    gfx_put_icon16(wlan_16, timedate_x - 20, 2);
 
     /* Minute of the last clock redraw, -1 to draw right away */
     int last_minute = -1;
@@ -411,8 +413,8 @@ static void __kthread_entry taskbar(void)
             int hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
 
             /* e.g. "2:05 PM Oct 18, 2026". The RTC's year has two digits, and the century register isn't read. */
-            w->draw->rect(w, w->inner_width - (timedate_length*8), 5, timedate_length*8, 10, 30);
-            w->draw->textf(w, w->inner_width - (timedate_length*8), 5, COLOR_BLACK,
+            w->draw->rect(w, timedate_x, 5, timedate_length*8, 10, 30);
+            w->draw->textf(w, timedate_x, 5, COLOR_BLACK,
                 "%d:%s%d %s %s %d, %d",
                 hour, TIME_PREFIX(time.minute), time.minute, time.hour < 12 ? "AM" : "PM",
                 rtc_month_name(time.month), time.day, 2000 + time.year
