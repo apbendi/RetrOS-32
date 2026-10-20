@@ -32,6 +32,7 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
 - **Boot:** `boot/bootloader.s` → `kernel/kcrt0.s` → `kernel()` in `kernel/kernel.c`.
   - `kernel()` initializes each subsystem, starts `idled`, `workd`, `wind` and, if `default.cfg` enables it, `netd`, then starts the timer.
   - `wind` starts `login`, which runs `rootfs/sysutil/startup.sh`.
+  - **The kernel image** is a flat binary loaded at `0x10000`, and `.bss` is the last part of it (`kernel/linker.ld`). The bootloader doesn't always load the end of the image (#32), so `kcrt0` clears `.bss` before calling `kernel()`.
 - **Files register themselves.** The macros below add a constructor to the `.kctor_table` section, and `init_kctors()` runs them all at boot. There's no central list; grep for a macro to find everything it registers.
   - `EXPORT_KTHREAD(fn)`: a kernel thread, launched by `start("fn", …)` or the shell's `exec fn`.
   - `EXPORT_SYSCALL(index, fn)`: a syscall. The core syscalls are added by hand in `kernel()`.
@@ -118,6 +119,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - **Memory corruption usually shows up somewhere else.** An overflow in one subsystem crashes another.
   - The kernel heap is first fit, in boot order. At boot, netd's stack sits right before the window manager's screen buffer, so drawing above the top of the screen used to crash *netd*.
   - When you find a corrupted pointer, read its bytes as data. `20 1c 04 1c` turned out to look like text pixels in the terminal's color `0x1c`, which pointed at a drawing overflow.
+  - A global that's already wrong before its thread first runs can come from the disk image, not the heap. `netd` crashed at boot on an interface pointer of `0xffff00a3`: two FAT16 entries, which the bootloader had loaded over the end of `.bss` (fixed in 2f52aa1).
 - **To test crash output,** temporarily add a fault to a kernel thread that only starts on demand, e.g. the first line of `about()` in `kernel/kthreads/about.c`, which runs when you open About. Remove it afterwards.
   - Invalid opcode: `asm volatile("ud2");`
   - An exception with an error code: `asm volatile("movw $0x1234, %%ax\n\tmovw %%ax, %%ds" ::: "eax");`, which raises #GP with error code `0x1234`.
@@ -128,6 +130,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - **Frame:** the title bar and borders are drawn `GFX_WINDOW_HEADER_OVERHANG` (4 px) above `window->y`.
 - **Content:** the content starts at `x+8, y+8`, and `inner_width`/`inner_height` are the outer size minus 16. A window's buffer is `inner`, with stride `pitch`, which equals `inner_width`.
 - **Size limits:** `gfx_window_clamp_size` enforces a minimum of `GFX_WINDOW_MIN_WIDTH`×`GFX_WINDOW_MIN_HEIGHT` (128×48) and keeps the window on screen. The resize outline and `gfx_window_resize` both use it, so they agree. When there isn't enough memory, `gfx_window_resize` keeps the old size.
+- **Creating:** `gfx_new_window` returns NULL when there isn't enough memory for the buffer. Kernel threads check for it and return. For apps, `gfx_create_window` in `lib/syscall.c` prints a message and exits, since an app without a window can't be seen or closed.
 - **Resizing:** dragging the corner only moves an outline, drawn from `pending_size`. The window keeps its size and buffer until the release, when `gfx_default_mouse_up` calls `gfx_window_resize` once (#10). Maximize and restore resize right away.
 - **Moving:** `is_moving.x`/`y` hold where the title bar was grabbed, relative to the window's position. `gfx_default_hover` keeps that point under the cursor, clamping each axis to the screen on its own, so a window pushed against an edge slides along it. The whole window has to stay on screen because drawing isn't clipped (#4). #18 covers letting windows hang off the edge.
 
@@ -177,6 +180,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - It's 4 MB (`memory_map_init` only counts RAM below 16 MB; #11), first fit, in 256-byte blocks.
   - `kalloc` panics with "Out of memory!" rather than returning NULL.
   - Use `kalloc_try` for large allocations that are allowed to fail.
+  - Starting a program or thread uses `kalloc_try` for the load buffer, the kernel stack and the window buffer. Running out returns `-ERROR_ALLOC`, which `exec` and the Start menu report. Smaller allocations along the way still use `kalloc`. Keeping a reserve, so a launch can't take the last free memory, is #31.
   - Every window's buffer comes from this heap, apps' included. At 1024×768 a maximized window's buffer is ~715 KB.
 - **The time of day:** `get_current_time` (`drivers/rtc.c`) returns exactly what the CMOS real-time clock holds; the OS has no time zones. The Makefile starts QEMU with `-rtc base=localtime`, so the clock shows the host's local time (#19). #20 covers keeping the RTC in UTC with an offset setting.
   - It reads the RTC with interrupts off. Selecting a register (port `0x70`) and reading it (`0x71`) are separate accesses, and a thread switch between them lets another thread change which register gets read.
