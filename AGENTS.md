@@ -62,7 +62,7 @@ docker compose up
   - Objects track header dependencies (`-MMD -MP`), and the kernel always relinks.
   - `fs/` and `net/` have their own Makefiles. The top-level Makefile runs them on every build, through the phony targets `fs_objects` and `net_objects`, so their header tracking works too. A rule for a subdirectory's objects without a prerequisite like that only ever builds them once. That's how `list` crashed after #33 changed `struct terminal`: `fs/` still had the old layout compiled in.
   - The app static libraries (`apps/lib*.a`) are re-archived on every build, so every app relinks too. That matters when you change a struct shared between `lib/` and the kernel.
-  - You don't need `make clean`.
+  - You don't need `make clean`, except after changing compile flags, which make doesn't track: run `docker compose run --rm builder clean`, then `docker compose up`.
 - **Toolchain:** the host (macOS) has no i386 cross toolchain. Use the container for real builds, and clang for quick checks (below).
 - **GCC catches more than clang:** the build uses GCC with `-Wall -Wextra -Wpedantic`, and GCC warns about things clang doesn't. One example from this repo: a `?:` mixing an enum value with a non-enum operand.
 
@@ -118,7 +118,12 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - To find it, disassemble around that return address and see which call it follows.
 - **Mapping addresses to code:**
   - `bin/kernelout`, the flat image that boots, is copied out of the ELF `bin/symbols` with `objcopy -O binary`. So every address in `bin/symbols` and `symbols.map` is the booted kernel's, data included.
-  - Disassemble with the host's `objdump`, e.g. `objdump -d --no-show-raw-insn --start-address=0x2fcf0 --stop-address=0x2fd30 bin/symbols`. Data symbols are listed by `nm -n -S bin/symbols`.
+  - **Source lines and types:** the kernel's C is compiled with `-g` (`KERNEL_DEBUG_CFLAGS` in `make/common.mk`), so `bin/symbols` has debug info.
+    - `objcopy` leaves the debug info out of `kernelout`, so the kernel that boots is the same either way.
+    - lldb reads it without booting: `lldb --batch -o "target create --arch i386 bin/symbols" -o "image lookup -a 0x1b036"` prints `list + 255 at cmds.c:130:3`.
+    - **For a return address,** such as every entry in a page fault's backtrace, look up the address minus 1, which is inside the call.
+    - `image lookup -t 'struct terminal'` lists a struct's fields with their types.
+  - Disassemble with the host's `objdump`, e.g. `objdump -d -l --no-show-raw-insn --start-address=0x2fcf0 --stop-address=0x2fd30 bin/symbols`, where `-l` marks the source lines. Data symbols are listed by `nm -n -S bin/symbols`.
 - **The PCB dump isn't the crash location.** `entry point` is the thread's entry, and `esp`/`ebp` are from its last context switch.
 - **Memory corruption usually shows up somewhere else.** An overflow in one subsystem crashes another.
   - The kernel heap is first fit, in boot order. At boot, netd's stack sits right before the window manager's screen buffer, so drawing above the top of the screen used to crash *netd*.

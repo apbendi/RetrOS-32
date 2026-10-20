@@ -88,6 +88,9 @@ done
 
 - **`start` reports a crash during boot.** It stops waiting at `KERNEL PANIC`, `[exception]` or a page fault, and points you to `log --all`. Read the log with the `debug-kernel-panic` skill.
 - **A triple fault stops the VM** instead of rebooting it (`-no-reboot -no-shutdown`), so `$Q mon "info registers"` still shows the CPU state.
+- **Rarely, the boot triple-faults right after the resolution is picked.** `pick` then says the kernel didn't start, and `.qemu/qemu-debug.log` says `Triple fault`. Under lldb, it reports SIGQUIT at `0x81f2`.
+  - **Probable cause:** the bootloader enables interrupts (`sti` in `boot/bootloader.s`) before the kernel has an interrupt table, so an interrupt that's already pending can't be handled.
+  - **What to do:** start again.
 - **`.qemu/qemu-debug.log`** has QEMU's register dump at every CPU reset, including the first one at power-on, and any guest errors QEMU noticed.
 - **Monitor commands worth knowing:**
   - `info registers`;
@@ -101,17 +104,27 @@ done
 
 ```
 $Q start --gdb
-lldb --batch -o "target create --arch i386 bin/symbols" -o "gdb-remote localhost:1234" \
-     -o "breakpoint set -n kernel" -o "process continue" -o "bt" -o "register read" \
-     -o "process detach" > .qemu/lldb.out 2>&1 &
-$Q pick 1024          # notices when lldb has stopped the VM
+lldb --batch -o "target create --arch i386 bin/symbols" -o "settings set target.source-map /RetrOS-32 $PWD" \
+     -o "gdb-remote localhost:1234" -o "breakpoint set -f cmds.c -l 130" -o "process continue" \
+     -o "frame variable" -o "p *fs" -o "process detach" > .qemu/lldb.out 2>&1 &
+$Q pick 1024          # boots; it also notices if lldb stops the VM during boot
+$Q shell "list"       # runs the line with the breakpoint
 cat .qemu/lldb.out
 ```
 
-- **Breakpoints and backtraces work:** set them by function name or by address (`breakpoint set -a 0x10000` stops at the kernel's first instruction).
-  - Frames above `_start` are leftover stack, not callers.
-  - `bin/symbols` has no debug info, so you get function names, not source lines.
-- **Globals:** `bin/kernelout` is copied out of `bin/symbols`, so a global's address in `bin/symbols` is its address in the running kernel.
-  - Without debug info, lldb doesn't know a global's type, so read raw memory at its symbol. `image lookup -s netd` prints the address. `memory read -f x -s 1 -c 1 '(char*)&netd + 0x30'` reads `netd.if_count`, which is 2 once `eth0` and `lo0` are registered.
+- **`bin/symbols` has debug info:** the kernel's C is compiled with `-g`, so lldb knows source lines, types and variables. Apps have none.
+  - **`source-map`:** the build runs in the container, where the repo is `/RetrOS-32`. This setting points lldb at your checkout, so it can show the source.
+  - **Breakpoints:** by function (`-n kernel`), address (`-a 0x10000` is the kernel's first instruction) or source line (`-f cmds.c -l 130`).
+  - **At a stop:** `frame variable` lists the arguments and locals, and `p *fs` or `p fs->ops->list` follow pointers. Locals the optimizer dropped show as `<unavailable>`.
   - To stop at a moment you choose after boot, break on `wm_log_windows` and press F12 (`$Q key f12`).
+- **Globals:** a global's address in `bin/symbols` is its address in the running kernel. `target variable netd` prints the whole struct, and `p netd.if_count` is 2 once `eth0` and `lo0` are registered.
+  - `$kernel`, `$process` and `$services` have a `$` in their names, which lldb keeps for its own variables. `target variable -r '^.process$'` prints the pointer. Cast the address it prints to follow it, e.g. `p ((struct process*)0x4c61c)->current->name`.
+  - Macros aren't available.
+- **`bt` stops at frame #0 in kernel threads:**
+  - **Why:** each thread's stack starts one byte below its top (`kernel/pcb.c`), so every frame is misaligned, and lldb's i386 unwinder rejects misaligned frames.
+  - **Where it works:** on the boot stack, e.g. at `kernel()`, where frames above `_start` are leftover stack, not callers.
+  - **Walk the frames yourself instead:**
+    1. `memory read -f x -s 4 -c 2 $ebp` prints the caller's `ebp` and the return address.
+    2. `image lookup -a <return address - 1>` names the caller and the line of the call.
+    3. Repeat with the caller's `ebp`.
 - **`process detach`** lets the OS keep running; `kill` stops QEMU.

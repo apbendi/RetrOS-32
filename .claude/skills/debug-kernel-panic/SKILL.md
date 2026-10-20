@@ -27,13 +27,21 @@ The PCB dump's `entry point` and its `esp`/`ebp` "at last switch" are **not** th
 
 1. Check that `bin/symbols` comes from the kernel that booted: compare its timestamp with the last build and with `git log -1`. `bin/kernelout` is copied out of `bin/symbols`, so the addresses in it and in `symbols.map` are the booted kernel's, data included.
 2. Find the function containing an address with `rootfs/sysutil/symbols.map`, or with the backtrace's own `name: addr - base = offset` lines.
-3. Disassemble around the address:
+3. Find the source line with lldb. It works offline, without QEMU, because `bin/symbols` has debug info:
    ```
-   objdump -d --no-show-raw-insn --start-address=0x<addr-0x30> --stop-address=0x<addr+0x10> bin/symbols
+   lldb --batch -o "target create --arch i386 bin/symbols" -o "image lookup -a 0x<addr>"
+   ```
+   It prints e.g. `list + 255 at cmds.c:130:3`.
+   - **For a return address,** look up the address minus 1. That's every backtrace entry except an exception's first line. The return address itself is the instruction after the call, which is often on the next line.
+   - **Struct layouts:** `-o "image lookup -t 'struct terminal'"` lists a struct's fields, and `-o "p (unsigned)&((struct terminal*)0)->ops"` prints a field's offset (164, i.e. `0xa4`).
+   - **A field offset in the disassembly that disagrees with lldb's** means that code was compiled against an older header.
+4. Disassemble around the address. `-l` marks the source lines:
+   ```
+   objdump -d -l --no-show-raw-insn --start-address=0x<addr-0x30> --stop-address=0x<addr+0x10> bin/symbols
    ```
    - **For a page fault:** the instruction just before the return address is a `call`. The function it calls is where the fault happened.
    - **Then read the source** of that function. Work out which pointer it was dereferencing, which is often the first memory access.
-4. To look up a global's address and its neighbors, use `nm -n -S bin/symbols`.
+5. To look up a global's address and its neighbors, use `nm -n -S bin/symbols`.
 
 ## 4. Decide whether it's corruption
 

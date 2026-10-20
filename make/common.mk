@@ -29,6 +29,10 @@ FREESTANDING_FLAGS    := -nostdlib -nostdinc -ffreestanding -fno-pie -fno-stack-
 FREESTANDING_CFLAGS   := $(ARCH_CFLAGS) $(FREESTANDING_WARNINGS) $(FREESTANDING_FLAGS)
 CPP_NO_RTTI           := -fno-exceptions -fno-rtti
 
+# Debug info for the kernel's ELF (bin/symbols), for lldb, objdump -l and the like.
+# objcopy leaves it out of bin/kernelout, so the kernel that boots is the same with or without it.
+KERNEL_DEBUG_CFLAGS ?= -g
+
 # Dependency files for clang/gcc (-MMD).
 DEPFLAGS ?= -MMD -MP
 

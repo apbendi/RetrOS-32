@@ -251,7 +251,7 @@ def start(args):
 
     if args.gdb:
         print(f"Paused before the BIOS, waiting for a debugger on port {GDB_PORT}:\n"
-              f"  lldb bin/symbols -o 'gdb-remote localhost:{GDB_PORT}'\n"
+              f"  lldb bin/symbols -o 'settings set target.source-map /RetrOS-32 {REPO}' -o 'gdb-remote localhost:{GDB_PORT}'\n"
               f"Set breakpoints, continue, then pick a resolution: qctl.py pick 1024")
         return
     pick(args.res)
