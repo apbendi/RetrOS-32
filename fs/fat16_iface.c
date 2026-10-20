@@ -464,26 +464,12 @@ static int fat16_list(struct filesystem* fs, const char* path, char* buf, int si
 
         fat16_read_entry(entry.first_cluster == 0 ? get_root_directory_start_block() : get_data_start_block() + entry.first_cluster, i, dir_entry);
 
-        /* Check if the entry is used (filename's first byte is not 0x00 or 0xE5) */
-        if (dir_entry->filename[0] != 0x00 && dir_entry->filename[0] != 0xE5
+        /* Check if the entry is used (filename's first byte is not 0x00 or 0xE5), and isn't part of a long name */
+        if (dir_entry->filename[0] != 0x00 && dir_entry->filename[0] != 0xE5 && !FAT16_IS_LONG_NAME(dir_entry)
             // && (HAS_FLAG(dir_entry->attributes, FAT16_FLAG_ARCHIVE) || HAS_FLAG(dir_entry->attributes, FAT16_FLAG_SUBDIRECTORY))
         ) {
-            /* parse name */
-            char name[13] = {0};
-            int j = 0;
-            while(dir_entry->filename[j] != ' '){
-                name[j] = dir_entry->filename[j];
-                j++;
-            }
-
-            if(dir_entry->extension[0] != ' '){
-                name[j++] = '.';
-                for(int k = 0; k < 3; k++){
-                    name[j++] = dir_entry->extension[k];
-                }
-            }
-
-            name[j] = '\0';
+            char name[FAT16_NAME_MAX + 1];
+            fat16_entry_name(dir_entry, name);
 
             /* The ROOT entry fat16_read_entry makes up for the root directory has no date, so leave its columns blank */
             char date[TIME_FORMAT_DATE_MAX + 1] = "";
@@ -539,28 +525,14 @@ static int fat16_find(struct filesystem* fs, char* path, const char* needle){
 
         fat16_read_entry(entry.first_cluster == 0 ? get_root_directory_start_block() : get_data_start_block() + entry.first_cluster, i, dir_entry);
 
-        /* Check if the entry is used (filename's first byte is not 0x00 or 0xE5) */
-        if (dir_entry->filename[0] != 0x00 && dir_entry->filename[0] != 0xE5) {
+        /* Check if the entry is used (filename's first byte is not 0x00 or 0xE5), and isn't part of a long name */
+        if (dir_entry->filename[0] != 0x00 && dir_entry->filename[0] != 0xE5 && !FAT16_IS_LONG_NAME(dir_entry)) {
             if(dir_entry->filename[0] == '.'){
                 continue;
             }
 
-            /* parse name */
-            char name[13] = {0};
-            int j = 0;
-            while(dir_entry->filename[j] != ' '){
-                name[j] = dir_entry->filename[j];
-                j++;
-            }
-
-            if(dir_entry->extension[0] != ' '){
-                name[j++] = '.';
-                for(int k = 0; k < 3; k++){
-                    name[j++] = dir_entry->extension[k];
-                }
-            }
-
-            name[j] = '\0';
+            char name[FAT16_NAME_MAX + 1];
+            fat16_entry_name(dir_entry, name);
 
             if(strstr(name, needle) != -1){
                 twritef("%s%s%s\n", path, name, dir_entry->attributes & FAT16_FLAG_SUBDIRECTORY ? "/" : "");

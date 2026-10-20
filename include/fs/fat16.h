@@ -34,6 +34,16 @@ typedef enum {
     FAT16_FLAG_UNUSED2 = 1 << 7            /* Not used; must be set to 0 */
 } fat16_flag_t;
 
+/**
+ * Long-file-name entries have exactly these four flags. Linux's vfat driver, which make sync copies files through,
+ * adds them before the 8.3 entry of any name that doesn't fit 8.3. RetrOS doesn't read long names.
+ */
+#define FAT16_LONG_NAME (FAT16_FLAG_READ_ONLY | FAT16_FLAG_HIDDEN | FAT16_FLAG_SYSTEM | FAT16_FLAG_VOLUME_LABEL)
+#define FAT16_IS_LONG_NAME(entry) (((entry)->attributes & 0x3F) == FAT16_LONG_NAME)
+
+/* The longest name fat16_entry_name writes, "FILENAME.EXT", not counting the terminating 0 */
+#define FAT16_NAME_MAX 12
+
 struct fat_boot_table {
     uint8_t jmp[3];                     /* 3 bytes - Jump instruction */
     uint8_t manufacturer[8];            /* 8 bytes - Optional manufacturer description */
@@ -104,6 +114,7 @@ void fat16_set_time(uint16_t *time, uint8_t hours, uint8_t minutes, uint8_t seco
 void fat16_set_date(uint16_t *date, uint16_t year, uint8_t month, uint8_t day);
 void fat16_stamp_entry(struct fat16_directory_entry* entry);
 void fat16_entry_time(const struct fat16_directory_entry* entry, struct time* time_out);
+void fat16_entry_name(const struct fat16_directory_entry* entry, char* name_out);
 
 int fat16_read_entry(uint32_t block, uint32_t index, struct fat16_directory_entry* entry_out);
 int fat16_sync_directory_entry(uint16_t block, uint32_t index, const struct fat16_directory_entry* entry);

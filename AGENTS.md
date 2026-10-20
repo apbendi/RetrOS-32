@@ -212,6 +212,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
 ## Writing an app
 
 1. **Create the app:** add `apps/<name>/<name>.cpp` and a `Makefile` (`APP_NAME`, `APP_OUTPUT := <name>.o`, `APP_LIBS := -lcore -lgraphic`, `include ../app.mk`). Then add the name to `APPS` in `apps/Makefile`.
+   - **Keep `<name>` to 8 characters.** RetrOS only reads 8.3 names. When `make img` copies in a longer name, such as `mandelbrot.o`, it gets a short name like `MANDEL~1.O`, and RetrOS can only open it by that.
 2. **Write the window:** subclass `Window` from `apps/utils/Graphics.hpp`. A frame loop should:
    - drain events;
    - handle `GFX_EVENT_EXIT` and `GFX_EVENT_RESOLUTION`;

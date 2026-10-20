@@ -892,6 +892,31 @@ void fat16_entry_time(const struct fat16_directory_entry* entry, struct time* ti
     time_out->second = (entry->write_time & 0x1F) * 2;
 }
 
+/**
+ * Writes an entry's name as text, e.g. "BREAKOUT.O": the name without its padding, then a dot and the extension
+ * if it has one. name_out needs room for FAT16_NAME_MAX characters and the terminating 0.
+ *
+ * The name and extension are fixed-size fields with no terminator, so each copy stops at its field's end as well
+ * as at the padding. A full 8-character name has no padding, and the extension and attributes follow it directly.
+ */
+void fat16_entry_name(const struct fat16_directory_entry* entry, char* name_out)
+{
+    int length = 0;
+
+    for(int i = 0; i < 8 && entry->filename[i] != ' '; i++){
+        name_out[length++] = entry->filename[i];
+    }
+
+    if(entry->extension[0] != ' '){
+        name_out[length++] = '.';
+        for(int i = 0; i < 3 && entry->extension[i] != ' '; i++){
+            name_out[length++] = entry->extension[i];
+        }
+    }
+
+    name_out[length] = '\0';
+}
+
 int fat16_load()
 {
     if(disk_attached() == 0){
