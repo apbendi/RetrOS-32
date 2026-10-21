@@ -17,8 +17,8 @@ Work from the serial log. Don't boot QEMU yourself unless asked; ask for the ful
 | Log shows | Meaning | Where the location comes from |
 |---|---|---|
 | `[exception] N <name> (<thread>)` followed by `eip:` | A CPU exception. If there's no `eip:` line, the kernel predates #5 | `eip`, and the backtrace's first line is the faulting function |
-| `print_page_fault_info(): … address 0x…` | A page fault. CR2 is the address it touched | There's no `eip` (#8). The backtrace's second entry is a return address in the faulting function's *caller* |
-| `kalloc(): Out of memory: N` | The 4 MB kernel heap has no contiguous block big enough | The backtrace, from inside `kalloc` |
+| `[exception] 14 Page fault`, then `Page Fault Address: 0x… (…)` | A page fault. The address is CR2, what the instruction touched. The parentheses say whether the page was present, whether it was a write, and whether it came from user mode | `eip`, as for any exception. Before #8, page faults printed no `[exception]` line or `eip`, and the backtrace's second entry was a return address in the faulting function's *caller* |
+| `kalloc(): Out of memory: N` | The kernel heap has no contiguous block big enough | The backtrace, from inside `kalloc` |
 | `assert` / `kernel_panic(): <reason>` | An explicit check failed | The reason string and the backtrace |
 
 The PCB dump's `entry point` and its `esp`/`ebp` "at last switch" are **not** the crash location.
@@ -39,7 +39,7 @@ The PCB dump's `entry point` and its `esp`/`ebp` "at last switch" are **not** th
    ```
    objdump -d -l --no-show-raw-insn --start-address=0x<addr-0x30> --stop-address=0x<addr+0x10> bin/symbols
    ```
-   - **For a page fault:** the instruction just before the return address is a `call`. The function it calls is where the fault happened.
+   - **For an exception,** `eip` is the faulting instruction itself.
    - **Then read the source** of that function. Work out which pointer it was dereferencing, which is often the first memory access.
 5. To look up a global's address and its neighbors, use `nm -n -S bin/symbols`.
 
@@ -68,7 +68,8 @@ Common writers, from past bugs:
 - **Test exception output** by adding a temporary fault to `about()` (`kernel/kthreads/about.c`), which runs when the user opens About. Remove it afterwards.
   - Invalid opcode: `asm volatile("ud2");`
   - An exception with an error code: `asm volatile("movw $0x1234, %%ax\n\tmovw %%ax, %%ds" ::: "eax");`, which raises #GP with error code `0x1234`.
-- **If you can't confirm it,** say so, and say what evidence would. For page faults, fixing #8 would show the exact instruction.
+  - A page fault: `*(volatile int*)0x1c041c20 = 0;`, a write to an address that isn't mapped, which gives error code `0x2`.
+- **If you can't confirm it,** say so, and say what evidence would.
 
 ## 6. Report
 

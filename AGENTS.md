@@ -115,15 +115,13 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 
 - **Read the whole serial log,** not just the panic. The lines before it usually show what was happening, e.g. a resize or a window close.
 - **CPU exceptions** (since #5) print `[exception] N <name> (<thread>)`. The output also includes `eip`, the error code, `cs`, `eflags`, and the general registers. The backtrace's first line is the faulting function, then its callers.
-- **Page faults use a different path** (#8): `_page_fault_entry` → `page_fault_interrupt`. It prints CR2, the faulting address, but not `eip`.
-  - Its backtrace starts at `_page_fault_entry`. The next entry is the return address *in the faulting function's caller*, so the faulting function itself is missing.
-  - To find it, disassemble around that return address and see which call it follows.
+- **Page faults** (exception 14) print the same, then `Page Fault Address:` with CR2, the address the instruction touched, and whether the page was present, whether it was a write, and whether it came from user mode. The page table entries for the address follow. Before #8 they took a separate path that printed no `eip`.
 - **Mapping addresses to code:**
   - `bin/kernelout`, the flat image that boots, is copied out of the ELF `bin/symbols` with `objcopy -O binary`. So every address in `bin/symbols` and `symbols.map` is the booted kernel's, data included.
   - **Source lines and types:** the kernel's C is compiled with `-g` (`KERNEL_DEBUG_CFLAGS` in `make/common.mk`), so `bin/symbols` has debug info.
     - `objcopy` leaves the debug info out of `kernelout`, so the kernel that boots is the same either way.
     - lldb reads it without booting: `lldb --batch -o "target create --arch i386 bin/symbols" -o "image lookup -a 0x1b036"` prints `list + 255 at cmds.c:130:3`.
-    - **For a return address,** such as every entry in a page fault's backtrace, look up the address minus 1, which is inside the call.
+    - **For a return address,** which is every backtrace entry except an exception's first, look up the address minus 1, which is inside the call.
     - `image lookup -t 'struct terminal'` lists a struct's fields with their types.
   - Disassemble with the host's `objdump`, e.g. `objdump -d -l --no-show-raw-insn --start-address=0x2fcf0 --stop-address=0x2fd30 bin/symbols`, where `-l` marks the source lines. Data symbols are listed by `nm -n -S bin/symbols`.
 - **The PCB dump isn't the crash location.** `entry point` is the thread's entry, and `esp`/`ebp` are from its last context switch.
@@ -134,6 +132,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - **To test crash output,** temporarily add a fault to a kernel thread that only starts on demand, e.g. the first line of `about()` in `kernel/kthreads/about.c`, which runs when you open About. Remove it afterwards.
   - Invalid opcode: `asm volatile("ud2");`
   - An exception with an error code: `asm volatile("movw $0x1234, %%ax\n\tmovw %%ax, %%ds" ::: "eax");`, which raises #GP with error code `0x1234`.
+  - A page fault: `*(volatile int*)0x1c041c20 = 0;`, a write to an address that isn't mapped.
 
 ## Graphics system
 

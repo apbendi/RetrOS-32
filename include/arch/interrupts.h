@@ -27,7 +27,6 @@ struct registers
 void init_interrupts();
 void load_data_segments(int seg);
 void _syscall_entry(void);
-void page_fault_interrupt(unsigned long cr2, unsigned long err);
 
 typedef void (*isr_t)();
 
@@ -108,7 +107,6 @@ extern void isr46(struct registers*);
 extern void isr47(struct registers*);
 
 int system_call(int index, int arg1, int arg2, int arg3);
-void _page_fault_entry(void);
 
 int interrupt_get_count(int interrupt);
 

@@ -52,6 +52,24 @@ static const char* __exceptions_names[32] = {
 	"RESERVED","RESERVED","RESERVED","RESERVED","RESERVED","RESERVED",
 	"RESERVED"
 };
+
+/* Prints the exception, the registers, and a backtrace that starts at the faulting instruction */
+static void __interrupt_print_exception(struct registers* regs)
+{
+	int i = regs->int_no;
+	dbgprintf("[exception] %d %s (%s)\n", i, __exceptions_names[i], $process->current->name);
+
+	/* Coming from user mode, the CPU switched stacks and pushed the old esp. Otherwise the old stack continues right above eflags. */
+	uint32_t esp = (regs->cs & 3) ? regs->useresp : (uint32_t)&regs->useresp;
+	dbgprintf("eip: 0x%x  error code: 0x%x  cs: 0x%x  eflags: 0x%x\n", regs->eip, regs->err_code, regs->cs, regs->eflags);
+	dbgprintf("eax: 0x%x  ebx: 0x%x  ecx: 0x%x  edx: 0x%x\n", regs->eax, regs->ebx, regs->ecx, regs->edx);
+	dbgprintf("esi: 0x%x  edi: 0x%x  ebp: 0x%x  esp: 0x%x\n", regs->esi, regs->edi, regs->frame_ebp, esp);
+
+	/* The ISR stub's ebp leads to the faulting eip first, then the callers. */
+	dbgprintf("Backtrace:\n");
+	__backtrace_from((uintptr_t*)regs->ebp);
+}
+
 /* Definition for PAGE_TABLE_ADDRESS macro */
 #define PAGE_TABLE_ADDRESS(x) (((x) >> 12) << 12)
 #define PRESENT_BIT 0x1
@@ -64,9 +82,15 @@ static inline int is_user_address(uint32_t addr)
     return addr >= VMEM_DATA && addr < VMEM_STACK;
 }
 
-void print_page_fault_info(unsigned long cr2) {
+void print_page_fault_info(unsigned long cr2, unsigned long err) {
     unsigned long page_dir_entry;
     unsigned long page_table_entry;
+
+	/* The error code's low bits line up with a page entry's: the page was present (so the access broke its permissions), a write, from user mode */
+	dbgprintf("Page Fault Address: 0x%x (%s, %s, %s mode)\n", cr2,
+			(err & PRESENT_BIT) ? "page present" : "page not present",
+			(err & READ_WRITE_BIT) ? "write" : "read",
+			(err & USER_SUPERVISOR_BIT) ? "user" : "kernel");
 
     /* Get the directory entry from the page directory */
     page_dir_entry = $process->current->page_dir[DIRECTORY_INDEX(cr2)];
@@ -77,7 +101,6 @@ void print_page_fault_info(unsigned long cr2) {
 
         page_table_entry = page_table[TABLE_INDEX(cr2)];
 
-		dbgprintf("Page Fault Address: 0x%x\n", cr2);
 		dbgprintf("Page Directory Entry: 0x%x\n", page_dir_entry);
 
 		if(page_table_entry & PRESENT_BIT){
@@ -92,12 +115,15 @@ void print_page_fault_info(unsigned long cr2) {
     }
 }
 
-void page_fault_interrupt(unsigned long cr2, unsigned long err)
+/* Exception 14. Never returns: kills the process, or panics for a kernel thread. */
+static void page_fault_interrupt(struct registers* regs)
 {
-    uint32_t *ebp = (uint32_t*) __builtin_frame_address(0);
-   	__backtrace_from((uintptr_t*)ebp);
-	
-	print_page_fault_info(cr2);
+	/* The address the instruction tried to use. Interrupts are off, so no other page fault has replaced it. */
+	uint32_t cr2;
+	asm volatile("movl %%cr2, %0" : "=r"(cr2));
+
+	__interrupt_print_exception(regs);
+	print_page_fault_info(cr2, regs->err_code);
 
 	pcb_dbg_print($process->current);
 	if($process->current->is_process && (!$process->current->in_kernel || is_user_address(cr2))){
@@ -144,19 +170,8 @@ void interrupt_install_handler(int i, void (*handler)())
 
 static void __interrupt_exception_handler(struct registers* regs)
 {
-	int i = regs->int_no;
-	interrupt_counter[i]++;
-	dbgprintf("[exception] %d %s (%s)\n", i, __exceptions_names[i], $process->current->name);
-
-	/* Coming from user mode, the CPU switched stacks and pushed the old esp. Otherwise the old stack continues right above eflags. */
-	uint32_t esp = (regs->cs & 3) ? regs->useresp : (uint32_t)&regs->useresp;
-	dbgprintf("eip: 0x%x  error code: 0x%x  cs: 0x%x  eflags: 0x%x\n", regs->eip, regs->err_code, regs->cs, regs->eflags);
-	dbgprintf("eax: 0x%x  ebx: 0x%x  ecx: 0x%x  edx: 0x%x\n", regs->eax, regs->ebx, regs->ecx, regs->edx);
-	dbgprintf("esi: 0x%x  edi: 0x%x  ebp: 0x%x  esp: 0x%x\n", regs->esi, regs->edi, regs->frame_ebp, esp);
-
-	/* The ISR stub's ebp leads to the faulting eip first, then the callers. */
-	dbgprintf("Backtrace:\n");
-	__backtrace_from((uintptr_t*)regs->ebp);
+	interrupt_counter[regs->int_no]++;
+	__interrupt_print_exception(regs);
 
 	pcb_dbg_print($process->current);
 	if($process->current->is_process){
@@ -178,7 +193,11 @@ void isr_handler(struct registers regs)
 	interrupt_counter[regs.int_no]++;
 	if(regs.int_no < 32){
 		/* regs is the frame the ISR stub built on the stack, not a copy */
-		__interrupt_exception_handler(&regs);
+		if(regs.int_no == 14){
+			page_fault_interrupt(&regs);
+		} else {
+			__interrupt_exception_handler(&regs);
+		}
 		EOI(regs.int_no);
 		return;
 	}
@@ -225,7 +244,6 @@ static void init_idt()
 	}
 	
 	idt_set_gate(48, (uint32_t)&_syscall_entry, GDT_KERNEL_CS, 0x0E, 3);
-	idt_set_gate(14, (uint32_t)&_page_fault_entry, GDT_KERNEL_CS, 0x0E, 0);
 
 	interrupt_install_handler(13, &general_protection_fault);
 

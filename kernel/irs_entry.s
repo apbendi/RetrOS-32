@@ -156,40 +156,4 @@ _syscall_entry:
     subl $1, __cli_cnt
     iret
 
-page_fault_save:
-  .long	0
-page_fault_error:
-  .long	0
-.global _page_fault_entry
-_page_fault_entry:
-    cli
-
-    movl	%eax, (page_fault_save)
-    popl	%eax
-    /* Get error code */
-    movl	%eax, (page_fault_error)
-    movl	(page_fault_save), %eax
-
-    pushal
-
-    pushl	%ds
-    pushl	$16
-    call	load_data_segments
-    addl	$4, %esp
-
-    /* Push error code, and then contents of cr2 */
-    movl	(page_fault_error), %eax
-    pushl	%eax
-    movl	%cr2, %eax
-    pushl	%eax
-
-    call page_fault_interrupt
-
-    addl	$8, %esp
-    
-    popl	%ds
-    popal
-
-    iret
-
 .section .note.GNU-stack,"",@progbits
