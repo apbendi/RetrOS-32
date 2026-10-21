@@ -248,6 +248,15 @@ put_at() {      # put_at PATH OFFSET N: overwrite N bytes of an existing file at
     ref mcopy -o "$WORK/patched" "::$1"
 }
 
+append() {      # append PATH N: add N bytes to the end of an existing file
+    local file
+    file=$(data "$2" "$1+")
+    rfs append "$1" < "$file"
+    mcopy -i "$M" "::$1" - > "$WORK/patched" 2>/dev/null
+    cat "$file" >> "$WORK/patched"
+    ref mcopy -o "$WORK/patched" "::$1"
+}
+
 create() {      # create PATH: an empty file
     : > "$WORK/empty"
     rfs new "$1"

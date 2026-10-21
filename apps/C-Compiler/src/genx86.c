@@ -1105,9 +1105,9 @@ void write_opcodes(){
 
     int fd = cc_open(config.output,
 #ifndef NATIVE
-        FS_FILE_FLAG_WRITE | FS_FILE_FLAG_CREATE
+        FS_FILE_FLAG_WRITE | FS_FILE_FLAG_CREATE | FS_FILE_FLAG_TRUNCATE
 #else
-        O_WRONLY | O_CREAT
+        O_WRONLY | O_CREAT | O_TRUNC
 #endif
     );
     

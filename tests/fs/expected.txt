@@ -2,7 +2,7 @@
 # run.sh flags every case whose result differs. When a change fixes or breaks a case on purpose, update its line
 # here in the same commit, so the next run starts from the new state.
 #
-# FatFs (fs/fatfs_iface.c). write.in-pieces and write.at-offset fail until writes go to the file's position (#96).
+# FatFs (fs/fatfs_iface.c), with reads and writes at the file's position.
 format.clean pass
 format.small pass
 format.virtual-disk pass
@@ -30,8 +30,11 @@ write.empty-file pass
 write.grow pass
 write.shrink pass
 write.zero-bytes pass
-write.in-pieces fail:reads,same
-write.at-offset fail:reads,same
+write.in-pieces pass
+write.at-offset pass
+write.append pass
+write.past-end pass
+write.truncate pass
 write.to-empty-file pass
 write.to-directory pass
 limits.full-directory pass

@@ -332,7 +332,7 @@ int fs_load_from_file(const char* file, void* buf, int size)
 
 int fs_save_to_file(const char* file, void* buf, int size)
 {
-    int inode = fs_open(file, FS_FILE_FLAG_WRITE);
+    int inode = fs_open(file, FS_FILE_FLAG_CREATE | FS_FILE_FLAG_WRITE | FS_FILE_FLAG_TRUNCATE);
     if(inode < 0){
         dbgprintf("Error opening %s\n", file);
         return -ERROR_FILE_NOT_FOUND;
@@ -438,6 +438,10 @@ int fs_open(const char* path, int flags)
     return fd;
 }
 
+/**
+ * Moves the file's position, from its start, its current position or its end.
+ * @return the new position, or a negative value if it would be before the start
+ */
 int fs_seek(int fd, int offset, fs_seek_flag_t flag)
 {
     /* check if a filesystem is available */
@@ -451,19 +455,27 @@ int fs_seek(int fd, int offset, fs_seek_flag_t flag)
         return -2;
     }
 
+    int position;
     switch (flag){
     case FS_SEEK_START:
-        file->offset = offset;
+        position = offset;
         break;
-    
     case FS_SEEK_CUR:
-        file->offset += offset;
+        position = file->offset + offset;
+        break;
+    case FS_SEEK_END:
+        position = file->size + offset;
         break;
     default:
-        break;
+        return -ERROR_INVALID_ARGUMENTS;
     }
 
-    return 0;
+    if(position < 0){
+        return -ERROR_INVALID_ARGUMENTS;
+    }
+
+    file->offset = position;
+    return position;
 }
 
 int fs_read(int fd, void* buf, int size)
@@ -483,13 +495,13 @@ int fs_read(int fd, void* buf, int size)
         return -2;
     }
 
-    /* read the file */
+    /* read the file at its position. 0 bytes means the end of the file. */
     int ret = fs_current->ops->read(fs_current, file, buf, size);
-    if(ret <= 0){
+    if(ret < 0){
         return -3;
     }
 
-    file->offset += size;
+    file->offset += ret;
 
     dbgprintf("fs_read %d: read %d/%d\n", fd, ret, size);
 
@@ -513,11 +525,13 @@ int fs_write(int fd, void* buf, int size)
         return -2;
     }
 
-    /* write the file */
+    /* write the file at its position, or at its end with FS_FILE_FLAG_APPEND. Fewer bytes than asked means the disk is full. */
     int ret = fs_current->ops->write(fs_current, file, buf, size);
     if(ret < 0){
         return -3;
     }
+
+    file->offset = (file->flags & FS_FILE_FLAG_APPEND) ? file->size : file->offset + ret;
 
     return ret;
 }

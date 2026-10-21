@@ -262,6 +262,32 @@ write_at_offset() {
 }
 add write.at-offset "RetrOS overwrites 100 bytes in the middle of a file, across a cluster boundary" write_at_offset
 
+write_append() {
+    begin fresh || return
+    put /A.TXT 1500
+    append /A.TXT 700
+    check
+}
+add write.append "RetrOS adds 700 bytes to the end of a 1,500-byte file, opened to append" write_append
+
+write_past_end() {
+    begin fresh || return
+    put /A.TXT 100
+    refused pwrite /A.TXT 200 < "$(data 50 gap)"
+    check
+}
+add write.past-end "RetrOS refuses a write that starts past the end of the file, and leaves the file as it was" write_past_end
+
+write_truncate() {
+    begin fresh || return
+    put /A.TXT 3000
+    rfs truncate /A.TXT
+    : > "$WORK/empty"
+    ref mcopy -o "$WORK/empty" ::/A.TXT
+    check
+}
+add write.truncate "RetrOS empties a 3,000-byte file by opening it with the truncate flag" write_truncate
+
 write_to_empty() {
     begin fresh || return
     : > "$WORK/empty"

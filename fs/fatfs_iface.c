@@ -5,11 +5,13 @@
  *
  * fs.c normalizes paths before they get here: absolute, with no "." or "..", and no trailing slash.
  *
- * Two behaviors of the old FAT16 code that callers still depend on are kept, for now (#102):
- * - Each write replaces the file: it starts at the beginning, and the file ends where the write ends.
- * - Reading an open directory gives 32-byte FAT directory entries (struct fat16_directory_entry), with "." and ".."
- *   first in a subdirectory, because Finder and the Editor's tree view parse them. Their names are the 8.3 names.
- * A directory can't be opened for writing.
+ * Reads and writes go to the file's position (struct file's offset, which fs.c moves), or to its end with
+ * FS_FILE_FLAG_APPEND. A write can't start past the end of the file. FS_FILE_FLAG_TRUNCATE empties a file as
+ * it's opened.
+ *
+ * Reading an open directory gives 32-byte FAT directory entries (struct fat16_directory_entry), with "." and ".."
+ * first in a subdirectory, as the old FAT16 code did, because Finder and the Editor's tree view parse them (#102).
+ * Their names are the 8.3 names. A directory can't be opened for writing.
  */
 #include <libc.h>
 #include <fs/fs.h>
@@ -158,7 +160,8 @@ static struct file* fatfs_open(struct filesystem* fs, const char* path, int flag
     int is_directory = is_root || (exists && (info.fattrib & AM_DIR));
 
     /* A directory's entries aren't file data: writing them as a file would destroy the directory (#86) */
-    if(is_directory && (flags & (FS_FILE_FLAG_WRITE | FS_FILE_FLAG_CREATE))) return NULL;
+    int writes = flags & (FS_FILE_FLAG_WRITE | FS_FILE_FLAG_CREATE | FS_FILE_FLAG_TRUNCATE | FS_FILE_FLAG_APPEND);
+    if(is_directory && writes) return NULL;
     if(!exists && !(flags & FS_FILE_FLAG_CREATE)) return NULL;
 
     struct fatfs_open* open = kalloc_try(sizeof(struct fatfs_open));
@@ -173,10 +176,15 @@ static struct file* fatfs_open(struct filesystem* fs, const char* path, int flag
     } else {
         BYTE mode = 0;
         if(flags & FS_FILE_FLAG_READ) mode |= FA_READ;
-        if(flags & (FS_FILE_FLAG_WRITE | FS_FILE_FLAG_CREATE)) mode |= FA_WRITE;
+        if(writes) mode |= FA_WRITE;
         mode |= (flags & FS_FILE_FLAG_CREATE) ? FA_OPEN_ALWAYS : FA_OPEN_EXISTING;
 
         FRESULT res = f_open(&open->fil, path, mode);
+        if(res == FR_OK && (flags & FS_FILE_FLAG_TRUNCATE)){
+            res = f_truncate(&open->fil);
+            if(res == FR_OK) res = f_sync(&open->fil);
+            if(res != FR_OK) f_close(&open->fil);
+        }
         if(res != FR_OK){
             dbgprintf("[FATFS] Can't open %s: %d\n", path, res);
             kfree(open);
@@ -238,13 +246,16 @@ static int fatfs_write(struct filesystem* fs, struct file* file, const void* buf
     if(open->is_directory) return -2;
 
     /**
-     * Each write replaces the file, as the old FAT16 code did, until writes go to the file's position (#96).
-     * f_sync puts the data and the new size on the disk now, since not every caller closes its files (#61).
+     * Past the end of the file, FatFs would leave whatever the disk held before in the gap, so that's refused.
+     * f_sync puts the data and the new size on the disk now, so nothing's lost if the machine stops before the
+     * file is closed.
      */
+    DWORD position = (file->flags & FS_FILE_FLAG_APPEND) ? f_size(&open->fil) : (DWORD)file->offset;
+    if(position > f_size(&open->fil)) return -ERROR_INVALID_ARGUMENTS;
+
     UINT written;
-    if(f_lseek(&open->fil, 0) != FR_OK) return -3;
+    if(f_lseek(&open->fil, position) != FR_OK) return -3;
     if(f_write(&open->fil, buf, size, &written) != FR_OK) return -4;
-    if(f_truncate(&open->fil) != FR_OK) return -4;
     if(f_sync(&open->fil) != FR_OK) return -4;
 
     file->size = f_size(&open->fil);

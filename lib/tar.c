@@ -94,7 +94,7 @@ static int tar_extract(int fd)
             return -1;
         }
 
-        int new_file = fs_open(header.name, FS_FILE_FLAG_CREATE | FS_FILE_FLAG_WRITE);
+        int new_file = fs_open(header.name, FS_FILE_FLAG_CREATE | FS_FILE_FLAG_WRITE | FS_FILE_FLAG_TRUNCATE);
         if(new_file < 0){
             twritef("Error creating file\n");
             kfree(buf);

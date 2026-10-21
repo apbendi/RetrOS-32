@@ -9,9 +9,11 @@
  *   fstool IMAGE tree                    every directory and file: "D /PATH" and "F /PATH SIZE"
  *   fstool IMAGE ls PATH                 one directory: "D NAME" and "F NAME SIZE"
  *   fstool IMAGE cat PATH [CHUNK]        a file's bytes to stdout, read CHUNK bytes at a time (default 4096)
- *   fstool IMAGE write PATH              stdin into PATH in one write, creating it if needed (an Editor save)
- *   fstool IMAGE writes PATH CHUNK       stdin into PATH in CHUNK-byte writes on one open file
+ *   fstool IMAGE write PATH              stdin as all of PATH, in one write: created or emptied first (an Editor save)
+ *   fstool IMAGE writes PATH CHUNK       the same, in CHUNK-byte writes on one open file
  *   fstool IMAGE pwrite PATH OFFSET      stdin into an existing PATH at OFFSET, after a seek
+ *   fstool IMAGE append PATH             stdin onto the end of an existing PATH
+ *   fstool IMAGE truncate PATH           empty an existing PATH, by opening it with the truncate flag
  *   fstool IMAGE new PATH                create an empty file, as the shell's "new file" does
  *   fstool IMAGE rm|mkdir|rmdir PATH     the file system's remove, mkdir and rmdir operations
  *   fstool IMAGE mv OLD NEW              the file system's rename operation
@@ -33,6 +35,8 @@
 #define FS_FILE_FLAG_READ (1 << 0)
 #define FS_FILE_FLAG_WRITE (1 << 1)
 #define FS_FILE_FLAG_CREATE (1 << 3)
+#define FS_FILE_FLAG_TRUNCATE (1 << 4)
+#define FS_FILE_FLAG_APPEND (1 << 5)
 #define FS_SEEK_START 0
 
 struct filesystem;
@@ -84,8 +88,8 @@ static int failed(const char* what, int ret)
 static int usage(void)
 {
     fprintf(stderr, "usage: fstool IMAGE format [RESERVED] | tree | ls PATH | cat PATH [CHUNK] | write PATH |\n"
-                    "       writes PATH CHUNK | pwrite PATH OFFSET | new PATH | rm PATH | mkdir PATH | rmdir PATH |\n"
-                    "       mv OLD NEW\n");
+                    "       writes PATH CHUNK | pwrite PATH OFFSET | append PATH | truncate PATH | new PATH |\n"
+                    "       rm PATH | mkdir PATH | rmdir PATH | mv OLD NEW\n");
     return 2;
 }
 
@@ -186,12 +190,15 @@ static int cat(const char* path, int chunk)
     return 0;
 }
 
-static int write_file(const char* path, int chunk, int offset)
+/* stdin into path: with offset -1, as all of it; with an offset, there; with append, onto the end */
+static int write_file(const char* path, int chunk, int offset, int append)
 {
     int size;
     char* data = read_stdin(&size);
 
-    int flags = offset >= 0 ? FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE : FS_FILE_FLAG_CREATE | FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE;
+    int flags = FS_FILE_FLAG_CREATE | FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE | FS_FILE_FLAG_TRUNCATE;
+    if(offset >= 0) flags = FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE;
+    if(append) flags = FS_FILE_FLAG_WRITE | FS_FILE_FLAG_APPEND;
     int fd = fs_open(path, flags);
     if(fd < 0) return failed("open", fd);
 
@@ -253,11 +260,17 @@ int main(int argc, char* argv[])
     } else if(strcmp(op, "cat") == 0){
         status = cat(arg, argc > 4 ? atoi(argv[4]) : 4096);
     } else if(strcmp(op, "write") == 0){
-        status = write_file(arg, 0, -1);
+        status = write_file(arg, 0, -1, 0);
     } else if(strcmp(op, "writes") == 0 && argc > 4){
-        status = write_file(arg, atoi(argv[4]), -1);
+        status = write_file(arg, atoi(argv[4]), -1, 0);
     } else if(strcmp(op, "pwrite") == 0 && argc > 4){
-        status = write_file(arg, 0, atoi(argv[4]));
+        status = write_file(arg, 0, atoi(argv[4]), 0);
+    } else if(strcmp(op, "append") == 0){
+        status = write_file(arg, 0, -1, 1);
+    } else if(strcmp(op, "truncate") == 0){
+        int fd = fs_open(arg, FS_FILE_FLAG_WRITE | FS_FILE_FLAG_TRUNCATE);
+        status = fd < 0 ? failed("open", fd) : 0;
+        if(fd >= 0) fs_close(fd);
     } else if(strcmp(op, "new") == 0){
         /* The shell's "new file" opens with only the create flag */
         int fd = fs_open(arg, FS_FILE_FLAG_CREATE);
