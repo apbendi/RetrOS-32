@@ -453,15 +453,15 @@ int gfx_destroy_window(struct window* w)
 {
     ERR_ON_NULL(w);
 
-    ENTER_CRITICAL();
-    
-    gfx_composition_remove_window(w);
-
-    kfree(w->inner);
+    /* First, since once the window is queued for freeing, the window server may free it at any moment */
     w->owner->gfx_window = NULL;
-    kfree(w);
 
-    LEAVE_CRITICAL();
+    /**
+     * Takes the window off the screen and out of the window lists. The window server may be partway through
+     * a frame that uses it, so the window server frees it and its buffer itself, at the start of its next
+     * frame (#16).
+     */
+    gfx_composition_remove_window(w);
 
     return ERROR_OK;
 }
@@ -555,6 +555,8 @@ struct window* gfx_new_window(int width, int height, window_flag_t flags)
     }
     w->resize = 0;
     w->is_fullscreen = 0;
+    w->removed = 0;
+    w->next_free = NULL;
     w->pending_size.width = 0;
     w->pending_size.height = 0;
     

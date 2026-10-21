@@ -52,6 +52,9 @@ struct windowserver {
         uint16_t inner_width, inner_height, pitch;
         uint16_t x, y;
     } _saved;
+
+    /* Destroyed windows, freed at the start of the next frame, when the window server holds no window pointers */
+    struct window* _free;
     /* frame buffers */
     ubyte_t* background;
 

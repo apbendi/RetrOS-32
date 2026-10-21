@@ -184,6 +184,14 @@ The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but no
   - So it can copy a window halfway through a redraw, which then shows on screen until the next composite. `gfx_draw_window` clears `changed` before copying, not after, so a commit made during the copy still gets the finished frame composited.
 - **The event queue** has its own lock, `w->spinlock`.
 
+**Window lifetime:** when a thread or process with a window exits, the cleanup worker calls `gfx_destroy_window`. The window server may be in the middle of a frame that uses that window, so the window isn't freed right away (#16).
+- **Removing it:** `ws_remove` sets `w->removed` and takes the window out of the lists, the active one or another workspace's.
+- **Freeing it:** the window server frees the window and its buffer at the start of its next frame (`__ws_free_windows`), when it holds no window pointers.
+- **Rules for window manager and window server code:**
+  - Don't keep a window pointer from one frame to the next. Anything that does, like `pressed_window` or `ws->_fullscreen`, has to be cleared in `ws_remove`.
+  - Don't put a window with `removed` set back into a list, or store it anywhere. `push_front` and `push_back` check it under `wm->spinlock`.
+  - The walks in `wm_default_draw`, `wm_default_mouse_event` and `wm_default_changes` don't take the lock. That's safe because a removed window keeps its `next` pointer until it's freed.
+
 Syscalls run with interrupts enabled, so they can be preempted.
 
 **Mouse:** the window manager remembers which window got the press (`pressed_window`). A release always goes to that window, but it only counts as a click if the cursor is still over it. Clicks are handled at the cursor's arrow tip (`VESA_CURSOR_HOTSPOT_X`/`_Y`).

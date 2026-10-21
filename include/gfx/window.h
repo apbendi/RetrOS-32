@@ -109,6 +109,14 @@ struct window {
     /* Set while F10 has the window fullscreen. inner is then the window server's composition buffer, which must not be replaced or freed. */
     uint8_t is_fullscreen;
 
+    /**
+     * Set when the window is destroyed and taken out of the window lists. The window server frees it at the start
+     * of its next frame, since it may still hold a pointer from the current one (#16). Until then it must not be
+     * put back in a list or kept anywhere. next_free links the windows waiting to be freed.
+     */
+    uint8_t removed;
+    struct window* next_free;
+
     /* Content size the outline shows during a resize. The buffer is only resized to it on release. */
     struct {
         uint16_t width;

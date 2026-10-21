@@ -150,6 +150,9 @@ static int wm_default_workspace(struct windowmanager* wm, int workspace)
         return -ERROR_INVALID_ARGUMENTS;
     }
 
+    /* Under the lock, so a window being removed on another thread is found in exactly one list */
+    spin_lock(&wm->spinlock);
+
     /* store current windows in workspace */
     wm->workspaces[wm->workspace] = wm->windows;
 
@@ -157,7 +160,32 @@ static int wm_default_workspace(struct windowmanager* wm, int workspace)
     wm->windows = wm->workspaces[workspace];
     wm->workspace = workspace;
 
+    spin_unlock(&wm->spinlock);
+
     return ERROR_OK;
+}
+
+/**
+ * Takes a window out of whichever list holds it: the active one, or another workspace's saved list. The caller
+ * holds wm->spinlock. The window keeps its next pointer, so a walk that's on it still reaches the rest of the list.
+ * @return ERROR_OK, or -ERROR_WINDOW_NOT_FOUND if it wasn't in any list
+ */
+static int __wm_unlink(struct windowmanager* wm, struct window* window)
+{
+    /* -1 is the active list. The active workspace's saved slot is stale until the next switch, so it's skipped. */
+    for(int workspace = -1; workspace < WM_MAX_WORKSPACES; workspace++){
+        if(workspace == wm->workspace){
+            continue;
+        }
+        struct window** link = workspace < 0 ? &wm->windows : &wm->workspaces[workspace];
+        for(; *link != NULL; link = &(*link)->next){
+            if(*link == window){
+                *link = window->next;
+                return ERROR_OK;
+            }
+        }
+    }
+    return -ERROR_WINDOW_NOT_FOUND;
 }
 
 /**
@@ -165,42 +193,35 @@ static int wm_default_workspace(struct windowmanager* wm, int workspace)
  * 
  * @param wm windowmanager
  * @param window window to remove
- * @return int 0 on success, error code otherwise
+ * @return int 0 on success, -ERROR_WINDOW_NOT_FOUND if it wasn't in any list
  */
 static int wm_default_remove(struct windowmanager* wm, struct window* window)
 {
     ERR_ON_NULL(wm);
-
-    if (wm->window_count == 0) {
-        return -ERROR_WINDOW_NOT_FOUND;
-    }
-
-    assert(wm->windows != NULL);
+    ERR_ON_NULL(window);
 
     spin_lock(&wm->spinlock);
 
-    if (wm->windows == window) {
-        wm->windows = window->next;
+    if(wm->windows == window){
         dbgprintf("Removing front window %s\n", window->name);
     } else {
-        /* Find the window before the one we want to remove. */
-        struct window* i;
-        for (i = wm->windows; i != NULL && i->next != window; i = i->next);
-        if (i){
-            dbgprintf("Removing window %s\n", window->name);
-            i->next = window->next;
-        }
+        dbgprintf("Removing window %s\n", window->name);
+    }
+
+    /* A window on another workspace is in that workspace's saved list, so look there too */
+    int ret = __wm_unlink(wm, window);
+    if(ret == ERROR_OK){
+        wm->window_count--;
     }
 
     if(wm->windows) {
         wm->windows->changed = 1;
         wm->windows->in_focus = 1;
     }
-    wm->window_count--;
 
     spin_unlock(&wm->spinlock);
 
-    return ERROR_OK; 
+    return ret;
 }
 
 static int wm_default_push_back(struct windowmanager* wm, struct window* window)
@@ -213,21 +234,29 @@ static int wm_default_push_back(struct windowmanager* wm, struct window* window)
 
     dbgprintf("Pushing window %s to back\n", window->name);
 
+    spin_lock(&wm->spinlock);
+
+    /**
+     * Unlink and relink under one hold of the lock. A window destroyed since the caller found it is out of the
+     * lists for good, and waiting to be freed (#16), so it must not be put back.
+     */
+    if(window->removed || __wm_unlink(wm, window) < 0){
+        spin_unlock(&wm->spinlock);
+        return ERROR_OK;
+    }
+
     window->in_focus = 0;
 
-    PANIC_ON_ERR(wm->ops->remove(wm, window));
-
-    spin_lock(&wm->spinlock);
-    /* Replace wm->windows with window, pushing original wm->windows back. */
     struct window* i;
     for (i = wm->windows; i != NULL && i->next != NULL; i = i->next);
     if (i){
         i->next = window;
+    } else {
+        wm->windows = window;
     }
 
     window->next = NULL;
     window->changed = 1;
-    wm->window_count++;
 
     if(wm->windows){
         wm->windows->changed = 1;
@@ -256,12 +285,15 @@ static int wm_default_push_front(struct windowmanager* wm, struct window* window
 
     dbgprintf("Pushing window %s to front\n", window->name);
 
-    PANIC_ON_ERR(wm->ops->remove(wm, window));
-
     spin_lock(&wm->spinlock);
-    /* Replace wm->windows with window, pushing original wm->windows back. */
 
-    if(!HAS_FLAG(window->flags, GFX_HIDE_HEADER)){
+    /* As in push_back: a destroyed window must not be put back */
+    if(window->removed || __wm_unlink(wm, window) < 0){
+        spin_unlock(&wm->spinlock);
+        return ERROR_OK;
+    }
+
+    if(!HAS_FLAG(window->flags, GFX_HIDE_HEADER) && wm->windows != NULL){
         wm->windows->in_focus = 0;
     }
     window->next = wm->windows;
@@ -272,7 +304,6 @@ static int wm_default_push_front(struct windowmanager* wm, struct window* window
     }
 
     window->changed = 1;
-    wm->window_count++;
 
     spin_unlock(&wm->spinlock);
 
@@ -312,7 +343,10 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
     if (wm->window_count == 0) {
         return ERROR_OK;
     }
-    /* NOTE: no spinlock needed as windows are not changed */
+    /**
+     * Walks the list without the lock. Other threads do add and remove windows meanwhile, but a removed window
+     * keeps its next pointer, and isn't freed until the window server's next frame (#16).
+     */
 
     /* find the window under the mouse, from front to back. */
     struct window* window = NULL;
@@ -392,7 +426,17 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
     /* on click when left mouse down */
     if((flags & MOUSE_LEFT) && wm->mouse_state == 0){
         wm->mouse_state = 1;
-        wm->pressed_window = window;
+
+        /**
+         * The window may have been destroyed since the walk above found it. Then it's waiting to be freed (#16),
+         * so don't keep a pointer to it past this frame. ws_remove sets removed and clears pressed_window with
+         * interrupts off, so checking and setting with interrupts off sees one or the other.
+         */
+        ENTER_CRITICAL();
+        if(!window->removed){
+            wm->pressed_window = window;
+        }
+        LEAVE_CRITICAL();
         window->ops->mousedown(window, x, y);
 
         /* If clicked window is not in front, push it. */

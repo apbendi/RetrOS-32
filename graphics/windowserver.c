@@ -51,6 +51,7 @@ static int ws_init(struct windowserver* ws)
 
     ws->sleep_time = WINDOW_SERVER_SLEEP_TIME;
     ws->_fullscreen = NULL;
+    ws->_free = NULL;
 
     struct windowmanager* wm = wm_new(0);
     if(wm == NULL){
@@ -112,28 +113,57 @@ static int ws_remove(struct windowserver* ws, struct window* window)
     WS_VALIDATE(ws);
 
     /**
-     * Only reached when the window is destroyed, so a later release must not reach it.
-     * Not done in wm remove, which push_front and push_back also use.
+     * Only reached when the window is destroyed. This runs on the cleanup worker, while the window server may be
+     * partway through a frame that uses the window, so the window is freed later, by the window server (#16).
+     *
+     * With interrupts off, so the window server sees all of these or none of them:
+     * - removed keeps the window from being put back in a list, made pressed_window or made fullscreen.
+     * - pressed_window is cleared, so a later release doesn't reach it. Not done in wm remove, which isn't
+     *   only for destroyed windows.
+     * - A fullscreen window gets its own buffer back, the one that's freed later, instead of the composition
+     *   buffer, and the desktop is composited again (#17). Its owner has exited, so nothing draws into it,
+     *   and buffer_lock isn't needed.
      */
+    ENTER_CRITICAL();
+    window->removed = 1;
     if(ws->_wm->pressed_window == window){
         ws->_wm->pressed_window = NULL;
     }
-
-    /**
-     * A fullscreen window's buffer is the composition buffer, and gfx_destroy_window frees the window's
-     * buffer next. Give it its own back first, which also lets the desktop be composited again.
-     * Its owner has exited and interrupts are off, so nothing else draws into it, and buffer_lock isn't
-     * needed. It couldn't be taken here anyway: spin_lock waits by yielding.
-     */
     if(ws->_fullscreen == window){
         __ws_leave_fullscreen(ws);
     }
+    LEAVE_CRITICAL();
 
+    /* Takes wm->spinlock, so not with interrupts off: spin_lock waits by yielding */
     if(ws->_wm->ops->remove(ws->_wm, window) < 0){
-        return -ERROR_OPS_CORRUPTED;
+        warningf("[WSERVER] Window %s wasn't in any window list\n", window->name);
     }
 
+    ENTER_CRITICAL();
+    window->next_free = ws->_free;
+    ws->_free = window;
+    LEAVE_CRITICAL();
+
     return ERROR_OK;
+}
+
+/**
+ * Frees the windows destroyed since the last frame. Called at the start of a frame, when the window server holds
+ * no window pointers, and the windows are out of every list.
+ */
+static void __ws_free_windows(struct windowserver* ws)
+{
+    ENTER_CRITICAL();
+    struct window* window = ws->_free;
+    ws->_free = NULL;
+    LEAVE_CRITICAL();
+
+    while(window != NULL){
+        struct window* next = window->next_free;
+        kfree(window->inner);
+        kfree(window);
+        window = next;
+    }
 }
 
 /* Points the window at the composition buffer, at screen size, and saves what it had */
@@ -202,6 +232,12 @@ static int ws_fullscreen(struct windowserver* ws, struct window* window)
 
     /* ws_remove runs on another thread with interrupts off, so keep it from seeing a half-done swap */
     ENTER_CRITICAL();
+    if(window->removed){
+        /* Destroyed since F10 picked it: it's waiting to be freed, so it mustn't become fullscreen */
+        LEAVE_CRITICAL();
+        spin_unlock(&window->buffer_lock);
+        return -ERROR_WINDOW_NOT_FOUND;
+    }
     if(ws->_fullscreen == window){
         __ws_leave_fullscreen(ws);
     } else {
@@ -382,6 +418,9 @@ static int ws_draw(struct windowserver* ws)
 {
     ERR_ON_NULL(ws);
     WS_VALIDATE(ws);
+
+    /* Before anything in this frame takes a window pointer */
+    __ws_free_windows(ws);
     
     /* get state variables */
     int mouse_changed = mouse_get_event(&ws->m);
