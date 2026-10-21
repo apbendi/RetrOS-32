@@ -10,7 +10,6 @@
  */
 
 #include <errors.h>
-#include <assert.h>
 
 static char* error_string[] = {
     "No error.",
@@ -57,6 +56,7 @@ static char* error_string[] = {
 
 char* error_get_string(error_t err)
 {
-    assert(err < 0);
-    return error_string[-err];
+    int index = err < 0 ? -err : err;
+    if(index >= (int)(sizeof(error_string) / sizeof(error_string[0]))) return "Unknown error.";
+    return error_string[index];
 }

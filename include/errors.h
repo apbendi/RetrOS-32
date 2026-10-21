@@ -1,8 +1,11 @@
 #ifndef EDD28A84_235C_41BD_B175_C5224DEECC55
 #define EDD28A84_235C_41BD_B175_C5224DEECC55
 
+/* For the macros below, which only the kernel's C uses. Apps include this for the codes and their messages. */
+#ifndef __cplusplus
 #include <serial.h>
 #include <kutils.h>
+#endif
 
 /* error code from errors.h */
 typedef int error_t;
@@ -50,7 +53,16 @@ enum errors {
     ERROR_MOVE_INTO_ITSELF,
 };
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* The message for an error code, negative as functions return them, or positive. Apps get it from libcore. */
 char* error_get_string(error_t err);
+
+#ifdef __cplusplus
+}
+#endif
 
 #define RETURN_ON_ERR(exp) do{int ret; ret = exp; if(ret < 0){dbgprintf("WARNING: %s\n", error_get_string(ret)); return ret;}}while (0);
 #define PANIC_ON_ERR(exp) do{int ret; ret = exp; if(ret < 0){kernel_panic(error_get_string(ret));}}while (0);

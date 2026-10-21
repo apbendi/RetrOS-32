@@ -136,7 +136,7 @@ public:
         this->height = height;
         this->text = text;
         strcpy(this->tag, tag);
-        memset(data, 0, 100);
+        memset(data, 0, sizeof(data));
     }
 
     void draw(Window* window) {
@@ -145,7 +145,10 @@ public:
         if(size == 0){
             window->drawText(x + 4, y + 4, text, COLOR_VGA_LIGHT_GRAY);
         } else {
-            window->drawText(x + 4, y + 4, data, COLOR_BLACK);
+            /* The end of the text, where it's typed, when it's longer than the box */
+            int fits = (width - 8) / 8;
+            int start = size > fits && fits > 0 ? size - fits : 0;
+            window->drawText(x + 4, y + 4, data + start, COLOR_BLACK);
         }
     }
 
@@ -183,7 +186,8 @@ public:
 
 private:
     char* text;
-    char data[100];
+    /* Room for a path as long as the file system allows, 511 characters */
+    char data[512];
     int size = 0;
 };
 
