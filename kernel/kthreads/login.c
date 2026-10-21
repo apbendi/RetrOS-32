@@ -23,7 +23,7 @@
 #include <vbe.h>
 #include <msgbox.h>
 #include <virtualdisk.h>
-#include <fs/fat16.h>
+#include <fs/fs.h>
 #include <diskdev.h>
 #include <gfx/component.h>
 #include <script.h>
@@ -47,13 +47,15 @@ static void __callback __login_create_virt_disk(int opt){
     dbgprintf("Creating virtual disk\n");
 
     /**
-     * The new disk is blank, so give it a filesystem. There's no bootloader or kernel on it to keep, so only the
-     * boot block is reserved. This used to be the shell's fat16 command, which formatted whatever disk was
-     * attached, the boot disk included (#46).
+     * The new disk is blank, so give it a filesystem: FAT12, since at 1 MB it has too few clusters for FAT16. This
+     * used to be the shell's fat16 command, which formatted whatever disk was attached, the boot disk included (#46).
      */
-    fat16_format("VOLUME1", 1);
-    fat16_init();
-    fat16_create_directory("BIN     ");
+    if(fs_format("RETROS32", 1) < 0 || fs_mount() < 0){
+        warningf("Couldn't format the virtual disk\n");
+        return;
+    }
+    struct filesystem* fs = fs_get();
+    fs->ops->mkdir(fs, "/bin");
 }
 
 static int login_startup(struct user* usr){

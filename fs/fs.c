@@ -256,6 +256,12 @@ int fs_format(const char* label, int reserved)
     return fs_backend_format(label, reserved);
 }
 
+int fs_usage(int* used_kb, int* total_kb)
+{
+    if(fs_backend == NULL) return -1;
+    return fs_backend_usage(used_kb, total_kb);
+}
+
 int fs_unregister(struct filesystem* fs)
 {
     ERR_ON_NULL(fs);

@@ -23,7 +23,6 @@
 
 #include <diskdev.h>
 #include <fs/fs.h>
-#include <fs/fat16.h>
 #include <scheduler.h>
 #include <mbr.h>
 #include <net/dhcp.h>
@@ -216,12 +215,15 @@ static void sysinf_draw_disk(struct window* w, struct tab* tab)
 
     SECTION(w, 24, (HEIGHT/3+10) + (HEIGHT/3-48)+10, WIDTH-48, 100, "Filesystem");
 
-    int usage = (int)(((float)fat16_used_blocks() / (float)65536)*100);
-
     struct filesystem* fs = fs_get();
+    int used_kb = 0, total_kb = 0;
+    fs_usage(&used_kb, &total_kb);
+    /* Divides by total / 100 rather than multiplying by 100, which could overflow on a big disk */
+    int usage = total_kb >= 100 ? used_kb / (total_kb / 100) : 0;
+    if(usage > 100) usage = 100;
 
-    w->draw->textf(w, 30, (HEIGHT/3+10) + (HEIGHT/3-48)+10+10, 0, "Name:    %s", fs->name);
-    w->draw->textf(w, 30, (HEIGHT/3+10) + (HEIGHT/3-48)+10+20, 0, "Usage:   %d/%d blocks", fat16_used_blocks(), 65536);
+    w->draw->textf(w, 30, (HEIGHT/3+10) + (HEIGHT/3-48)+10+10, 0, "Name:    %s", fs != NULL ? fs->name : "none");
+    w->draw->textf(w, 30, (HEIGHT/3+10) + (HEIGHT/3-48)+10+20, 0, "Usage:   %d/%d KB", used_kb, total_kb);
 
     w->draw->box(w, 30, (HEIGHT/3+10) + (HEIGHT/3-48)+10+30, 100, 10, 0);
     w->draw->rect(w, 31, (HEIGHT/3+10) + (HEIGHT/3-48)+10+31, usage, 8, COLOR_VGA_GREEN);

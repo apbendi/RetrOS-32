@@ -95,10 +95,13 @@ int fs_path_normalize(const char* path, char* out);
 /* Mount the disk's file system, or format the disk, with whichever FAT code the kernel is built with */
 int fs_mount(void);
 int fs_format(const char* label, int reserved);
+/* How much of the mounted file system is used, and its size, in KB */
+int fs_usage(int* used_kb, int* total_kb);
 
 /* The FAT code provides these. reserved is the number of blocks before the file system; FatFs ignores it. */
 int fs_backend_mount(void);
 int fs_backend_format(const char* label, int reserved);
+int fs_backend_usage(int* used_kb, int* total_kb);
 
 
 #endif /* !__FS_MODULE_H */
