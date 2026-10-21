@@ -247,6 +247,9 @@ int kernel_gfx_draw_char(struct window* w, int x, int y, unsigned char c, unsign
 
 	ERR_ON_NULL(w);
 
+	/* font8x8_basic has only the 128 ASCII characters; anything above draws as a blank (#83) */
+	if(c >= 128) return 0;
+
 	spin_lock(&w->buffer_lock);
 	for (int l = 0; l < 8; l++) {
 		for (int i = 8; i >= 0; i--) {

@@ -116,6 +116,9 @@ void vesa_put_block(uint8_t* buffer, unsigned char c, int x, int y, int color)
 
 void vesa_put_char(uint8_t* buffer, unsigned char c, int x, int y, int color) 
 {
+    /* font8x8_basic has only the 128 ASCII characters; anything above draws as a blank (#83) */
+    if(c >= 128) return;
+
     for (int l = 0; l < 8; l++) {
         for (int i = 8; i >= 0; i--) {
             if (font8x8_basic[c][l] & (1 << i)) {
@@ -127,6 +130,9 @@ void vesa_put_char(uint8_t* buffer, unsigned char c, int x, int y, int color)
 
 void vesa_put_char16(uint8_t* buffer, unsigned char c, int x, int y, int color)
 {
+    /* font8x8_basic has only the 128 ASCII characters; anything above draws as a blank (#83) */
+    if(c >= 128) return;
+
     for (int l = 0; l < 16; l++) {
         for (int i = 15; i >= 0; i--) {
             if (font8x8_basic[c][l/2] & (1 << (i/2))) {

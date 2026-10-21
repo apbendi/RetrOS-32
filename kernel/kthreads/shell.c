@@ -523,7 +523,8 @@ void shell_put(unsigned char c)
 	struct terminal* term = $process->current->term;
 
 	if(uc == ARROW_UP){
-		int len = strlen(previous_shell_buffer)+1;
+		/* Only the characters: replaying the terminating 0 would end the command there (#67) */
+		int len = strlen(previous_shell_buffer);
 		for (int i = 0; i < len; i++){
 			shell_put(previous_shell_buffer[i]);
 		}
@@ -552,10 +553,15 @@ void shell_put(unsigned char c)
 		shell_column -= 1;
 		kernel_gfx_draw_rectangle($process->current->gfx_window, shell_column*8, SHELL_POSITION, 8, 8, term->bg_color);
 		gfx_commit();
-		shell_buffer[shell_buffer_length] = 0;
+		/* Clear the deleted character, the last one, not the 0 after it (#66) */
 		shell_buffer_length--;
+		shell_buffer[shell_buffer_length] = 0;
 		return;
 	}
+
+	/* Only printable ASCII goes in the command. Arrows, F keys and Ctrl+key are 128 and up (#83) */
+	if(uc < 32 || uc > 126)
+		return;
 
 	if(shell_column == SHELL_MAX_SIZE)
 		return;
@@ -808,6 +814,11 @@ static void __kthread_entry textshell()
 		 * SCREEN_WIDTH-1, so it holds 75 characters. Ignore keys past that; Enter and backspace still work (#44).
 		 */
 		if(4+x >= SCREEN_WIDTH-1){
+			continue;
+		}
+
+		/* Only printable ASCII goes in the command. Arrows, F keys and Ctrl+key are 128 and up (#83) */
+		if(c < 32 || c > 126){
 			continue;
 		}
 
