@@ -488,6 +488,9 @@ def focus_by_tab(name, quiet=False):
         if not match:
             m.close()
             die("Alt+Tab didn't switch windows (no 'Pushing window' line). Is a window open?")
+        # The taskbar is pushed back only when it was in front to begin with, so it's not part of the cycle
+        if match.group(1) == "taskbar":
+            continue
         seen.append(match.group(1))
         period = cycle_length(seen)
         if period:

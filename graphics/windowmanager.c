@@ -268,6 +268,18 @@ static int wm_default_push_back(struct windowmanager* wm, struct window* window)
     window->next = NULL;
     window->changed = 1;
 
+    /**
+     * The taskbar comes to the front only when it's clicked, for its menus. If it's in front now, it goes behind the
+     * window just pushed back, so Alt+Tab moves to the next window rather than to the taskbar (#89). Only the window
+     * server thread calls push_back, so nothing walks the list meanwhile.
+     */
+    struct window* front = wm->windows;
+    if(front != window && HAS_FLAG(front->flags, GFX_HIDE_HEADER)){
+        wm->windows = front->next;
+        front->next = NULL;
+        window->next = front;
+    }
+
     if(wm->windows){
         wm->windows->changed = 1;
         wm->windows->in_focus = 1;
