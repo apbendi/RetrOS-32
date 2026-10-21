@@ -10,8 +10,8 @@ LDFLAGS := $(ARCH_LDFLAGS)
 
 FAT16OBJS := $(addprefix $(BUILD_DIR)/,fat16_read.o fat16_write.o fat16.o)
 FSCORE := $(addprefix $(BUILD_DIR)/,fs.o fat16_iface.o)
-# FatFs, vendored in fatfs/. See fatfs/README.md.
-FATFSOBJS := $(addprefix $(BUILD_DIR)/fatfs/,ff.o ffunicode.o)
+# FatFs, vendored in fatfs/ (see fatfs/README.md), and fatfs_port.c, the functions it calls into RetrOS
+FATFSOBJS := $(addprefix $(BUILD_DIR)/fatfs/,ff.o ffunicode.o) $(BUILD_DIR)/fatfs_port.o
 FSOBJS := $(FAT16OBJS) $(FSCORE) $(FATFSOBJS)
 DEPS := $(FSOBJS:.o=.d)
 
