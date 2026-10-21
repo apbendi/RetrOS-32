@@ -60,6 +60,20 @@ static void __pcb_free(struct pcb* pcb)
 	pcb->prev = NULL;
 }
 
+/**
+ * Names pcb after name, which may be a program's path. A name too long for the PCB keeps its end, which names the
+ * program, rather than writing past the name's field.
+ */
+static void __pcb_set_name(struct pcb* pcb, const char* name)
+{
+	int len = strlen(name);
+	if(len > PCB_MAX_NAME_LENGTH - 1){
+		name += len - (PCB_MAX_NAME_LENGTH - 1);
+		len = PCB_MAX_NAME_LENGTH - 1;
+	}
+	memcpy(pcb->name, name, len + 1);
+}
+
 /* Frees the kernel stack and slot of a PCB that failed before reaching the scheduler */
 static void __pcb_discard(struct pcb* pcb)
 {
@@ -109,19 +123,20 @@ static error_t pcb_kthread_init_args(struct pcb* pcb, int argc, char** argv)
 
 	dbgprintf("[PCB] Allocating %d args\n", argc);
 
-	/* copy and allocate space for args */
-	pcb->argv = kalloc(sizeof(char*)*argc);
+	/* copy and allocate space for args, each as long as it is, and a NULL after the last */
+	pcb->argv = kalloc(sizeof(char*)*(argc+1));
 	if(pcb->argv == NULL){
 		return -ERROR_ALLOC;
 	}
 
 	for (int i = 0; i < argc; i++){
-		pcb->argv[i] = kalloc(100);
+		pcb->argv[i] = kalloc(strlen(argv[i])+1);
 		if(pcb->argv[i] == NULL){
 			return -ERROR_ALLOC;
 		}
 		memcpy(pcb->argv[i], argv[i], strlen(argv[i])+1);	
 	}
+	pcb->argv[argc] = NULL;
 
 	pcb->args = argc;
 
@@ -189,31 +204,50 @@ static error_t __pcb_init_process(byte_t flags, uint32_t entry_point, struct pcb
     return ERROR_OK;
 }
 
+/**
+ * Copies a new process's arguments into its memory: argv, ending in NULL, then the strings it points to. They're
+ * copied through the physical address of the allocation's first page, so they have to fit in one page.
+ */
 static int __pcb_init_virt_args(struct pcb* pcb, int argc, char** argv)
 {
 
 	if(argc == 0) return ERROR_OK;
 
-	struct args* virtual_args = vmem_stack_alloc(pcb, sizeof(struct args));
-	if(virtual_args == NULL){
+	int size = (argc + 1) * sizeof(char*);
+	for (int i = 0; i < argc; i++){
+		size += strlen(argv[i]) + 1;
+	}
+	if(size > PAGE_SIZE){
+		dbgprintf("[PCB] Arguments take %d bytes, more than a page\n", size);
+		return -ERROR_ARGUMENTS_TOO_LONG;
+	}
+
+	char** virtual_argv = vmem_stack_alloc(pcb, size);
+	if(virtual_argv == NULL){
 		dbgprintf("[PCB] Failed to allocate memory for virtual args\n");
 		return -ERROR_ALLOC;
 	}
 
 	/* get physical address */
 	uint32_t* heap_table = (uint32_t*)(pcb->page_dir[DIRECTORY_INDEX(VMEM_HEAP)] & ~PAGE_MASK);
-	uint32_t heap_page = (uint32_t)((uint32_t*)heap_table)[TABLE_INDEX((uint32_t)virtual_args)]& ~PAGE_MASK;
+	uint32_t heap_page = (uint32_t)((uint32_t*)heap_table)[TABLE_INDEX((uint32_t)virtual_argv)]& ~PAGE_MASK;
 
-	struct args* _args = (struct args*)(heap_page);
-	/* copy over args */
-	_args->argc = argc;
+	/* copy over args: _argv and text are where they're written, virtual_text where the process sees them */
+	char** _argv = (char**)(heap_page);
+	char* text = (char*)(_argv + argc + 1);
+	char* virtual_text = (char*)(virtual_argv + argc + 1);
 	for (int i = 0; i < argc; i++){
-		memcpy(_args->data[i], argv[i], strlen(argv[i])+1);
-		_args->argv[i] = virtual_args->data[i];
-		dbgprintf("Arg %d: %s (0x%x)\n", i, _args->data[i], _args->argv[i]);
+		int len = strlen(argv[i]) + 1;
+		memcpy(text, argv[i], len);
+		_argv[i] = virtual_text;
+		dbgprintf("Arg %d: %s (0x%x)\n", i, text, _argv[i]);
+		text += len;
+		virtual_text += len;
 	}
-	pcb->args = _args->argc;
-	pcb->argv = virtual_args->argv;
+	_argv[argc] = NULL;
+
+	pcb->args = argc;
+	pcb->argv = virtual_argv;
 
 	return ERROR_OK;
 }
@@ -482,7 +516,7 @@ error_t pcb_create_process(char* program, int argc, char** argv, pcb_flag_t flag
     }
 
 	pcb->data_size = size;
-	memcpy(pcb->name, program, strlen(program)+1);
+	__pcb_set_name(pcb, program);
 
 	pcb->term = $process->current->term;
 	pcb->user = $process->current->user;
@@ -506,7 +540,7 @@ error_t pcb_create_process(char* program, int argc, char** argv, pcb_flag_t flag
 		vmem_cleanup_process(pcb);
 		__pcb_discard(pcb);
 
-		return -ERROR_ALLOC;
+		return ret;
 	}
 
 	get_scheduler()->ops->add(get_scheduler(), pcb);
@@ -566,7 +600,7 @@ error_t pcb_create_kthread(void (*entry)(), char* name, int argc, char** argv)
 	pcb->cs = GDT_KERNEL_CS;
 	pcb->ds = GDT_KERNEL_DS;
 
-	memcpy(pcb->name, name, strlen(name)+1);
+	__pcb_set_name(pcb, name);
 	
 	/* this is done for processes in vmem.c, should probably be moved there? */
 	pcb->allocations = create(struct virtual_allocations);

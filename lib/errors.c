@@ -49,7 +49,9 @@ static char* error_string[] = {
     "No space left in the directory or on the disk.",
     "Invalid file name.",
     "Disk error.",
-    "No file system."
+    "No file system.",
+    "Missing closing quote.",
+    "Arguments too long."
 };
 
 char* error_get_string(error_t err)
