@@ -47,7 +47,7 @@ Each line of output is a case's name, then `pass`, or `fail:` and the checks tha
   - fsck's findings from before.
 
   `-k` keeps every case's files, plus its `R.img` and `M.img`.
-- **How to read a tree:** lines are `D /PATH` and `F /PATH SIZE SHA`, with uppercase 8.3 names. In the notes, `<` lines are what M has and `>` lines what R has.
+- **How to read a tree:** lines are `D /PATH` and `F /PATH SIZE SHA`, by each entry's long name, or its 8.3 name if it has none, uppercased since FAT ignores case. In the notes, `<` lines are what M has and `>` lines what R has.
 
 ## After changing fs/
 
@@ -116,8 +116,9 @@ fsck.fat -n /tmp/d.img
 
 - **mtools refuses RetrOS images** without `MTOOLS_SKIP_CHECK=1`, because RetrOS writes 0 heads and sectors per track. `run.sh` sets it.
 - **Long names:**
-  - `MTOOLS_NO_VFAT=1` stops mtools *writing* long names, but `mdir` still *lists* them. So `run.sh` takes short names from `mdir`'s first 12 columns.
-  - In mtools 4.0.32, `mshortname` drops the dot before a one-letter extension (`add.c` gives `ADDC`), so it can't supply them.
+  - `MTOOLS_NO_VFAT=1` stops mtools *writing* long names, but `mdir` still *lists* them, at the end of an entry's line. `run.sh` takes the long name from there, or the 8.3 name from `mdir`'s first 12 columns when there's none, to match what RetrOS's `readdir` gives.
+  - A case that needs mtools to write a long name, to match one RetrOS writes, sets `MTOOLS_NO_VFAT=0` for that command, e.g. `MTOOLS_NO_VFAT=0 ref mcopy -o "$file" "::/My Projects/Long File Name.txt"`.
+  - In mtools 4.0.32, `mshortname` drops the dot before a one-letter extension (`add.c` gives `ADDC`), so it can't supply 8.3 names.
 - **The harness compares `fsck.fat`'s findings before and after a case, never its exit status.** The old FAT16 code's images always had findings (#101), and a case can start from a damaged image.
 - **`fsck.fat` gives up early on some damage,** such as a FAT too small for the volume's clusters (#99). There, finding nothing new proves little, so a case like `limits.full-disk` checks `tool` too.
 - **The builder has Linux's `vfat` driver but not `msdos`,** so mounting can't show short names either.

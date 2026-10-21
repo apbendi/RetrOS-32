@@ -6,7 +6,7 @@
  * stand-ins for the kernel functions they call. tests/fs/run.sh uses it to check RetrOS against mtools and fsck.fat.
  *
  *   fstool IMAGE format [RESERVED]       format the image with fs_format, as login does for the virtual disk
- *   fstool IMAGE tree                    every directory and file: "D /PATH" and "F /PATH SIZE"
+ *   fstool IMAGE tree                    every directory and file: "D /PATH" and "F SIZE /PATH"
  *   fstool IMAGE ls PATH                 one directory: "D NAME" and "F NAME SIZE"
  *   fstool IMAGE cat PATH [CHUNK]        a file's bytes to stdout, read CHUNK bytes at a time (default 4096)
  *   fstool IMAGE write PATH              stdin as all of PATH, in one write: created or emptied first (an Editor save)
@@ -18,13 +18,14 @@
  *   fstool IMAGE rm|mkdir|rmdir PATH     fs_unlink, fs_mkdir and fs_rmdir, which the syscalls of the same names use
  *   fstool IMAGE mv OLD NEW              fs_rename
  *   fstool IMAGE stat PATH               fs_stat: "D NAME" or "F NAME SIZE"
- *   fstool IMAGE dir PATH                a directory through fs_readdir, with long names: "D NAME" and "F NAME SIZE"
+ *   fstool IMAGE dir PATH                the same as ls
  *   fstool IMAGE pwd                     the current directory, from fs_getcwd
  *
  * Set FSTOOL_CWD to a directory to make it the current one, which relative paths start from.
  *
- * Directories are listed the way Finder reads them: opened like a file and read one 32-byte entry at a time,
- * skipping free entries, long-name parts and the volume label. "." and ".." are left out.
+ * Directories are listed the way the shell and Finder list them: opened, then read with fs_readdir, which gives
+ * each entry's long name, or its 8.3 name if it has none, and leaves out "." and "..". tree puts the path last, so
+ * a name with spaces in it can be read back.
  *
  * A failed operation prints the error code it returned, from include/errors.h.
  *
@@ -37,7 +38,6 @@
 #include <string.h>
 #include <stdint.h>
 #include <rtc.h>
-#include <fs/fat16.h>
 
 /* From include/fs/fs.h, which can't be included here: it brings in the kernel's libc declarations */
 #define FS_FILE_FLAG_READ (1 << 0)
@@ -118,69 +118,6 @@ static char* read_stdin(int* size)
     return data;
 }
 
-/* An entry's name as text, "NAME.EXT", from its padded 8.3 fields */
-static void entry_name(const struct fat16_directory_entry* entry, char* name)
-{
-    int len = 0;
-    for(int i = 0; i < 8 && entry->filename[i] != ' '; i++) name[len++] = entry->filename[i];
-    if(entry->extension[0] != ' '){
-        name[len++] = '.';
-        for(int i = 0; i < 3 && entry->extension[i] != ' '; i++) name[len++] = entry->extension[i];
-    }
-    name[len] = 0;
-}
-
-/**
- * Lists one directory, as Finder does. With recurse, prints full paths and walks into subdirectories.
- * @return 0, or 1 if a directory couldn't be opened
- */
-static int list(const char* path, int recurse, int depth)
-{
-    int fd = fs_open(path, FS_FILE_FLAG_READ);
-    if(fd < 0){
-        fprintf(stderr, "fstool: can't open directory %s\n", path);
-        return 1;
-    }
-
-    /* Collect first, since walking into a subdirectory opens other files. One buffer per level, 8 levels. */
-    static struct fat16_directory_entry entries[8][1024];
-    struct fat16_directory_entry* found = entries[depth];
-    int count = 0;
-    struct fat16_directory_entry entry;
-    while(count < 1024 && fs_read(fd, &entry, sizeof(entry)) > 0){
-        found[count++] = entry;
-    }
-    fs_close(fd);
-
-    int status = 0;
-    for(int i = 0; i < count; i++){
-        struct fat16_directory_entry* e = &found[i];
-        if(e->filename[0] == 0x00 || e->filename[0] == 0xE5) continue;
-        if(FAT16_IS_LONG_NAME(e) || (e->attributes & FAT16_FLAG_VOLUME_LABEL)) continue;
-        if(e->filename[0] == '.') continue;
-
-        char name[FAT16_NAME_MAX + 1];
-        entry_name(e, name);
-        int is_directory = e->attributes & FAT16_FLAG_SUBDIRECTORY;
-
-        if(!recurse){
-            if(is_directory) printf("D %s\n", name);
-            else printf("F %s %u\n", name, e->file_size);
-            continue;
-        }
-
-        char child[256];
-        snprintf(child, sizeof(child), "%s%s%s", path, path[1] == 0 ? "" : "/", name);
-        if(is_directory){
-            printf("D %s\n", child);
-            if(depth < 7) status |= list(child, 1, depth + 1);
-        } else {
-            printf("F %s %u\n", child, e->file_size);
-        }
-    }
-    return status;
-}
-
 static void print_dirent(const struct fs_dirent* entry)
 {
     if(entry->attributes & FS_ATTR_DIRECTORY) printf("D %s\n", entry->name);
@@ -198,6 +135,40 @@ static int dir(const char* path)
     while((ret = fs_readdir(fd, &entry)) > 0) print_dirent(&entry);
     fs_close(fd);
     return ret < 0 ? failed("readdir", ret) : 0;
+}
+
+/**
+ * Every directory and file under path, through fs_readdir, with full paths. The directory stays open while its
+ * subdirectories are walked, one file per level.
+ * @return 0, or 1 if a directory couldn't be read
+ */
+static int tree(const char* path, int depth)
+{
+    int fd = fs_open(path, FS_FILE_FLAG_READ);
+    if(fd < 0){
+        fprintf(stderr, "fstool: can't open directory %s\n", path);
+        return 1;
+    }
+
+    int status = 0;
+    struct fs_dirent entry;
+    int ret;
+    while((ret = fs_readdir(fd, &entry)) > 0){
+        char child[1024];
+        snprintf(child, sizeof(child), "%s%s%s", path, path[1] == 0 ? "" : "/", entry.name);
+        if(entry.attributes & FS_ATTR_DIRECTORY){
+            printf("D %s\n", child);
+            if(depth < 7) status |= tree(child, depth + 1);
+        } else {
+            printf("F %u %s\n", entry.size, child);
+        }
+    }
+    fs_close(fd);
+    if(ret < 0){
+        fprintf(stderr, "fstool: can't read directory %s: %d\n", path, ret);
+        status = 1;
+    }
+    return status;
 }
 
 static int cat(const char* path, int chunk)
@@ -284,7 +255,7 @@ int main(int argc, char* argv[])
 
     int status;
     if(strcmp(op, "tree") == 0){
-        status = list("/", 1, 0);
+        status = tree("/", 0);
     } else if(strcmp(op, "pwd") == 0){
         char buf[512];
         int ret = fs_getcwd(buf, sizeof(buf));
@@ -292,8 +263,8 @@ int main(int argc, char* argv[])
         if(ret >= 0) printf("%s\n", buf);
     } else if(arg == NULL){
         return finish(usage());
-    } else if(strcmp(op, "ls") == 0){
-        status = list(arg, 0, 0);
+    } else if(strcmp(op, "ls") == 0 || strcmp(op, "dir") == 0){
+        status = dir(arg);
     } else if(strcmp(op, "cat") == 0){
         status = cat(arg, argc > 4 ? atoi(argv[4]) : 4096);
     } else if(strcmp(op, "write") == 0){
@@ -330,9 +301,6 @@ int main(int argc, char* argv[])
         int ret = fs_stat(arg, &entry);
         status = ret != 0 ? failed("fs_stat", ret) : 0;
         if(ret == 0) print_dirent(&entry);
-    } else if(strcmp(op, "dir") == 0){
-        status = dir(arg);
-
     } else {
         return finish(usage());
     }

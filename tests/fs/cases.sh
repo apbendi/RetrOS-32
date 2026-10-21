@@ -142,7 +142,7 @@ read_long_names() {
     rfs tree >/dev/null
     check_reads
 }
-add read.long-names "RetrOS reads files that have long names by their short names" read_long_names
+add read.long-names "RetrOS reads files that have long names, by those names" read_long_names
 
 read_dotdot() {
     begin real || return
@@ -309,6 +309,19 @@ write_to_directory() {
 }
 add write.to-directory "RetrOS refuses to write over a directory, and it stays intact (#86)" write_to_directory
 
+write_long_names() {
+    begin fresh || return
+    ready
+    local file
+    file=$(data 1500 long)
+    rfs mkdir "/My Projects"
+    MTOOLS_NO_VFAT=0 ref mmd "::/My Projects"
+    rfs write "/My Projects/Long File Name.txt" < "$file"
+    MTOOLS_NO_VFAT=0 ref mcopy -o "$file" "::/My Projects/Long File Name.txt"
+    check
+}
+add write.long-names "RetrOS makes a directory and writes a file, both with long names with spaces" write_long_names
+
 # --- Directory and disk limits ---------------------------------------------------------------------------------
 
 limits_directory() {
@@ -321,6 +334,20 @@ limits_directory() {
     check
 }
 add limits.full-directory "RetrOS writes 20 files to a directory, past one cluster's 16 entries (#88)" limits_directory
+
+limits_long_names() {
+    begin fresh || return
+    seed mmd ::/SUB
+    ready
+    local file
+    for i in $(seq -w 1 20); do
+        file=$(data 100 "long$i")
+        rfs write "/SUB/A long file name, number $i.txt" < "$file"
+        MTOOLS_NO_VFAT=0 ref mcopy -o "$file" "::/SUB/A long file name, number $i.txt"
+    done
+    check
+}
+add limits.long-names "RetrOS writes 20 files with long names to a directory, each taking 4 entries" limits_long_names
 
 limits_root() {
     begin root16 || return

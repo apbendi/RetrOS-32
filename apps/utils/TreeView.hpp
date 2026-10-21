@@ -18,8 +18,10 @@
 #include <lib/syscall.h>
 #include <utils/Function.hpp>
 
-#include <fs/fat16.h>
 #include <fs/fs.h>
+
+/* How many directories deep the tree is read */
+#define TREE_VIEW_MAX_DEPTH 8
 
 static const unsigned char __folder_icon[16*16] = {
     0xfa,0xfa,0xfa,0xfa,0xfa,0xfa,0xfa,0xfa,0xfa,0xfa,0xfa,0xfa,0xfa,0xfa,0xfa,0xfa
@@ -65,7 +67,7 @@ static const unsigned char __file_icon[16*16] = {
  * display a file system tree. It is used by the Finder application
  * to display the file system tree.
  * 
- * @warning Assumes that the file system is FAT16 and a window is present.
+ * @warning Assumes that a window is present.
  */
 class TreeView {
 public:
@@ -341,12 +343,6 @@ private:
         return true;
     }
 
-    int pathlen(char* path) {
-        int len = 0;
-        while (path[len] != 0 && path[len] != ' ' && len < 8) len++;
-        return len;
-    }
-
     struct TreeNode* insertNode(struct TreeNode* parent, const char* name, int x, int y, int isDirectory) {
         if (!ensureChildCapacity(parent)) {
             return nullptr;
@@ -385,57 +381,37 @@ private:
     }
 
 
+    /**
+     * Adds path's entries under root, and theirs under them, with readdir. Each node's name is its full path, with
+     * a "/" after a directory's.
+     * @return the number of entries added
+     */
     int loadTree(struct TreeNode* root, int depth, String* path, int entries){
         int fd = open(path->getData(), FS_FILE_FLAG_READ);
         if (fd <= -1) return -1;
 
         int origEntries = entries;
-        struct fat16_directory_entry entry;
+        struct fs_dirent entry;
 
-        while (1) {
-            int ret = read(fd, &entry, sizeof(struct fat16_directory_entry));
-            if (ret <= 0) {
-                break;
-            }
-
-            /* parse name */
-            char name[14] = {0};
-            int len = pathlen((char*)entry.filename);
-            memset(name, 0, 14);
-            memcpy(name, entry.filename, len);
-            if(!(entry.attributes & FAT16_FLAG_SUBDIRECTORY)) {
-                name[len++] = '.';
-                memcpy(name + len, entry.extension, 3);
-
-            } else {
-                name[len++] = '/';
-            }
-
-            if (
-                entry.attributes & FAT16_FLAG_VOLUME_LABEL ||
-                entry.filename[0] == 0xe5 ||
-                entry.filename[0] == 0x00 ||
-                entry.filename[0] == '.'
-            ) continue;
-
+        while (readdir(fd, &entry) == 1) {
+            int isDirectory = entry.attributes & FS_ATTR_DIRECTORY;
             entries++;
 
             String fullPath = path->getData();
-            fullPath.concat(name);
-            struct TreeNode* newRoot = insertNode(root, fullPath.getData(), (depth * 12), 0, entry.attributes & FAT16_FLAG_SUBDIRECTORY);
+            fullPath.concat(entry.name);
+            if (isDirectory) {
+                fullPath.concat("/");
+            }
+
+            struct TreeNode* newRoot = insertNode(root, fullPath.getData(), (depth * 12), 0, isDirectory);
             if (newRoot == nullptr) {
                 continue;
             }
 
-            if (entry.attributes & FAT16_FLAG_SUBDIRECTORY) {
-                String* path2 = new String(path->getData());
-                path2->concat(name);
-
-                //insertNode(path2->getData(), depth * 12, textY, 1);
-                int ret = loadTree(newRoot, depth + 1, path2, entries);
+            /* Each level keeps its directory open, out of the process's 32 files */
+            if (isDirectory && depth < TREE_VIEW_MAX_DEPTH) {
+                int ret = loadTree(newRoot, depth + 1, &fullPath, entries);
                 if (ret > 0) entries += ret;
-
-                delete path2;
             }
         }
 

@@ -37,7 +37,9 @@ write.past-end pass
 write.truncate pass
 write.to-empty-file pass
 write.to-directory pass
+write.long-names pass
 limits.full-directory pass
+limits.long-names pass
 limits.full-root pass
 limits.full-disk pass
 ops.remove pass
