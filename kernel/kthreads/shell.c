@@ -35,7 +35,6 @@
 #include <gfx/events.h>
 
 #include <fs/fs.h>
-#include <fs/fat16.h>
 
 #include <net/socket.h>
 #include <net/tcp.h>
@@ -208,15 +207,6 @@ void tree() {
     }
 }
 EXPORT_KSYMBOL(tree);
-
-void fat16(){
-	fat16_format("VOLUME1", 1);
-	fat16_init();
-
-	/* TODO USE FS */
-	fat16_create_directory("BIN     ");
-}
-EXPORT_KSYMBOL(fat16);
 
 
 void xxd(int argc, char* argv[])

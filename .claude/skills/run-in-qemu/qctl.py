@@ -224,7 +224,7 @@ def start(args):
            "-netdev", f"user,id=net0,hostfwd=tcp::{HTTP_PORT}-:80",
            "-m", f"{args.mem}m",
            "-rtc", f"base={args.rtc}" if args.rtc else "base=localtime",
-           "-drive", f"file={DISK},format=raw,index=0,media=disk",
+           "-drive", f"file={DISK},format=raw,index=0,media=disk" if args.disk_bus == "ide" else f"file={DISK},format=raw,if=virtio",
            "-display", "none",
            "-serial", f"file:{SERIAL}",
            "-monitor", f"tcp:127.0.0.1:{MONITOR_PORT},server,nowait",
@@ -560,6 +560,8 @@ def main():
     s.add_argument("--gdb", action="store_true", help="wait for a debugger before the BIOS runs")
     s.add_argument("--rtc", help="start the clock at this time, e.g. 2026-10-20T10:05:00")
     s.add_argument("--mem", type=int, default=32, help="memory in MB, like make qemu's -m 32m")
+    s.add_argument("--disk-bus", default="ide", choices=["ide", "virtio"],
+                   help="virtio: the BIOS boots from the disk, but the kernel's IDE driver doesn't see it, as on a machine booted from USB")
     sub.add_parser("stop")
     sub.add_parser("status")
     s = sub.add_parser("pick"); s.add_argument("res", choices=list(RESOLUTION_KEYS))

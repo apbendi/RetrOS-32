@@ -29,7 +29,7 @@ $Q stop
 ```
 
 `$Q --help` lists every command.
-- **`start` options:** `--res 640|800|1024|text` picks the resolution. `--rtc 2026-10-20T10:05:00` starts the clock at a given time, e.g. to test the taskbar clock at a two-digit hour. `--mem 16` sets the memory in MB; the default is 32, like `make qemu`.
+- **`start` options:** `--res 640|800|1024|text` picks the resolution. `--rtc 2026-10-20T10:05:00` starts the clock at a given time, e.g. to test the taskbar clock at a two-digit hour. `--mem 16` sets the memory in MB; the default is 32, like `make qemu`. `--disk-bus virtio` boots with no disk the kernel can see: the BIOS boots from a virtio disk, which the kernel's IDE driver doesn't find, as on a machine booted from USB. `start` then waits for a shell that never comes, so run it in the background and drive the login window and the "No disk attached" prompt yourself.
 - **`type TEXT`** types text; `\n` is Enter.
 - **`key NAME...`** presses keys by QEMU's names: `ret`, `tab`, `esc`, `f10`, `backspace`, `shift-a`, `ctrl-c`.
 - **`windows`** lists the windows front to back, with each one's position, size and owner, and where to click to bring it to the front. It presses F12, which makes the window server log the list.

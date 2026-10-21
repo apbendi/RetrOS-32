@@ -23,6 +23,7 @@
 #include <vbe.h>
 #include <msgbox.h>
 #include <virtualdisk.h>
+#include <fs/fat16.h>
 #include <diskdev.h>
 #include <gfx/component.h>
 #include <script.h>
@@ -35,10 +36,24 @@
 struct gfx_input_manager input_manager = {0};
 
 static void __callback __login_create_virt_disk(int opt){
-    if(opt == MSGBOX_OK){
-        virtual_disk_attach();
-        dbgprintf("Creating virtual disk\n");
+    if(opt != MSGBOX_OK){
+        return;
     }
+
+    if(virtual_disk_attach() < 0){
+        warningf("Not enough memory for a virtual disk\n");
+        return;
+    }
+    dbgprintf("Creating virtual disk\n");
+
+    /**
+     * The new disk is blank, so give it a filesystem. There's no bootloader or kernel on it to keep, so only the
+     * boot block is reserved. This used to be the shell's fat16 command, which formatted whatever disk was
+     * attached, the boot disk included (#46).
+     */
+    fat16_format("VOLUME1", 1);
+    fat16_init();
+    fat16_create_directory("BIN     ");
 }
 
 static int login_startup(struct user* usr){

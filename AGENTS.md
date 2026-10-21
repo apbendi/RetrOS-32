@@ -44,7 +44,8 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
 - **Where data comes in:**
   - **Input:** the keyboard and mouse interrupts fill buffers, and `wind` polls them every frame.
   - **Network:** the e1000 interrupt queues each packet for `netd`, which hands it to `workd` to run up the stack in `net/`. Apps use the socket syscalls in `net/api.c`.
-  - **Files:** `fs/fs.c` is the file layer, and FAT16 (`fs/fat16*.c`) is the only filesystem registered with it. `fs/ext.c`, `inode.c` and `vfs.c` are an older filesystem that's still linked in but never mounted.
+  - **Files:** `fs/fs.c` is the file layer, and FAT16 (`fs/fat16*.c`) is the only filesystem registered with it.
+    - **With no disk,** as on a machine booted from USB, where the IDE driver doesn't see the boot disk, `login` offers to create a 1 MB virtual disk in the kernel heap (`drivers/virtualdisk.c`) and formats it. Nothing else formats a disk. `fs/ext.c`, `inode.c` and `vfs.c` are an older filesystem that's still linked in but never mounted.
 - **Globals** (`include/kernel.h`, `include/pcb.h`):
   - `$kernel` holds the graphics context and window server.
   - `$services` holds the scheduler, networking, user manager and event log.
