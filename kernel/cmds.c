@@ -573,15 +573,24 @@ static int kevents(int argc, char* argv[])
 EXPORT_KSYMBOL(kevents);
 
 
+/* Prints a file's text */
 static int view(int argc, char* argv[]){
     if(argc < 2) {
         twritef("Usage: view <path>\n");
         return 1;
     }
 
+    struct fs_dirent entry;
+    int ret = fs_stat(argv[1], &entry);
+    if(ret == 0 && (entry.attributes & FS_ATTR_DIRECTORY)) ret = -ERROR_IS_DIRECTORY;
+    if(ret < 0){
+        __fs_cmd_error("view", argv[1], ret);
+        return -1;
+    }
+
     int fd = fs_open(argv[1], FS_FILE_FLAG_READ);
     if(fd < 0) {
-        twritef("Failed to open file %s\n", argv[1]);
+        __fs_cmd_error("view", argv[1], fd);
         return -1;
     }
 
@@ -592,16 +601,27 @@ static int view(int argc, char* argv[]){
         return -1;
     }
 
-    ubyte_t* buf = kalloc(size);
-    int len = fs_read(fd, buf, size);
-    fs_close(fd);
-    if(len < 0) {
-        twritef("Failed to read file %s\n", argv[1]);
+    /* kalloc_try, so a file bigger than the free memory is an error rather than a panic */
+    char* buf = kalloc_try(size + 1);
+    if(buf == NULL){
+        __fs_cmd_error("view", argv[1], -ERROR_ALLOC);
+        fs_close(fd);
         return -1;
     }
 
+    int len = fs_read(fd, buf, size);
+    fs_close(fd);
+    if(len < 0) {
+        __fs_cmd_error("view", argv[1], len);
+        kfree(buf);
+        return -1;
+    }
+
+    /* The text ends where the file does, or at its first zero byte */
+    buf[len] = 0;
     twritef("%s\n", buf);
 
+    kfree(buf);
     return 0;
 }
 EXPORT_KSYMBOL(view);
