@@ -25,7 +25,7 @@ HERE=$ROOT/tests/fs
 OUT=$HERE/out
 WORK=/tmp/fstest
 export MTOOLS_SKIP_CHECK=1   # RetrOS writes 0 heads and sectors per track, which mtools otherwise refuses
-export MTOOLS_NO_VFAT=1      # 8.3 names only, like RetrOS: mtools neither writes nor lists long names
+export MTOOLS_NO_VFAT=1      # mtools writes 8.3 names only, which the cases expect. mdir still lists long names.
 
 FSTOOL=$HERE/bin/fstool
 EXPECTED_FILE=$HERE/expected.txt
@@ -101,18 +101,22 @@ ref_tree() {
     ref_walk "$1" "" | tr '[:lower:]' '[:upper:]' | sort
 }
 
-# ref_walk IMG DIR: one directory and everything under it, by their short 8.3 names, which is all RetrOS reads.
-# The names come from mdir's columns: the first 8 characters of an entry's line are its name and the next 3 its
-# extension, even when the entry has a long name, which mdir shows at the end of the line.
+# ref_walk IMG DIR: one directory and everything under it, by the names RetrOS lists: an entry's long name, or its
+# 8.3 name if it has none. They come from mdir's columns: the first 8 characters of an entry's line are its 8.3
+# name and the next 3 its extension, and a long name, if there is one, ends the line after the time.
 ref_walk() {
     local img=$1 dir=$2 line name ext path
-    local entry='^(.{8}) (.{3}) +(<DIR>|[0-9][0-9 ]*) +[0-9]{4}-[0-9]{2}-[0-9]{2}'
+    local entry='^(.{8}) (.{3}) +(<DIR>|[0-9][0-9 ]*) +[0-9]{4}-[0-9]{2}-[0-9]{2} +[0-9]{1,2}:[0-9]{2}( +(.*[^ ]))? *$'
     mdir -i "$img" "::$dir/" 2>/dev/null | tr -d '\0' | while IFS= read -r line; do
         [[ $line =~ $entry ]] || continue
         name=${BASH_REMATCH[1]%"${BASH_REMATCH[1]##*[! ]}"}
         ext=${BASH_REMATCH[2]%"${BASH_REMATCH[2]##*[! ]}"}
         { [ "$name" = . ] || [ "$name" = .. ]; } && continue
-        path=$dir/$name${ext:+.$ext}
+        if [ -n "${BASH_REMATCH[5]}" ]; then
+            path=$dir/${BASH_REMATCH[5]}
+        else
+            path=$dir/$name${ext:+.$ext}
+        fi
         if [ "${BASH_REMATCH[3]}" = "<DIR>" ]; then
             echo "D $path"
             ref_walk "$img" "$path"
@@ -128,10 +132,14 @@ rfs_tree() {
     if ! "$FSTOOL" "$1" tree > "$WORK/tree" 2>/dev/null; then
         echo "(fstool tree failed)"
     fi
-    while read -r kind path size; do
+    # "D PATH" or "F SIZE PATH", with the path last since it can have spaces
+    local kind rest size path
+    while read -r kind rest; do
         if [ "$kind" = D ]; then
-            echo "D $path"
+            echo "D $rest"
         else
+            size=${rest%% *}
+            path=${rest#* }
             "$FSTOOL" "$1" cat "$path" > "$WORK/content" 2>/dev/null
             echo "F $path $size $(sha256sum < "$WORK/content" | cut -c1-16)"
         fi

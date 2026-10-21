@@ -18,8 +18,7 @@
 #include <utils/Thread.hpp>
 #include <fs/fs.h>
 #include <utils/TreeView.hpp>
-
-#include <fs/fat16.h>
+#include <lib/syscall.h>
 
 #include <lib/printf.h>
 
@@ -28,6 +27,7 @@
 #define ICON_SIZE 32
 
 #define TREE_VIEW_WIDTH 110  /* Width for the tree view panel */
+#define FILE_CACHE_MAX 100   /* The most entries of a directory Finder keeps */
 #define HEADER_HEIGHT 10     /* Height for the header */
 
 class File {
@@ -84,8 +84,15 @@ public:
         return 0;
     }
 
-    void addFile(File* file) {
+    /* Takes the file, or deletes it if the cache is full. @return whether it was added */
+    bool addFile(File* file) {
+        if(m_size == FILE_CACHE_MAX){
+            file->~File();
+            delete file;
+            return false;
+        }
         m_files[m_size++] = file;
+        return true;
     }
 
     void clear(){
@@ -98,7 +105,7 @@ public:
     }
 
 private:
-    File* m_files[100];
+    File* m_files[FILE_CACHE_MAX];
     int m_size = 0;
 };
 
@@ -148,50 +155,73 @@ public:
         }
     }
 
-    int changeDirectory(const char* strpath){
-
-        return 0;
+    /* Whether name ends with suffix, ignoring case */
+    static bool endsWith(const char* name, const char* suffix){
+        int len = strlen(name);
+        int suffix_len = strlen(suffix);
+        if(suffix_len > len) return false;
+        for(int i = 0; i < suffix_len; i++){
+            char a = name[len - suffix_len + i];
+            char b = suffix[i];
+            if(a >= 'A' && a <= 'Z') a += 'a' - 'A';
+            if(b >= 'A' && b <= 'Z') b += 'a' - 'A';
+            if(a != b) return false;
+        }
+        return true;
     }
 
-    int loadFiles(){
-        //struct directory_entry entry;
-        struct fat16_directory_entry entry;
+    /* Goes into a directory: ".." for the parent, or a name in the current one */
+    void changeDirectory(const char* name){
+        const char* current = path->getData();
+        int len = path->getLength();
 
-        if(m_fd != 0) fclose(m_fd);
+        /* Compared byte by byte: libc's strcmp only compares the first string's length */
+        if(name[0] == '.' && name[1] == '.' && name[2] == 0){
+            /* The path is absolute and has no trailing slash, so the parent is everything before the last "/" */
+            int index = len - 1;
+            while(index > 0 && current[index] != '/') index--;
 
-        m_cache->clear();
-
-        m_fd = open(path->getData(), FS_FILE_FLAG_READ);
-        if(m_fd <= -1) return -1;
-
-        while (1) {
-            int ret = read(m_fd, &entry, sizeof(struct fat16_directory_entry));
-            if (ret <= 0) {
-                break;
+            char* parent = new char[index + 2];
+            memcpy(parent, current, index);
+            parent[index] = 0;
+            if(index == 0){
+                parent[0] = '/';
+                parent[1] = 0;
             }
-
-                        /* parse name */
-            char name[13];
-            memset(name, 0, 13);
-            memcpy(name, entry.filename, 8);
-            memcpy(name + 8, entry.extension, 3);
-
-            printf("entry: %s\n", name);
-
-            if (
-                entry.filename[0] == 0xe5 || entry.filename[0] == 0x00
-            )  continue;
-
-            File* file = new File(name, entry.attributes, 0, 0, 0, 0);
-            m_cache->addFile(file);
+            path->setString(parent);
+            delete[] parent;
+        } else {
+            if(len > 1) path->concat("/");
+            path->concat(name);
         }
 
-        fclose(m_fd);
-        m_fd = 0;
-
-        return 0;
+        setHeader(path->getData());
+        loadFiles();
+        showFiles(0, 0);
+        printf("change directory to %s\n", path->getData());
     }
 
+    /* Reads the current directory's entries, with ".." first below the root */
+    int loadFiles(){
+        m_cache->clear();
+        m_entries = 0;
+
+        if(path->getLength() > 1){
+            m_cache->addFile(new File("..", FS_ATTR_DIRECTORY, 0, 0, 0, 0));
+        }
+
+        int fd = open(path->getData(), FS_FILE_FLAG_READ);
+        if(fd < 0) return -1;
+
+        struct fs_dirent entry;
+        while (readdir(fd, &entry) == 1) {
+            m_entries++;
+            m_cache->addFile(new File(entry.name, entry.attributes, 0, 0, 0, 0));
+        }
+
+        fclose(fd);
+        return 0;
+    }
 
     int showFiles(int x, int y){
 
@@ -204,8 +234,20 @@ public:
 
             /* Header text and other UI elements, adjusted for the new layout */
             gfx_draw_format_text(TREE_VIEW_WIDTH + 2, 2, COLOR_BLACK, "< >");
-            gfx_draw_format_text(TREE_VIEW_WIDTH + (WIDTH - TREE_VIEW_WIDTH)/2 - (path->getLength()*8)/2, 2, COLOR_BLACK, "%s", path->getData());
-            gfx_draw_format_text(WIDTH - strlen("XXX items")*8, 2, COLOR_BLACK, "%d items", m_cache->getSize());
+            /* The path, centered between "< >" and the count. A long one keeps its end, after "...". */
+            int left = TREE_VIEW_WIDTH + 4*8;
+            int right = WIDTH - strlen("XXX items")*8 - 8;
+            int max_chars = (right - left) / 8;
+            const char* shown = path->getData();
+            int shown_len = path->getLength();
+            const char* dots = "";
+            if(shown_len > max_chars){
+                shown += shown_len - (max_chars - 3);
+                shown_len = max_chars;
+                dots = "...";
+            }
+            gfx_draw_format_text(left + ((right - left) - shown_len*8)/2, 2, COLOR_BLACK, "%s%s", dots, shown);
+            gfx_draw_format_text(WIDTH - strlen("XXX items")*8, 2, COLOR_BLACK, "%d items", m_entries);
         }
     
         File* file;
@@ -221,57 +263,25 @@ public:
             int xOffset = TREE_VIEW_WIDTH + 4 + j * (WIDTH - TREE_VIEW_WIDTH) / 2;
             int yOffset = (HEADER_HEIGHT + 4 + i * ICON_SIZE);
 
-            if (file->flags & FAT16_FLAG_SUBDIRECTORY) {
+            if (file->flags & FS_ATTR_DIRECTORY) {
                 drawIcon(xOffset, yOffset, icon[0]);
-            } else if (file->name->includes("TXT")) {
+            } else if (endsWith(file->getName(), ".txt")) {
                 drawIcon(xOffset, yOffset, icon[1]);
-            } else if (file->name->includes("C  ")) {
+            } else if (endsWith(file->getName(), ".c") || endsWith(file->getName(), ".h")) {
                 drawIcon(xOffset, yOffset, icon[2]);
             } else {
                 drawIcon(xOffset, yOffset, icon[3]);
             }
 
-            /* Position text under the icon */
+            /* Position text next to the icon, shortened with "..." to fit its column */
             int textXOffset = xOffset+ICON_SIZE+4;
-            int textYOffset = yOffset + ICON_SIZE/2; /* Position the text just below the icon */
-            drawText(textXOffset, textYOffset, file->getName(), COLOR_BLACK);
+            int textYOffset = yOffset + ICON_SIZE/2;
+            drawName(textXOffset, textYOffset, file->getName(), ((WIDTH - TREE_VIEW_WIDTH)/2 - ICON_SIZE - 8) / 8);
 
             /* Check if x,y is inside box */
             if (x > xOffset && x < xOffset + ICON_SIZE && y > yOffset && y < yOffset + ICON_SIZE) {
-                if (file->flags & FAT16_FLAG_SUBDIRECTORY) {
-                    /* change directory */
-
-                    /* ugly hack */
-                    if(String::strcmp(file->getName(), "..") == 0){
-                        int index = path->getLength()-1;
-                        while(index > 0 && path->getData()[index] != '/') index--;
-
-                        String path2 = path->substring(0, index);
-                        delete path;
-                        path = new String(path2);
-                        
-                        setHeader(path->getData());
-                        loadFiles();
-                        showFiles(0, 0);
-                        printf("change directory to %s\n", path->getData());
-                        return 0;
-                    }
-
-                    if(file->getName()[0] == '.'){
-                        if (i * ICON_SIZE > HEIGHT - ICON_SIZE-100) {
-                            i = 0;
-                            ++j;
-                        } else {
-                            ++i;
-                        }
-                        iter++;
-                        continue;
-                    }
-                    path->concat(file->getName());
-                    setHeader(path->getData());
-                    loadFiles();
-                    showFiles(0, 0);
-                    printf("change directory to %s\n", path->getData());
+                if (file->flags & FS_ATTR_DIRECTORY) {
+                    changeDirectory(file->getName());
                     return 0;
                 } else {
                     /* open file */
@@ -287,10 +297,23 @@ public:
             iter++;
         }
 
-        fclose(m_fd);
-        m_fd = 0;
-
         return 0;
+    }
+
+    void drawName(int x, int y, const char* name, int max_chars){
+        int len = strlen(name);
+        if(len <= max_chars){
+            drawText(x, y, name, COLOR_BLACK);
+            return;
+        }
+
+        char shortened[64];
+        int keep = max_chars - 3;
+        if(keep > 60) keep = 60;
+        if(keep < 0) keep = 0;
+        memcpy(shortened, name, keep);
+        memcpy(shortened + keep, "...", 4);
+        drawText(x, y, shortened, COLOR_BLACK);
     }
 
     void Run(){
@@ -315,7 +338,6 @@ public:
                 }
                 break;
             case GFX_EVENT_EXIT:
-                if(m_fd != 0 ) fclose(m_fd);
                 exit();
                 break;
             default:
@@ -325,7 +347,8 @@ public:
     }
 
 private:
-    int m_fd = 0;
+    /* The directory's entries, not counting ".." */
+    int m_entries = 0;
     unsigned char* icon[5];
     FileCache* m_cache;
     String* path;

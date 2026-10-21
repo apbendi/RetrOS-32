@@ -592,22 +592,24 @@ int fs_read(int fd, void* buf, int size)
     ERR_ON_NULL(buf);
 
     /* check if a filesystem is available */
-    if(fs_current == NULL || fs_current->ops->read == NULL){
-        dbgprintf("No filesystem available %x %x\n", fs_current, fs_current->ops->read);
-        return -1;
+    if(fs_current == NULL){
+        return -ERROR_NO_FILESYSTEM;
     }
 
     /* check if the file is open */
     struct file* file = __fs_file(fd);
-    if(file == NULL || !HAS_FLAG(file->flags, FS_FILE_FLAG_READ)){
+    if(file == NULL){
+        return -ERROR_INVALID_ARGUMENTS;
+    }
+    if(!HAS_FLAG(file->flags, FS_FILE_FLAG_READ)){
         dbgprintf("File not open for reading: %d\n", fd);
-        return -2;
+        return -ERROR_ACCESS_DENIED;
     }
 
-    /* read the file at its position. 0 bytes means the end of the file. */
+    /* read the file at its position. 0 bytes means the end of the file, and a negative number an error code. */
     int ret = fs_current->ops->read(fs_current, file, buf, size);
     if(ret < 0){
-        return -3;
+        return ret;
     }
 
     file->offset += ret;
@@ -622,22 +624,24 @@ int fs_write(int fd, void* buf, int size)
     ERR_ON_NULL(buf);
 
     /* check if a filesystem is available */
-    if(fs_current == NULL || fs_current->ops->write == NULL){
-        dbgprintf("No filesystem available\n");
-        return -1;
+    if(fs_current == NULL){
+        return -ERROR_NO_FILESYSTEM;
     }
 
     /* check if the file is open */
     struct file* file = __fs_file(fd);
-    if(file == NULL || !(file->flags & FS_FILE_FLAG_WRITE)){
+    if(file == NULL){
+        return -ERROR_INVALID_ARGUMENTS;
+    }
+    if(!(file->flags & FS_FILE_FLAG_WRITE)){
         dbgprintf("File not open for writing: %d\n", fd);
-        return -2;
+        return -ERROR_ACCESS_DENIED;
     }
 
     /* write the file at its position, or at its end with FS_FILE_FLAG_APPEND. Fewer bytes than asked means the disk is full. */
     int ret = fs_current->ops->write(fs_current, file, buf, size);
     if(ret < 0){
-        return -3;
+        return ret;
     }
 
     file->offset = (file->flags & FS_FILE_FLAG_APPEND) ? file->size : file->offset + ret;

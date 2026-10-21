@@ -3,7 +3,6 @@
 
 #include <utils/StdLib.hpp>
 #include <lib/syscall.h>
-#include <fs/fat16.h>
 #include <fs/fs.h>
 
 namespace web {

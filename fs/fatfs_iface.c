@@ -9,13 +9,11 @@
  * FS_FILE_FLAG_APPEND. A write can't start past the end of the file. FS_FILE_FLAG_TRUNCATE empties a file as
  * it's opened.
  *
- * Reading an open directory gives 32-byte FAT directory entries (struct fat16_directory_entry), with "." and ".."
- * first in a subdirectory, as the old FAT16 code did, because Finder and the Editor's tree view parse them (#102).
- * Their names are the 8.3 names. A directory can't be opened for writing.
+ * A directory is opened to list it with readdir, which gives long names and leaves out "." and "..". It can't be
+ * opened for writing, and reading it like a file is refused.
  */
 #include <libc.h>
 #include <fs/fs.h>
-#include <fs/fat16.h>
 #include <memory.h>
 #include <kutils.h>
 #include <errors.h>
@@ -32,9 +30,6 @@ struct fatfs_open {
     FIL fil;
     /* A directory, for fs_readdir */
     DIR dir;
-    /* A directory's entries, as the old FAT16 code returned them, read when it was opened */
-    struct fat16_directory_entry* entries;
-    int entry_count;
 };
 
 /**
@@ -82,76 +77,6 @@ static void __fatfs_time(WORD date, WORD time, struct time* out)
     out->second = (time & 0x1F) * 2;
 }
 
-/* --- Directories, as the old FAT16 code read them --------------------------------------------------------------- */
-
-static void __fatfs_dot_entry(struct fat16_directory_entry* entry, const char* name)
-{
-    memset(entry, 0, sizeof(*entry));
-    memset(entry->full_name, ' ', 11);
-    memcpy(entry->filename, name, strlen(name));
-    entry->attributes = FAT16_FLAG_SUBDIRECTORY;
-}
-
-/**
- * An entry from FatFs's file information, with the 8.3 name as stored: "NAME.EXT", uppercase. That's altname, or
- * fname when altname is empty, which FatFs leaves it when the name has no long name and no lowercase flags.
- */
-static void __fatfs_entry(struct fat16_directory_entry* entry, const FILINFO* info)
-{
-    memset(entry, 0, sizeof(*entry));
-    memset(entry->full_name, ' ', 11);
-
-    const char* name = info->altname[0] != 0 ? info->altname : info->fname;
-    int i = 0;
-    for(int j = 0; name[i] && name[i] != '.' && j < 8; i++, j++) entry->filename[j] = name[i];
-    if(name[i] == '.') i++;
-    for(int j = 0; name[i] && j < 3; i++, j++) entry->extension[j] = name[i];
-
-    entry->attributes = info->fattrib;
-    entry->file_size = info->fsize;
-    entry->write_date = info->fdate;
-    entry->write_time = info->ftime;
-}
-
-/**
- * Reads a directory's entries into open->entries: "." and ".." first in a subdirectory, then what FatFs lists.
- * The directory is read twice, once to count. If it gains entries in between, the extra ones are left out.
- */
-static int __fatfs_read_directory(const char* path, struct fatfs_open* open)
-{
-    DIR dir;
-    FILINFO info;
-    int is_root = __fatfs_is_root(path);
-    int count = is_root ? 0 : 2;
-
-    if(f_opendir(&dir, path) != FR_OK) return -ERROR_FILE_NOT_FOUND;
-    while(f_readdir(&dir, &info) == FR_OK && info.fname[0] != 0) count++;
-    f_closedir(&dir);
-
-    open->is_directory = 1;
-    open->entry_count = 0;
-    if(count == 0) return ERROR_OK;
-
-    open->entries = kalloc_try(count * sizeof(struct fat16_directory_entry));
-    if(open->entries == NULL) return -ERROR_ALLOC;
-
-    int i = 0;
-    if(!is_root){
-        __fatfs_dot_entry(&open->entries[i++], ".");
-        __fatfs_dot_entry(&open->entries[i++], "..");
-    }
-
-    if(f_opendir(&dir, path) == FR_OK){
-        while(i < count && f_readdir(&dir, &info) == FR_OK && info.fname[0] != 0){
-            __fatfs_entry(&open->entries[i++], &info);
-        }
-        f_closedir(&dir);
-    }
-
-    open->entry_count = i;
-    return ERROR_OK;
-}
-
 /* --- Operations ----------------------------------------------------------------------------------------------- */
 
 /* Sets *error, if there's somewhere to set it, and returns NULL */
@@ -181,13 +106,12 @@ static struct file* fatfs_open(struct filesystem* fs, const char* path, int flag
     memset(open, 0, sizeof(struct fatfs_open));
 
     if(is_directory){
-        int ret = __fatfs_read_directory(path, open);
-        if(ret == ERROR_OK && f_opendir(&open->dir, path) != FR_OK) ret = -ERROR_DISK;
-        if(ret < 0){
-            if(open->entries != NULL) kfree(open->entries);
+        FRESULT res = f_opendir(&open->dir, path);
+        if(res != FR_OK){
             kfree(open);
-            return __fatfs_open_failed(error, ret);
+            return __fatfs_open_failed(error, __fatfs_error(res));
         }
+        open->is_directory = 1;
     } else {
         BYTE mode = 0;
         if(flags & FS_FILE_FLAG_READ) mode |= FA_READ;
@@ -210,7 +134,6 @@ static struct file* fatfs_open(struct filesystem* fs, const char* path, int flag
     struct file* file = fs_alloc_file();
     if(file == NULL){
         if(is_directory){
-            if(open->entries != NULL) kfree(open->entries);
             f_closedir(&open->dir);
         } else {
             f_close(&open->fil);
@@ -223,7 +146,7 @@ static struct file* fatfs_open(struct filesystem* fs, const char* path, int flag
     file->offset = 0;
     file->nlinks = 1;
     file->data = open;
-    file->size = is_directory ? open->entry_count * (int)sizeof(struct fat16_directory_entry) : (int)f_size(&open->fil);
+    file->size = is_directory ? 0 : (int)f_size(&open->fil);
 
     return file;
 }
@@ -232,22 +155,18 @@ static int fatfs_read(struct filesystem* fs, struct file* file, void* buf, int s
 {
     FS_VALIDATE(fs);
     ERR_ON_NULL(file);
-    if(file->nlinks == 0 || file->data == NULL) return -1;
-    if(!(file->flags & FS_FILE_FLAG_READ)) return -2;
+    if(file->nlinks == 0 || file->data == NULL) return -ERROR_INVALID_ARGUMENTS;
+    if(!(file->flags & FS_FILE_FLAG_READ)) return -ERROR_ACCESS_DENIED;
 
     struct fatfs_open* open = file->data;
-    if(open->is_directory){
-        int total = open->entry_count * (int)sizeof(struct fat16_directory_entry);
-        if(file->offset >= total) return 0;
-        int n = size < total - file->offset ? size : total - file->offset;
-        memcpy(buf, (char*)open->entries + file->offset, n);
-        return n;
-    }
+    if(open->is_directory) return -ERROR_IS_DIRECTORY;
 
-    if(f_lseek(&open->fil, file->offset) != FR_OK) return -3;
+    FRESULT res = f_lseek(&open->fil, file->offset);
+    if(res != FR_OK) return __fatfs_error(res);
 
     UINT read;
-    if(f_read(&open->fil, buf, size, &read) != FR_OK) return -4;
+    res = f_read(&open->fil, buf, size, &read);
+    if(res != FR_OK) return __fatfs_error(res);
     return read;
 }
 
@@ -255,11 +174,11 @@ static int fatfs_write(struct filesystem* fs, struct file* file, const void* buf
 {
     FS_VALIDATE(fs);
     ERR_ON_NULL(file);
-    if(file->nlinks == 0 || file->data == NULL) return -1;
-    if(!(file->flags & FS_FILE_FLAG_WRITE)) return -2;
+    if(file->nlinks == 0 || file->data == NULL) return -ERROR_INVALID_ARGUMENTS;
+    if(!(file->flags & FS_FILE_FLAG_WRITE)) return -ERROR_ACCESS_DENIED;
 
     struct fatfs_open* open = file->data;
-    if(open->is_directory) return -2;
+    if(open->is_directory) return -ERROR_IS_DIRECTORY;
 
     /**
      * Past the end of the file, FatFs would leave whatever the disk held before in the gap, so that's refused.
@@ -270,9 +189,10 @@ static int fatfs_write(struct filesystem* fs, struct file* file, const void* buf
     if(position > f_size(&open->fil)) return -ERROR_INVALID_ARGUMENTS;
 
     UINT written;
-    if(f_lseek(&open->fil, position) != FR_OK) return -3;
-    if(f_write(&open->fil, buf, size, &written) != FR_OK) return -4;
-    if(f_sync(&open->fil) != FR_OK) return -4;
+    FRESULT res = f_lseek(&open->fil, position);
+    if(res == FR_OK) res = f_write(&open->fil, buf, size, &written);
+    if(res == FR_OK) res = f_sync(&open->fil);
+    if(res != FR_OK) return __fatfs_error(res);
 
     file->size = f_size(&open->fil);
 
@@ -289,7 +209,6 @@ static int fatfs_close(struct filesystem* fs, struct file* file)
     struct fatfs_open* open = file->data;
     if(open != NULL){
         if(open->is_directory){
-            if(open->entries != NULL) kfree(open->entries);
             f_closedir(&open->dir);
         } else {
             f_close(&open->fil);
