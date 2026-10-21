@@ -123,7 +123,7 @@ static int wm_default_add(struct windowmanager* wm, struct window* window)
      */
     spin_lock(&wm->spinlock);
 
-    /* A window being destroyed is out of the lists for good (#16). The F4 handler re-adds the taskbar's window. */
+    /* A window being destroyed is out of the lists for good (#16). A workspace switch re-adds the taskbar's window. */
     if(window->removed){
         spin_unlock(&wm->spinlock);
         return -ERROR_WINDOW_NOT_FOUND;

@@ -44,7 +44,7 @@ $Q stop
 - **Keyboard input goes to the front window.** A new window opens in front, so after `exec -d` the app has the keyboard, not the shell.
   - **`shell`** brings the shell back first. The shell isn't always in front after boot, because kernel threads open their windows in no fixed order.
   - **`focus`** lists the windows (F12), then clicks a part of NAME's title bar that no window in front covers, and checks the log for `Pushing window <name> to front`. That takes about half a second.
-  - If the title bar is covered everywhere, `focus` falls back to Tab, which sends the front window to the back. It presses Tab until the window order repeats, then stops with NAME in front. That takes a couple of seconds.
+  - If the title bar is covered everywhere, `focus` falls back to Alt+Tab, which sends the front window to the back. It presses Alt+Tab until the window order repeats, then stops with NAME in front. That takes a couple of seconds.
   - **F12 and the shell's `windows` command** list the windows. F12 is handled by the window server, so it works whatever has focus. Its lines look like `wm_log_windows(): 1 "Clock" x=450 y=50 w=126 h=156 pid=6`.
 - **Terminal output is in the serial log,** one line at a time, as `term[<writer>]: <text>`. That includes the shell's echo of each command (`term[shell]: kernel> exec ...`), kernel commands' output, and apps' `printf`. So `$Q wait "term\[shell\]: .*File too large"` checks a command's result without a screenshot.
   - A line is logged when it ends with a newline, so a prompt without one waits for the next newline.

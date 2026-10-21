@@ -99,6 +99,7 @@ static const unsigned char kbdus_shift[128] = {
 static int __keyboard_presses = 0;
 static uint8_t __shift_pressed = 0;
 static uint8_t __ctrl_pressed = 0;
+static uint8_t __alt_pressed = 0;
 static uint8_t __super_pressed = 0;
 static uint8_t __caps_lock_enabled = 0;
 static uint8_t __extended_scancode = 0;
@@ -140,6 +141,23 @@ void kb_add_char(unsigned char c) {
   kb_buffer_head = next_head;
 }
 
+/* The window server's shortcuts (#89), or 0. Any other Alt+key sends the key alone. */
+static unsigned char __alt_code(unsigned char c) {
+  switch (c) {
+  case '\t':
+    return ALT_TAB;
+  case F4:
+    return ALT_F4;
+  case '1':
+  case '2':
+  case '3':
+  case '4':
+    return ALT_1 + (c - '1');
+  default:
+    return 0;
+  }
+}
+
 static void __int_handler kb_callback() {
   uint8_t scancode =
       inportb(0x60); /* Recieve scancode, also ACK's interrupt? */
@@ -159,8 +177,10 @@ static void __int_handler kb_callback() {
       __ctrl_pressed = 0;
       return;
     case 0x38: /* right alt down */
+      __alt_pressed = 1;
       return;
     case 0xb8: /* right alt up */
+      __alt_pressed = 0;
       return;
     case 0x5b: /* windows key down */
       __super_pressed = 1;
@@ -183,8 +203,10 @@ static void __int_handler kb_callback() {
     __shift_pressed = 0;
     return;
   case 0x38: /* left alt down */
+    __alt_pressed = 1;
     return;
   case 0xb8: /* left alt up */
+    __alt_pressed = 0;
     return;
   case 0x1d: /* left ctrl down */
     __ctrl_pressed = 1;
@@ -215,7 +237,10 @@ static void __int_handler kb_callback() {
   if (c == 0)
     return;
 
-  if (__ctrl_pressed && c < 128) {
+  unsigned char alt = __alt_pressed ? __alt_code(c) : 0;
+  if (alt) {
+    kb_add_char(alt);
+  } else if (__ctrl_pressed && c < 128) {
     kb_add_char(128 + c);
   } else if (c >= 'a' && c <= 'z') {
     unsigned char is_uppercase = (__shift_pressed ^ __caps_lock_enabled);

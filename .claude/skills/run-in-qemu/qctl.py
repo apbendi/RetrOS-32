@@ -449,7 +449,7 @@ def windows_cmd():
 
 def focus(name, quiet=False):
     """Bring the frontmost window titled NAME to the front by clicking a visible part of its title bar.
-    Falls back to Tab cycling when its title bar is covered."""
+    Falls back to Alt+Tab cycling when its title bar is covered."""
     windows = list_windows()
     matches = [w for w in windows if w["name"] == name]
     if not matches:
@@ -476,25 +476,25 @@ def focus(name, quiet=False):
 
 
 def focus_by_tab(name, quiet=False):
-    """Tab sends the front window to the back and logs "Pushing window <name> to back".
-    Press Tab until the sequence of names repeats, so the window order is known, then
+    """Alt+Tab sends the front window to the back and logs "Pushing window <name> to back".
+    Press Alt+Tab until the sequence of names repeats, so the window order is known, then
     stop when NAME is next in line, which means it's in front."""
     seen = []
     m = Monitor()
     for _ in range(80):
         since = serial_size()
-        press(m, "tab")
+        press(m, "alt-tab")
         line, match = wait_for(r"Pushing window (.+) to back", 2, since)
         if not match:
             m.close()
-            die("Tab didn't switch windows (no 'Pushing window' line). Is a window open?")
+            die("Alt+Tab didn't switch windows (no 'Pushing window' line). Is a window open?")
         seen.append(match.group(1))
         period = cycle_length(seen)
         if period:
             order = seen[-period:]
             if name not in order:
                 m.close()
-                die(f"No window titled {name!r}. Windows, front to back after the next Tab: {', '.join(order)}")
+                die(f"No window titled {name!r}. Windows, front to back after the next Alt+Tab: {', '.join(order)}")
             if seen[len(seen) - period] == name:
                 m.close()
                 set_mark()
@@ -502,7 +502,7 @@ def focus_by_tab(name, quiet=False):
                     print(f"{name} is in front")
                 return
     m.close()
-    die("Gave up after 80 Tabs")
+    die("Gave up after 80 Alt+Tabs")
 
 
 def cycle_length(seen):

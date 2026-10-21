@@ -356,25 +356,51 @@ static int __ws_key_event(struct windowserver* ws, unsigned char key)
     if(key == 0){return ERROR_OK;}
 
     switch (key){
-    case F4:{
-            /* Workspace changes */
+    case ALT_1:
+    case ALT_2:
+    case ALT_3:
+    case ALT_4:{
+            /* Alt+1 to Alt+4 pick a workspace. F4 used to cycle through them, but apps need F4 (#89). */
+            int workspace = key - ALT_1;
+            if(workspace == ws->workspace || workspace >= WM_MAX_WORKSPACES){
+                break;
+            }
+
             if(ws->taskbar != NULL){
                 ws->_wm->ops->remove(ws->_wm, ws->taskbar->gfx_window);
             }
 
-            ws->workspace = (ws->workspace+1)%WM_MAX_WORKSPACES;
+            ws->workspace = workspace;
             ws->_wm->ops->workspace(ws->_wm, ws->workspace);
             ws->window_changes = 1;
             
+            /* Behind the workspace's windows, so the front one has the keyboard rather than the taskbar */
             if(ws->taskbar != NULL){
                 ws->_wm->ops->add(ws->_wm, ws->taskbar->gfx_window);
+                ws->_wm->ops->push_back(ws->_wm, ws->taskbar->gfx_window);
             }
+        }
+        break;
+    case ALT_F4:{
+            /* What the close button does. Windows without one, the taskbar and the login and message boxes, stay. */
+            struct window* w = ws->_wm->windows;
+            if(w == NULL || HAS_FLAG(w->flags, GFX_HIDE_HEADER) || HAS_FLAG(w->flags, GFX_NO_OPTIONS)){
+                break;
+            }
+
+            dbgprintf("[WSERVER] Closing %s.\n", w->name);
+            struct gfx_event e = {
+                .data = 0,
+                .data2 = 0,
+                .event = GFX_EVENT_EXIT
+            };
+            gfx_push_event(w, &e);
         }
         break;
     case F10:{
             /**
              * Leave fullscreen on the fullscreen window, even if another window has come to the front since:
-             * a click, TAB or the fullscreen window's exit can change the front window. Otherwise make the
+             * a click, Alt+Tab or the fullscreen window's exit can change the front window. Otherwise make the
              * front window fullscreen.
              */
             struct window* w = ws->_fullscreen != NULL ? ws->_fullscreen : ws->_wm->windows;
@@ -394,7 +420,7 @@ static int __ws_key_event(struct windowserver* ws, unsigned char key)
         /* Log the window list, for finding windows without a screenshot */
         wm_log_windows(ws->_wm);
         break;
-    case TAB: {
+    case ALT_TAB: {
             dbgprintf("[WSERVER] Switching focus.\n");
             struct windowmanager* wm = ws->_wm;
             wm->ops->push_back(wm, wm->windows);
@@ -432,8 +458,8 @@ static int ws_draw(struct windowserver* ws)
     if((ws->window_changes || mouse_changed ) && ws->_fullscreen == NULL){
         memcpy(ws->_wm->composition_buffer, ws->background, ws->_wm->composition_buffer_size);
 
-        /* write current workspace at the right bottom of screen */
-        vesa_printf(ws->_wm->composition_buffer, 8, vbe_info->height -8, 0x1F, "Workspace %d", ws->workspace);
+        /* write current workspace at the right bottom of screen, numbered from 1 like Alt+1 to Alt+4 */
+        vesa_printf(ws->_wm->composition_buffer, 8, vbe_info->height -8, 0x1F, "Workspace %d", ws->workspace + 1);
 
         ws->_wm->ops->draw(ws->_wm, ws->_wm->windows);
         vesa_put_icon16(ws->_wm->composition_buffer, ws->m.x, ws->m.y);

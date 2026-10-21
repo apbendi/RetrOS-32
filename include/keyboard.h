@@ -20,6 +20,14 @@
 /* Ctrl+key is 128 plus the key's character, and no key's character is 1-7, so 129-135 can't be a Ctrl+key */
 #define F12 134
 
+/* The window server's shortcuts (#89). No key's character is 11-26 either, so 139-154 can't be a Ctrl+key */
+#define ALT_TAB 139
+#define ALT_F4 140
+#define ALT_1 141 /* ALT_1 to ALT_4 are consecutive */
+#define ALT_2 142
+#define ALT_3 143
+#define ALT_4 144
+
 #define TAB 9
 
 #define CTRLC 227
