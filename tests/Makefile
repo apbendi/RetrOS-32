@@ -7,18 +7,14 @@ TEST_INCLUDES := -I $(INCLUDE_DIR) -I ./include/
 COMMON_FLAGS := $(ARCH_CFLAGS) -O2 -Wall --no-builtin
 MOCK := utils/mocks.c utils/test.c
 
-FATOBJS = ../fs/bin/fat16.o ../fs/bin/fat16_read.o ../fs/bin/fat16_write.o
 
-TESTS := fat16_test pcb_test mem_test net_test http_test
+TESTS := pcb_test mem_test net_test http_test
 
 .PHONY: all $(TESTS) run clean bin
 all: $(TESTS) run
 
 bin:
 	$(call make_dir,$(BUILD_DIR))
-
-fat16_test: bin fat16_test.c
-	$(QUIET)$(CC) fat16_test.c -D__FS_TEST ../bin/bitmap.o $(FATOBJS) -D__RetrOS32MOCK $(MOCK) $(TEST_INCLUDES) $(COMMON_FLAGS) -D__KERNEL -o $(BUILD_DIR)/fat16_test.o
 
 mem_test: bin mem_test.c
 	$(QUIET)$(CC) mem_test.c -D__MEM_TEST ../bin/bitmap.o ../bin/kmem.o -D__RetrOS32MOCK $(MOCK) $(TEST_INCLUDES) $(COMMON_FLAGS) -o $(BUILD_DIR)/mem_test.o
@@ -34,7 +30,6 @@ http_test: bin http_test.c
 
 run:
 	$(BUILD_DIR)/mem_test.o
-	$(BUILD_DIR)/fat16_test.o
 	$(BUILD_DIR)/pcb_test.o
 	$(BUILD_DIR)/net_test.o
 	$(BUILD_DIR)/http_test.o

@@ -1,7 +1,7 @@
 /**
  * @file host.c
  * @brief Host stand-ins for the kernel functions RetrOS's file system code calls, so fstool can run the real
- * bin/fat16.o and bin/fs.o, compiled exactly as for the kernel, against a disk image file.
+ * bin/fs.o and bin/fatfs.o, compiled exactly as for the kernel, against a disk image file.
  *
  * Besides standing in, these watch for mistakes the kernel wouldn't notice: a read or write outside the disk,
  * a write past the end of a kalloc'd buffer, and releasing a lock that isn't held. Each prints a line starting
@@ -282,18 +282,6 @@ int time_format_time(char* buf, int size, const struct time* t, int seconds)
     (void)t; (void)seconds;
     if(size > 0) buf[0] = 0;
     return 0;
-}
-
-/* The kernel's strstr returns the match's index, or -1. fat16_find depends on that. */
-#pragma GCC diagnostic ignored "-Wbuiltin-declaration-mismatch"
-int strstr(const char* str, const char* str2)
-{
-    for(int i = 0; str[i] != 0; i++){
-        int j = 0;
-        while(str2[j] != 0 && str[i + j] == str2[j]) j++;
-        if(str2[j] == 0) return i;
-    }
-    return -1;
 }
 
 /**

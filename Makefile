@@ -65,9 +65,9 @@ symbols: kernel
 
 build: bin/build
 
-bin/build: tools/build.c $(BUILD_DIR)/fat16.o $(BUILD_DIR)/bitmap.o tests/utils/mocks.c
+bin/build: tools/build.c
 	$(call make_dir,$(BUILD_DIR))
-	$(QUIET)$(HOST_CC) tools/build.c $(BUILD_DIR)/bitmap.o tests/utils/mocks.c $(BUILD_DIR)/fat16.o -I $(INCLUDE_DIR) -O2 -m32 -Wall -D__FS_TEST -D__KERNEL -no-pie -o $(BUILD_DIR)/build
+	$(QUIET)$(HOST_CC) tools/build.c -O2 -Wall -o $(BUILD_DIR)/build
 	@echo "[host] built $(BUILD_DIR)/build"
 
 tools: bin/build
@@ -80,7 +80,7 @@ tests: compile
 # The phony targets run those Makefiles on every build, once each, and they rebuild what changed.
 $(BUILD_DIR)/net.o: net_objects ;
 
-$(BUILD_DIR)/fat16.o $(BUILD_DIR)/fat16_iface.o $(BUILD_DIR)/fs.o $(BUILD_DIR)/fatfs.o: fs_objects ;
+$(BUILD_DIR)/fs.o $(BUILD_DIR)/fatfs.o: fs_objects ;
 
 net_objects:
 	$(MAKE) -C net
