@@ -29,49 +29,38 @@
 	EXPORT_KSYMBOL(name);
 
 static int __read_file(char* filename, char** buffer){
-    struct filesystem* fs = fs_get();
-    if(fs == NULL){
-        twritef("No filesystem mounted.\n");
-        return -1;
-    }
-
-    struct file* f = fs->ops->open(fs, filename, FS_FILE_FLAG_READ);
-    if(f == NULL){
+    int fd = fs_open(filename, FS_FILE_FLAG_READ);
+    if(fd < 0){
         twritef("Failed to open file %s\n", filename);
         return -1;
     }
 
-    *buffer = kalloc(f->size);
-    int len = fs->ops->read(fs, f, *buffer, f->size);
+    int size = fs_size(fd);
+    *buffer = kalloc(size);
+    int len = fs_read(fd, *buffer, size);
+    fs_close(fd);
     if(len < 0){
         twritef("Failed to read file %s\n", filename);
         return -1;
     }
 
-    fs->ops->close(fs, f);
     return len;
 }
 
 static int __write_file(char* filename, char* buffer, int size){
-    struct filesystem* fs = fs_get();
-    if(fs == NULL){
-        twritef("No filesystem mounted.\n");
-        return -1;
-    }
-
-    struct file* f = fs->ops->open(fs, filename, FS_FILE_FLAG_CREATE | FS_FILE_FLAG_WRITE);
-    if(f == NULL){
+    int fd = fs_open(filename, FS_FILE_FLAG_CREATE | FS_FILE_FLAG_WRITE);
+    if(fd < 0){
         twritef("Failed to open file %s\n", filename);
         return -1;
     }
 
-    int len = fs->ops->write(fs, f, buffer, size);
+    int len = fs_write(fd, buffer, size);
+    fs_close(fd);
     if(len < 0){
         twritef("Failed to write file %s\n", filename);
         return -1;
     }
 
-    fs->ops->close(fs, f);
     return len;
 }
 
@@ -94,6 +83,7 @@ static int new(int argc, char* argv[])
             twritef("Failed to create file %s\n", argv[2]);
             return 1;
         }
+        fs_close(fd);
 
     } else if(strcmp(argv[1], "dir") == 0) {
 
@@ -406,39 +396,28 @@ static int view(int argc, char* argv[]){
         return 1;
     }
 
-    struct filesystem* fs = fs_get();
-    if(fs == NULL){
-        twritef("No filesystem mounted.\n");
-        return -1;
-    }
-
-    if(fs->ops->read == NULL){
-        twritef("Filesystem does not support reading\n");
-        return -1;
-    }
-
-    struct file* file = fs->ops->open(fs, argv[1], FS_FILE_FLAG_READ);
-    if(file == NULL) {
+    int fd = fs_open(argv[1], FS_FILE_FLAG_READ);
+    if(fd < 0) {
         twritef("Failed to open file %s\n", argv[1]);
         return -1;
     }
 
-    if(file->size == 0) {
+    int size = fs_size(fd);
+    if(size == 0) {
         twritef("File %s is empty\n", argv[1]);
-        fs->ops->close(fs, file);
+        fs_close(fd);
         return -1;
     }
 
-    ubyte_t* buf = kalloc(file->size);
-    int len = fs->ops->read(fs, file, buf, file->size);
+    ubyte_t* buf = kalloc(size);
+    int len = fs_read(fd, buf, size);
+    fs_close(fd);
     if(len < 0) {
         twritef("Failed to read file %s\n", argv[1]);
         return -1;
     }
 
     twritef("%s\n", buf);
-
-    fs->ops->close(fs, file);
 
     return 0;
 }
@@ -472,24 +451,16 @@ static int file(int argc, char* argv[]){
         return 1;
     }
 
-    struct filesystem* fs = fs_get();
-    if(fs == NULL){
-        twritef("No filesystem mounted.\n");
-        return -1;
-    }
-
-    struct file* file = fs->ops->open(fs, argv[1], FS_FILE_FLAG_READ);
-    if(file == NULL) {
+    int fd = fs_open(argv[1], FS_FILE_FLAG_READ);
+    if(fd < 0) {
         twritef("Failed to open file %s\n", argv[1]);
         return -1;
     }
 
     twritef("File %s:\n", argv[1]);
-    twritef("Nlinks: %d\n", file->nlinks);
-    twritef("Directory: %d\n", file->directory);
-    twritef("Size: %d\n", file->size);
+    twritef("Size: %d\n", fs_size(fd));
 
-    fs->ops->close(fs, file);
+    fs_close(fd);
     return 0;
 }
 EXPORT_KSYMBOL(file);

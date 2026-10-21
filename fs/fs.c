@@ -18,6 +18,8 @@
 #include <assert.h>
 #include <serial.h>
 #include <errors.h>
+#include <pcb.h>
+#include <sync.h>
 
 /* This determines the maximum of simultaneously open files */
 #define FS_MAX_FILES 256
@@ -26,6 +28,34 @@
 /* default filesystem struct */
 static struct file fs_file_table[FS_MAX_FILES];
 static struct filesystem* fs_table[FS_MAX_FILESYSTEMS] = {NULL};
+
+/**
+ * File descriptors are per process: fs_process_files[pid] maps a process's descriptors to open files in
+ * fs_file_table, and a thread uses its process's. 0 to 2 are left for standard input and output, so no file is
+ * ever fd 0, which programs use to mean "no file" (#81). Files opened before any process runs, at boot, go in
+ * fs_boot_files. A process's files are closed when it exits (fs_close_files_of).
+ */
+#define FS_FIRST_FD 3
+static struct file* fs_process_files[MAX_NUM_OF_PCBS][FS_MAX_PROCESS_FILES];
+static struct file* fs_boot_files[FS_MAX_PROCESS_FILES];
+
+/* Guards fs_file_table and every table of descriptors. Set up when the first file system registers. */
+static mutex_t fs_files_lock;
+
+static struct file** __fs_files_of(struct pcb* pcb)
+{
+    if(pcb == NULL) return fs_boot_files;
+    if(pcb->is_process == PCB_THREAD && pcb->parent != NULL) pcb = pcb->parent;
+    if(pcb->pid < 0 || pcb->pid >= MAX_NUM_OF_PCBS) return fs_boot_files;
+    return fs_process_files[pcb->pid];
+}
+
+/* The current process's open file for fd, or NULL */
+static struct file* __fs_file(int fd)
+{
+    if(fd < FS_FIRST_FD || fd >= FS_MAX_PROCESS_FILES) return NULL;
+    return __fs_files_of($process->current)[fd];
+}
 
 /**
  * The file system fs_get() returns and fs_open and friends use: the first one registered, behind operations that
@@ -161,38 +191,24 @@ static struct filesystem_ops fs_checked_ops = {
     .find = __fs_checked_find
 };
 
-int fs_file2fd(struct file* file)
-{
-    ERR_ON_NULL(file);
-
-    for (int i = 0; i < FS_MAX_FILES; i++){
-        if(&fs_file_table[i] == file){
-            return i;
-        }
-    }
-
-    return -1;
-}
-
 /* functions used by filesystem implementations */
+
+/* Takes a free open file from the pool. It's in use from here, marked by nlinks, until fs_free_file. */
 struct file* fs_alloc_file()
 {
     struct file* file = NULL;
 
-    /* find a free file */
+    acquire(&fs_files_lock);
     for(int i = 0; i < FS_MAX_FILES; i++){
-        if(fs_file_table[i].flags == 0){
+        if(fs_file_table[i].nlinks == 0){
             file = &fs_file_table[i];
+            memset(file, 0, sizeof(struct file));
+            file->nlinks = 1;
             break;
         }
     }
+    release(&fs_files_lock);
 
-    /* no free file found */
-    if(file == NULL){
-        return NULL;
-    }
-
-    memset(file, 0, sizeof(struct file));
     return file;
 }
 
@@ -200,12 +216,14 @@ int fs_free_file(struct file* file)
 {
     ERR_ON_NULL(file);
 
-    file->nlinks = 0;
+    acquire(&fs_files_lock);
     file->offset = 0;
     file->flags = 0;
     file->identifier = 0;
     file->directory = 0;
     file->data = NULL;
+    file->nlinks = 0;
+    release(&fs_files_lock);
 
     return 0;
 }
@@ -225,6 +243,7 @@ int fs_register(struct filesystem* fs)
             fs_table[i] = fs;
 
             if(fs_backend == NULL){
+                mutex_init(&fs_files_lock);
                 fs_backend = fs;
                 fs_checked = *fs;
                 fs_checked.ops = &fs_checked_ops;
@@ -331,11 +350,29 @@ int fs_save_to_file(const char* file, void* buf, int size)
 }
 
 int fs_size(int fd){
-    if(fd < 0 || fd >= FS_MAX_FILES || fs_file_table[fd].flags == 0){
+    struct file* file = __fs_file(fd);
+    if(file == NULL){
         return -1;
     }
 
-    return fs_file_table[fd].size;
+    return file->size;
+}
+
+/* Takes fd out of a table of descriptors, and closes its file */
+static int __fs_close(struct file** files, int fd)
+{
+    if(fd < FS_FIRST_FD || fd >= FS_MAX_PROCESS_FILES) return -2;
+
+    acquire(&fs_files_lock);
+    struct file* file = files[fd];
+    files[fd] = NULL;
+    release(&fs_files_lock);
+
+    if(file == NULL) return -2;
+
+    fs_current->ops->close(fs_current, file);
+    fs_free_file(file);
+    return 0;
 }
 
 int fs_close(int fd)
@@ -345,23 +382,24 @@ int fs_close(int fd)
         return -1;
     }
 
-    /* check if the file is open */
-    if(fd < 0 || fd >= FS_MAX_FILES || fs_file_table[fd].flags == 0){
-        return -2;
-    }
-
-    /* close the file */
-    int ret = fs_current->ops->close(fs_current, &fs_file_table[fd]);
-    if(ret < 0){
-        return -3;
-    }
-
-    fs_free_file(&fs_file_table[fd]);
-
-    return 0;
+    return __fs_close(__fs_files_of($process->current), fd);
 }
 
-/* function that use the default filesystem and a "file descriptor" system, if avaiable */
+/* Closes every file a process still has open, when it exits. A thread's files are its process's, so they stay. */
+int fs_close_files_of(struct pcb* pcb)
+{
+    if(fs_current == NULL || pcb == NULL || pcb->is_process == PCB_THREAD) return 0;
+
+    struct file** files = __fs_files_of(pcb);
+    int closed = 0;
+    for(int fd = FS_FIRST_FD; fd < FS_MAX_PROCESS_FILES; fd++){
+        if(files[fd] != NULL && __fs_close(files, fd) == 0) closed++;
+    }
+    if(closed > 0) dbgprintf("[FS] Closed %d files %s left open\n", closed, pcb->name);
+    return closed;
+}
+
+/* Opens path and gives it the lowest free descriptor in the current process's table */
 int fs_open(const char* path, int flags)
 {
     ERR_ON_NULL(path);
@@ -377,10 +415,26 @@ int fs_open(const char* path, int flags)
         return -1;
     }
 
+    acquire(&fs_files_lock);
+    struct file** files = __fs_files_of($process->current);
+    int fd = -1;
+    for(int i = FS_FIRST_FD; i < FS_MAX_PROCESS_FILES; i++){
+        if(files[i] == NULL){
+            files[i] = file;
+            fd = i;
+            break;
+        }
+    }
+    release(&fs_files_lock);
+
+    if(fd < 0){
+        dbgprintf("fs_open: %s: the process has too many files open\n", path);
+        fs_current->ops->close(fs_current, file);
+        fs_free_file(file);
+        return -1;
+    }
+
     dbgprintf("fs_open: %s\n", path);
-
-    int fd = fs_file2fd(file);
-
     return fd;
 }
 
@@ -392,17 +446,18 @@ int fs_seek(int fd, int offset, fs_seek_flag_t flag)
     }
 
     /* check if the file is open */
-    if(fd < 0 || fd >= FS_MAX_FILES || fs_file_table[fd].flags == 0){
+    struct file* file = __fs_file(fd);
+    if(file == NULL){
         return -2;
     }
 
     switch (flag){
     case FS_SEEK_START:
-        fs_file_table[fd].offset = offset;
+        file->offset = offset;
         break;
     
     case FS_SEEK_CUR:
-        fs_file_table[fd].offset += offset;
+        file->offset += offset;
         break;
     default:
         break;
@@ -422,18 +477,19 @@ int fs_read(int fd, void* buf, int size)
     }
 
     /* check if the file is open */
-    if(fd < 0 || fd >= FS_MAX_FILES || !HAS_FLAG(fs_file_table[fd].flags, FS_FILE_FLAG_READ)){
-        dbgprintf("File not open %d %d %d\n", fd, fs_file_table[fd].flags, FS_FILE_FLAG_READ);
+    struct file* file = __fs_file(fd);
+    if(file == NULL || !HAS_FLAG(file->flags, FS_FILE_FLAG_READ)){
+        dbgprintf("File not open for reading: %d\n", fd);
         return -2;
     }
 
     /* read the file */
-    int ret = fs_current->ops->read(fs_current, &fs_file_table[fd], buf, size);
+    int ret = fs_current->ops->read(fs_current, file, buf, size);
     if(ret <= 0){
         return -3;
     }
 
-    fs_file_table[fd].offset += size;
+    file->offset += size;
 
     dbgprintf("fs_read %d: read %d/%d\n", fd, ret, size);
 
@@ -451,13 +507,14 @@ int fs_write(int fd, void* buf, int size)
     }
 
     /* check if the file is open */
-    if(fd < 0 || fd >= FS_MAX_FILES || !(fs_file_table[fd].flags & FS_FILE_FLAG_WRITE)){
-        dbgprintf("File not open\n");
+    struct file* file = __fs_file(fd);
+    if(file == NULL || !(file->flags & FS_FILE_FLAG_WRITE)){
+        dbgprintf("File not open for writing: %d\n", fd);
         return -2;
     }
 
     /* write the file */
-    int ret = fs_current->ops->write(fs_current, &fs_file_table[fd], buf, size);
+    int ret = fs_current->ops->write(fs_current, file, buf, size);
     if(ret < 0){
         return -3;
     }

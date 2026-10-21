@@ -9,8 +9,12 @@
 /* The longest path, including its terminating 0. Paths are checked against it before the file system sees them. */
 #define FS_PATH_MAX 512
 
+/* Open files per process, as file descriptors. 0 to 2 are never used. */
+#define FS_MAX_PROCESS_FILES 32
+
 struct filesystem;
 struct file;
+struct pcb;
 
 /* file flags enum */
 typedef enum __fs_file_flags {
@@ -88,6 +92,7 @@ int fs_close(int fd);
 int fs_read(int fd, void* buf, int size);
 int fs_size(int fd);
 int fs_write(int fd, void* buf, int size);
+int fs_close_files_of(struct pcb* pcb);
 struct filesystem* fs_get();
 
 int fs_path_normalize(const char* path, char* out);
