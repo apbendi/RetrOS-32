@@ -143,14 +143,14 @@ int eval(struct vm* vm, int assembly)
                 twritef("exit(%d)\n", *vm->sp);
                 return *vm->sp;
             case OPEN:
-                vm->ax = ext_open((char*)vm->sp[1], 0);
+                vm->ax = fs_open((char*)vm->sp[1], FS_FILE_FLAG_READ);
                 break;
             case CLOS:
                 vm->ax = 0;
-                ext_close(*vm->sp);
+                fs_close(*vm->sp);
                 break;
             case READ:
-                vm->ax = ext_read(vm->sp[2], (char *)vm->sp[1], *vm->sp);
+                vm->ax = fs_read(vm->sp[2], (char *)vm->sp[1], *vm->sp);
                 break;
             case PRTF:
                 tmp = vm->sp + vm->pc[1];

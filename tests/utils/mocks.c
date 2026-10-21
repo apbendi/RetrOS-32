@@ -10,12 +10,8 @@
 
 #include <time.h>
 #include <sync.h>
+#include <rtc.h>
 #include "../include/mocks.h"
-
-#include <fs/ext.h>
-#include <fs/inode.h>
-#include <fs/superblock.h>
-#include <fs/directory.h>
 
 #define DEBUG 0
 #define DISKSIZE (32*1024*1024)

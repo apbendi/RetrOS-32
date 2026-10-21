@@ -27,7 +27,6 @@
 #include <bitmap.h>
 #include <net/socket.h>
 #include <net/dns.h>
-#include <fs/ext.h>
 #include <serial.h>
 #include <syscall_helper.h>
 #include <syscalls.h>

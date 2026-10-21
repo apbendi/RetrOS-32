@@ -23,7 +23,6 @@
 #include <windowmanager.h>
 #include <net/dns.h>
 #include <net/icmp.h>
-#include <fs/ext.h>
 
 #include <serial.h>
 
@@ -216,7 +215,7 @@ void xxd(int argc, char* argv[])
 		return;
 	}
 
-	inode_t inode = fs_open(argv[1], FS_FILE_FLAG_READ);
+	int inode = fs_open(argv[1], FS_FILE_FLAG_READ);
 	if(inode < 0){
 		twritef("File %s not found.\n", argv[1]);
 		return;
@@ -245,7 +244,7 @@ void sh(int argc, char* argv[])
 		return;
 	}
 
-	inode_t inode = fs_open(argv[1], FS_FILE_FLAG_READ);
+	int inode = fs_open(argv[1], FS_FILE_FLAG_READ);
 	if(inode <= 0){
 		twritef("File %s not found.\n", argv[1]);
 		return;

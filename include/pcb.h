@@ -7,7 +7,6 @@ struct pcb;
 #include <sync.h>
 #include <gfx/window.h>
 #include <memory.h>
-#include <fs/inode.h>
 #include <errors.h>
 #include <user.h>
 
@@ -97,8 +96,6 @@ struct pcb {
 
     struct user* user;
 
-    inode_t current_directory;
-    
     struct virtual_allocations* allocations;
     int used_memory;
 

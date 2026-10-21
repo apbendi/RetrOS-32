@@ -14,7 +14,6 @@
 #include <serial.h>
 #include <memory.h>
 #include <scheduler.h>
-#include <fs/ext.h>
 #include <assert.h>
 #include <kthreads.h>
 #include <kutils.h>
@@ -146,7 +145,6 @@ static struct pcb* __pcb_get_free()
 			pcb->is_process = 0;
 			pcb->args = 0;
 			pcb->argv = NULL;
-			pcb->current_directory = 0;
 			pcb->yields = 0;
 			pcb->in_kernel = false;
 
