@@ -2,9 +2,8 @@
  * @file fstool.c
  * @brief Runs RetrOS's own file system code on a disk image file, one operation per run.
  *
- * It links the objects the kernel is built from, bin/fs.o and a FAT layer, with host.c's stand-ins for the kernel
- * functions they call. bin/fstool has the old FAT16 code (bin/fat16.o and bin/fat16_iface.o), and bin/fstool-fatfs
- * has FatFs (bin/fatfs.o). tests/fs/run.sh uses them to check RetrOS against mtools and fsck.fat.
+ * It links the objects the kernel is built from, bin/fs.o (the file layer) and bin/fatfs.o (FatFs), with host.c's
+ * stand-ins for the kernel functions they call. tests/fs/run.sh uses it to check RetrOS against mtools and fsck.fat.
  *
  *   fstool IMAGE format [RESERVED]       format the image with fs_format, as login does for the virtual disk
  *   fstool IMAGE tree                    every directory and file: "D /PATH" and "F /PATH SIZE"

@@ -2,109 +2,119 @@
  * @file build.c
  * @author Joe Bayer (joexbayer)
  * @brief Build RetrOS images.
- * @version 0.1
+ * @version 0.2
  * @date 2024-01-10
- * 
+ *
  * @copyright Copyright (c) 2024
- * 
+ *
+ * The image is a FAT16 volume with no partition table, made by mkfs.fat, with the bootloader and the kernel in its
+ * reserved sectors: the bootloader in sectors 0 to 3, around the boot sector's FAT fields, and the kernel from
+ * sector 4. The bootloader reads the kernel's size from the reserved sector count (boot sector offset 14), so that
+ * count is exactly the kernel's sectors plus 4. make img's sync step then copies rootfs/ onto the volume.
  */
-
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <sync.h>
-
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-
-#include <time.h>
-#include <sync.h>
-
-#include <fs/fat16.h>
-
-#include "../tests/include/mocks.h"
 
 #define BLOCK_SIZE 512
-#define BOOTBLOCK_SIZE BLOCK_SIZE*4
+#define BOOTBLOCK_BLOCKS 4
+#define BOOTBLOCK_SIZE (BLOCK_SIZE * BOOTBLOCK_BLOCKS)
 
-FILE* filesystem = NULL;
-#define DEBUG 1
+/* The boot sector's FAT fields, from the OEM name to the end of the FAT16 extended fields */
+#define BPB_START 3
+#define BPB_END 62
+
+/* The partition table in the boot sector, which the bootloader leaves room for */
+#define PARTITION_TABLE 446
+#define PARTITION_ENTRY_SIZE 16
+#define PARTITION_ACTIVE 0x80
+#define PARTITION_FAT16_LBA 0x0E
 
 /* TODO: as argv */
 static const int IMG_SIZE = 32*1024*1024;
 
-int build_load_bootloader()
+static int read_file(const char* path, char** data, long* size)
 {
-    char bootblock[BOOTBLOCK_SIZE];
-    FILE* bootloader = fopen("bin/bootblock", "r");
-    if(bootloader == NULL){
-        return -1;
-    }
+    FILE* file = fopen(path, "rb");
+    if(file == NULL) return -1;
 
-    int size = fread(bootblock, 1, BOOTBLOCK_SIZE, bootloader);
-    if(size != BOOTBLOCK_SIZE){
+    fseek(file, 0, SEEK_END);
+    *size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    /* Whole blocks, zeroed, so a last partial block is padded with zeros */
+    long blocks = (*size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    *data = calloc(blocks > 0 ? blocks : 1, BLOCK_SIZE);
+    if(*data == NULL || (long)fread(*data, 1, *size, file) != *size){
+        fclose(file);
         return -2;
     }
 
-    /* write 4 bootblock blocks */
-    for(int i = 0; i < 4; i++){
-        write_block(bootblock + (i*512), i);
-    }
-
-    fclose(bootloader);
+    fclose(file);
     return 0;
 }
 
-int build_load_kernel()
+/* Formats image with mkfs.fat, reserving reserved sectors, or mkfs.fat's default if reserved is 0 */
+static int format(const char* image, int reserved)
 {
-    int kernel_size;
-    int kernel_block_count = 0;
-    
-    FILE* kernel = fopen("bin/kernelout", "r");
-    if(kernel == NULL){
+    char command[256];
+    char reserved_opt[32] = "";
+
+    if(reserved > 0) snprintf(reserved_opt, sizeof(reserved_opt), "-R %d", reserved);
+    remove(image);
+    snprintf(command, sizeof(command), "mkfs.fat -F 16 %s -n RETROS32 -C %s %d >/dev/null", reserved_opt, image, IMG_SIZE / 1024);
+
+    return system(command) == 0 ? 0 : -1;
+}
+
+/**
+ * Writes the bootloader into sectors 0 to 3, keeping the FAT fields mkfs.fat wrote into the boot sector, and a
+ * bootable partition entry covering the disk, as some BIOSes want to see before they boot from it.
+ */
+static int write_bootloader(FILE* image)
+{
+    char* bootblock;
+    long size;
+    if(read_file("bin/bootblock", &bootblock, &size) < 0 || size != BOOTBLOCK_SIZE){
         return -1;
     }
 
-    fseek(kernel, 0, SEEK_END);
-    kernel_size = ftell(kernel);
-    /* Round up, so the last partial block is written too. Without it, the bootloader reads the start of the FAT in its place. */
-    kernel_block_count = (kernel_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    fseek(kernel, 0, SEEK_SET);
-    printf("Kernel size: %d\n", kernel_size);
-
-    /* Whole blocks, zeroed, so the last block is padded with zeros */
-    char* kernel_data = calloc(kernel_block_count, BLOCK_SIZE);
-    if(kernel_data == NULL){
+    unsigned char boot_sector[BLOCK_SIZE];
+    fseek(image, 0, SEEK_SET);
+    if(fread(boot_sector, 1, BLOCK_SIZE, image) != BLOCK_SIZE){
+        free(bootblock);
         return -2;
     }
 
-    int size = fread(kernel_data, 1, kernel_size, kernel);
-    if(size != kernel_size){
-        return -3;
-    }
+    memcpy(bootblock + BPB_START, boot_sector + BPB_START, BPB_END - BPB_START);
 
-    for(int i = 0; i < kernel_block_count; i++){
-        write_block(kernel_data + (i*512), i+4);
-    }
+    unsigned char* entry = (unsigned char*)bootblock + PARTITION_TABLE;
+    uint32_t sectors = IMG_SIZE / BLOCK_SIZE;
+    memset(entry, 0, 4 * PARTITION_ENTRY_SIZE);
+    entry[0] = PARTITION_ACTIVE;
+    entry[4] = PARTITION_FAT16_LBA;
+    /* LBA start 0, then the sector count, both little-endian */
+    memcpy(entry + 12, &sectors, sizeof(sectors));
 
-    fclose(kernel);
-    free(kernel_data);
-
-    return kernel_block_count;
+    fseek(image, 0, SEEK_SET);
+    size_t written = fwrite(bootblock, 1, BOOTBLOCK_SIZE, image);
+    free(bootblock);
+    return written == BOOTBLOCK_SIZE ? 0 : -3;
 }
 
-#include <stdio.h>
-#include <string.h>
+static int write_kernel(FILE* image, char* kernel, long size)
+{
+    long blocks = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    fseek(image, BOOTBLOCK_SIZE, SEEK_SET);
+    return (long)fwrite(kernel, BLOCK_SIZE, blocks, image) == blocks ? 0 : -1;
+}
 
 /**
  * @brief build - Create RetrOS images
  *
- * Usage: ./build [-opts] <kernel> 
+ * Usage: ./build [-opts]
  * Options
- *  -k Specify the kernel (Default: kernelnout)
- *  -b Specify bootloader (Default: bootblock)
  *  -d Disk only (no kernel or bootloader)
  *  -r Build release version
  *
@@ -114,23 +124,16 @@ int build_load_kernel()
  */
 int main(int argc, char const *argv[]) {
 
-    char* outname;
+    const char* outname;
     int disk_only = 0;
     int release = 0;
-    
-    int kernel_block_count = 0;
-    int ret;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-k") == 0 && i + 1 < argc) {
-            i++;
-        } else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc) {
-            i++;
-        } else if (strcmp(argv[i], "-d") == 0) {
+        if (strcmp(argv[i], "-d") == 0) {
             disk_only = 1;
         } else if (strcmp(argv[i], "-r") == 0) {
             release = 1;
-        } 
+        }
     }
 
     if(release){
@@ -142,51 +145,50 @@ int main(int argc, char const *argv[]) {
     if(disk_only){
         outname = "RetrOS-32-disk.img";
         printf("Building disk image only.\n");
-    } else {
-        printf("Building disk image with kernel and bootloader.\n");
+        if(format(outname, 0) < 0){
+            printf("mkfs.fat failed.\n");
+            return -1;
+        }
+        return 0;
     }
 
-    filesystem = fopen(outname, "w+");
-    if(filesystem == NULL){
-        printf("Unable to open filesystem.");
+    printf("Building disk image with kernel and bootloader.\n");
+
+    char* kernel;
+    long kernel_size;
+    if(read_file("bin/kernelout", &kernel, &kernel_size) < 0){
+        printf("Unable to load kernel.\n");
+        return -1;
+    }
+    int kernel_blocks = (kernel_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    printf("Kernel size: %ld\n", kernel_size);
+
+    /* The bootloader reads the kernel's size from the reserved sector count */
+    if(format(outname, kernel_blocks + BOOTBLOCK_BLOCKS) < 0){
+        printf("mkfs.fat failed.\n");
         return -1;
     }
 
-    if(!disk_only){
-        ret = build_load_bootloader();
-        if(ret < 0){
-            printf("Unable to load bootloader: %d\n", ret);
-            return -1;
-        }
-
-        kernel_block_count = build_load_kernel();
-        if(kernel_block_count <= 0){
-            printf("Unable to load kernel: %d\n", kernel_block_count);
-            return -1;
-        }
-    }
-
-    /* We want to reserve blocks for the kernel before the filesystem starts. */
-
-    fat16_format("VOLUME1", kernel_block_count+4);
-    if(fat16_load() < 0){
-        printf("Unable to initialize FAT16 filesystem.\n");
+    FILE* image = fopen(outname, "r+b");
+    if(image == NULL){
+        printf("Unable to open %s.\n", outname);
         return -1;
     }
 
+    int ret = write_bootloader(image);
+    if(ret < 0){
+        printf("Unable to write bootloader: %d\n", ret);
+        return -1;
+    }
 
-    fseek(filesystem, 0, SEEK_END);
-    int size2 = ftell(filesystem);
-    printf("Size of filesystem: %d\n", size2);
-    /* pad to 32mb */
-    if(size2 < IMG_SIZE){
-        char* buf = malloc(IMG_SIZE - size2);
-        memset(buf, 0, IMG_SIZE - size2);
-        fwrite(buf, IMG_SIZE - size2, 1, filesystem);
-        free(buf);
+    if(write_kernel(image, kernel, kernel_size) < 0){
+        printf("Unable to write kernel.\n");
+        return -1;
+    }
 
-        printf("Padded filesystem to 32mb.\n");
-    }   
+    fclose(image);
+    free(kernel);
+    printf("Formatted %s with mkfs.fat: %d reserved sectors for the bootloader and kernel.\n", outname, kernel_blocks + BOOTBLOCK_BLOCKS);
 
     return 0;
 }

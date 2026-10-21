@@ -21,6 +21,7 @@ check_and_install "gcc-multilib"
 check_and_install "grub2"
 check_and_install "xorriso"
 check_and_install "xxd"
+check_and_install "dosfstools"
 
 echo "All dependencies are installed."
 

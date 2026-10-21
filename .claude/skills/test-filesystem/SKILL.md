@@ -6,7 +6,7 @@ description: Use when changing RetrOS-32's file system code (fs/, the FAT16 laye
 # Testing the file system against mtools and fsck.fat
 
 `tests/fs/` runs RetrOS's own FAT16 code on disk image files and compares what it does with mtools, the standard FAT tools, and `fsck.fat`.
-- **It tests what ships:** `fstool` links `bin/fat16.o` and `bin/fs.o`, the objects the kernel links. `tests/fs/host.c` stands in for the kernel functions they call.
+- **It tests what ships:** `fstool` links `bin/fs.o` (the file layer) and `bin/fatfs.o` (FatFs and RetrOS's code around it), the objects the kernel links. `tests/fs/host.c` stands in for the kernel functions they call.
 - **It runs in the Docker builder,** which has mtools, `fsck.fat`, `mkfs.fat` and `gcc -m32`.
 - **A full run takes about 30 seconds.** It needs no QEMU and no OK from the human.
 
@@ -35,7 +35,7 @@ Each line of output is a case's name, then `pass`, or `fail:` and the checks tha
 | `same` | mtools reads R and M differently: a path, a size or a file's content |
 | `reads` | RetrOS reads R differently from how mtools reads M |
 | `tool` | RetrOS's code read or wrote outside the disk, or wrote past the end of a kernel allocation |
-| `lock` | RetrOS released a lock it didn't hold (#38). It's kept apart because every new cluster does it today |
+| `lock` | RetrOS released a lock it didn't hold. It's kept apart because the old FAT16 code did it for every new cluster (#38) |
 | `op` | a RetrOS operation failed, or succeeded when it should have failed |
 | `mount` | RetrOS didn't mount the image |
 | `path`, `setup`, `ref` | case-specific checks. `ref` means mtools itself failed, which is a harness problem |
@@ -118,7 +118,7 @@ fsck.fat -n /tmp/d.img
 - **Long names:**
   - `MTOOLS_NO_VFAT=1` stops mtools *writing* long names, but `mdir` still *lists* them. So `run.sh` takes short names from `mdir`'s first 12 columns.
   - In mtools 4.0.32, `mshortname` drops the dot before a one-letter extension (`add.c` gives `ADDC`), so it can't supply them.
-- **`fsck.fat` exits 1 on every image RetrOS formats,** because of the volume-label mismatch (`format.clean`). So the harness compares fsck's findings before and after, never its exit status.
-- **`fsck.fat` gives up early on some damage,** such as the 3 MB image's "only space for N FAT entries". There, finding nothing new proves little. `limits.full-disk` relies on `tool` instead.
+- **The harness compares `fsck.fat`'s findings before and after a case, never its exit status.** The old FAT16 code's images always had findings (#101), and a case can start from a damaged image.
+- **`fsck.fat` gives up early on some damage,** such as a FAT too small for the volume's clusters (#99). There, finding nothing new proves little, so a case like `limits.full-disk` checks `tool` too.
 - **The builder has Linux's `vfat` driver but not `msdos`,** so mounting can't show short names either.
 - **There's no Python in the builder,** which is why the runner is bash.
