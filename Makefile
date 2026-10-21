@@ -35,7 +35,7 @@ KERNEL_SUPPORT := $(addprefix $(BUILD_DIR)/,kcrt0.o multiboot.o)
 ALL_OBJS := $(BOOTOBJ) $(KERNELOBJ) $(LIBOBJ) $(KERNEL_SUPPORT)
 DEPS := $(ALL_OBJS:.o=.d)
 
-.PHONY: all iso compile kernel net_objects fs_objects multiboot_kernel bootblock symbols apps tools tests build img filesystem create_fs bare re_apps clean test bindir grub grub_fix qemu qemu-headless qemu_kernel docker docker-rebuild reset sync rsync mount run ls git vdi
+.PHONY: all iso compile kernel net_objects fs_objects multiboot_kernel bootblock symbols apps tools tests build img filesystem create_fs bare re_apps clean test bindir grub grub_fix qemu qemu-headless qemu_kernel docker docker-rebuild reset sync rsync mount run ls vdi
 
 all: img
 
@@ -178,9 +178,6 @@ run: img qemu
 
 ls:
 	find -name '*.[ch]' | xargs wc -l
-
-git:
-	git submodule update --init --recursive
 
 # Build rules
 -include $(DEPS)

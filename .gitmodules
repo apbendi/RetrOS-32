@@ -1,3 +1,0 @@
-[submodule "apps/C-Compiler"]
-	path = apps/C-Compiler
-	url = https://github.com/joexbayer/C-Compiler
