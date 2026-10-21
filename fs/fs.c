@@ -50,6 +50,21 @@ static struct file** __fs_files_of(struct pcb* pcb)
     return fs_process_files[pcb->pid];
 }
 
+/**
+ * Each process's current directory, by PID, as fs_path_normalize writes it. Empty means the root directory.
+ * fs_boot_cwd is the one used before any process runs, and by the file system harness.
+ */
+static char fs_cwd[MAX_NUM_OF_PCBS][FS_PATH_MAX];
+static char fs_boot_cwd[FS_PATH_MAX];
+
+static char* __fs_cwd_of(struct pcb* pcb)
+{
+    if(pcb == NULL) return fs_boot_cwd;
+    if(pcb->is_process == PCB_THREAD && pcb->parent != NULL) pcb = pcb->parent;
+    if(pcb->pid < 0 || pcb->pid >= MAX_NUM_OF_PCBS) return fs_boot_cwd;
+    return fs_cwd[pcb->pid];
+}
+
 /* The current process's open file for fd, or NULL */
 static struct file* __fs_file(int fd)
 {
@@ -69,13 +84,23 @@ static struct filesystem* fs_current = NULL;
 /**
  * Writes path into out, which holds FS_PATH_MAX bytes, in canonical form: absolute, without empty or "." parts,
  * with each ".." removing the part before it, and without a trailing slash. ".." at the root stays at the root.
- * A path that doesn't start with "/" is taken from the root directory, as every lookup used to.
+ * A path that doesn't start with "/" starts from the current process's current directory.
  * @return the length, or -ERROR_INVALID_ARGUMENTS if the result wouldn't fit
  */
 int fs_path_normalize(const char* path, char* out)
 {
     int len = 1;
     out[0] = '/';
+
+    /* The current directory is stored normalized, so it can be the start of out as it is */
+    if(path[0] != '/'){
+        const char* cwd = __fs_cwd_of($process->current);
+        int cwd_len = strlen(cwd);
+        if(cwd_len > 0 && cwd_len < FS_PATH_MAX){
+            memcpy(out, cwd, cwd_len);
+            len = cwd_len;
+        }
+    }
 
     while(*path){
         while(*path == '/') path++;
@@ -531,6 +556,49 @@ int fs_rename(const char* path, const char* new_path)
 {
     if(fs_current == NULL) return -ERROR_NO_FILESYSTEM;
     return fs_current->ops->rename(fs_current, path, new_path);
+}
+
+/* Changes the current process's current directory to path, which must be a directory */
+int fs_chdir(const char* path)
+{
+    if(fs_current == NULL) return -ERROR_NO_FILESYSTEM;
+    if(path == NULL) return -ERROR_NULL_POINTER;
+
+    char normal[FS_PATH_MAX];
+    if(fs_path_normalize(path, normal) < 0) return -ERROR_INVALID_ARGUMENTS;
+
+    struct fs_dirent entry;
+    int ret = fs_current->ops->stat(fs_current, normal, &entry);
+    if(ret < 0) return ret;
+    if(!(entry.attributes & FS_ATTR_DIRECTORY)) return -ERROR_NOT_DIRECTORY;
+
+    memcpy(__fs_cwd_of($process->current), normal, strlen(normal) + 1);
+    return 0;
+}
+
+/* Writes the current process's current directory into buf, which holds size bytes. @return its length. */
+int fs_getcwd(char* buf, int size)
+{
+    if(buf == NULL) return -ERROR_NULL_POINTER;
+
+    const char* cwd = __fs_cwd_of($process->current);
+    if(cwd[0] == 0) cwd = "/";
+
+    int len = strlen(cwd);
+    if(len + 1 > size) return -ERROR_INVALID_ARGUMENTS;
+    memcpy(buf, cwd, len + 1);
+    return len;
+}
+
+/* Starts a new process or kernel thread in its creator's current directory. A thread shares its process's. */
+void fs_inherit_cwd(struct pcb* child, struct pcb* creator)
+{
+    if(child == NULL || child->is_process == PCB_THREAD) return;
+
+    char* to = __fs_cwd_of(child);
+    const char* from = __fs_cwd_of(creator);
+    if(to == from) return;
+    memcpy(to, from, strlen(from) + 1);
 }
 
 int fs_read(int fd, void* buf, int size)

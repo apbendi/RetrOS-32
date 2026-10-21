@@ -167,6 +167,16 @@ int rename(const char* path, const char* new_path)
     return invoke_syscall(SYSCALL_RENAME, (int)path, (int)new_path, 0);
 }
 
+int chdir(const char* path)
+{
+    return invoke_syscall(SYSCALL_CHDIR, (int)path, 0, 0);
+}
+
+int getcwd(char* buf, int size)
+{
+    return invoke_syscall(SYSCALL_GETCWD, (int)buf, size, 0);
+}
+
 int system(const char* command)
 {
     return invoke_syscall(SYSCALL_SYSTEM, (int)command, 0, 0);

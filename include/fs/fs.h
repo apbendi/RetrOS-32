@@ -132,6 +132,12 @@ int fs_unlink(const char* path);
 int fs_rmdir(const char* path);
 int fs_rename(const char* path, const char* new_path);
 
+/* The current directory, which relative paths start from. Each process has its own, and a thread uses its
+ * process's. A new process or kernel thread starts in its creator's (fs_inherit_cwd). */
+int fs_chdir(const char* path);
+int fs_getcwd(char* buf, int size);
+void fs_inherit_cwd(struct pcb* child, struct pcb* creator);
+
 int fs_path_normalize(const char* path, char* out);
 
 /* Mount the disk's file system, or format the disk, with whichever FAT code the kernel is built with */

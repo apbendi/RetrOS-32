@@ -50,3 +50,5 @@ ops.remove-directory pass
 ops.rmdir-not-empty pass
 ops.mkdir-exists pass
 ops.readdir-long-names pass
+paths.relative pass
+paths.chdir-refused pass

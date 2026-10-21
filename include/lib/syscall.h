@@ -34,6 +34,9 @@ int mkdir(const char* path);
 int unlink(const char* path);
 int rmdir(const char* path);
 int rename(const char* path, const char* new_path);
+/* The current directory, which relative paths start from. A program starts in the one it was started from. */
+int chdir(const char* path);
+int getcwd(char* buf, int size);
 
 void* zmalloc(int size);
 void* malloc(int size);
