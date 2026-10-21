@@ -53,7 +53,7 @@ $Q stop
 - **`log` and `wait` start from your last action:** `type`, `key`, `shell`, `focus`, `click`, `move` or `drag`.
   - So a `wait` can't match a line from before the command you just ran.
   - Use `--all` for everything since boot.
-  - `log --raw` keeps the lines `log` normally hides: window focus changes, mouse events and FAT16's field-by-field dumps.
+  - `log --raw` keeps the lines `log` normally hides: window focus changes, mouse events and the line logged for every file opened.
   - `log --grep RE` filters.
 - **Mouse coordinates are screen pixels,** and they're exact.
   - QEMU's PS/2 mouse only moves relatively, so every mouse command first pushes the cursor into the top-left corner, then moves from there.

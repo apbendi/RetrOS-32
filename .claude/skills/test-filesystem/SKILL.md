@@ -1,11 +1,11 @@
 ---
 name: test-filesystem
-description: Use when changing RetrOS-32's file system code (fs/, the FAT16 layer and fs.c) or investigating a file system bug, to check RetrOS against mtools and fsck.fat on disk images, without booting.
+description: Use when changing RetrOS-32's file system code (fs/: fs.c and the FatFs layer) or investigating a file system bug, to check RetrOS against mtools and fsck.fat on disk images, without booting.
 ---
 
 # Testing the file system against mtools and fsck.fat
 
-`tests/fs/` runs RetrOS's own FAT16 code on disk image files and compares what it does with mtools, the standard FAT tools, and `fsck.fat`.
+`tests/fs/` runs RetrOS's own file system code on disk image files and compares what it does with mtools, the standard FAT tools, and `fsck.fat`. AGENTS.md's "File system" section describes the code.
 - **It tests what ships:** `fstool` links `bin/fs.o` (the file layer) and `bin/fatfs.o` (FatFs and RetrOS's code around it), the objects the kernel links. `tests/fs/host.c` stands in for the kernel functions they call.
 - **It runs in the Docker builder,** which has mtools, `fsck.fat`, `mkfs.fat` and `gcc -m32`.
 - **A full run takes about 30 seconds.** It needs no QEMU and no OK from the human.
@@ -20,6 +20,7 @@ docker compose run --rm --entrypoint tests/fs/run.sh builder -v           # with
 
 - **It rebuilds `fs/` and `fstool` first,** so it always tests the current source.
 - **Some cases use `RetrOS-32-debug.img`:** `read.real-image`, `read.dotdot` and `write.real-image`. They fail with `setup` if there's no image. Run `docker compose up` first.
+- **What it covers:** formatting; reading and writing whole files, in pieces, at an offset, appending and truncating; full directories and disks; delete, mkdir, rmdir, rename and moves; long names with spaces; relative paths; and disks made other ways: partitioned, FAT12 (the virtual disk's size), and with a 16-entry root directory. `fsck.fat` also reports the two FAT copies differing, so every case checks they stay the same.
 
 ## Reading the results
 
@@ -82,12 +83,16 @@ add write.grow "RetrOS replaces a file with a longer one" write_grow
   | `small` | 3 MB, formatted by RetrOS |
   | `virtual` | 1 MB, formatted by RetrOS, like `login`'s virtual disk |
   | `standard` | `mkfs.fat` defaults |
-  | `standard-oem` | `mkfs.fat` defaults, with RetrOS's name in the boot sector |
+  | `standard-oem` | `mkfs.fat` defaults, with RetrOS's name in the boot sector, which the old FAT16 code needed |
+  | `root16` | `mkfs.fat` with room for 16 entries in the root directory |
+  | `partitioned` | an MBR partition table, with one FAT16 partition from 1 MB |
 
 - **Setting both up before RetrOS acts:** `seed MTOOLS-COMMAND ARGS`, e.g. `seed mmd ::/SUB`. Then call `ready`, which records fsck's starting findings.
 - **Making the same change to both:**
-  - `put PATH N`, `put_chunks PATH N CHUNK`, `put_at PATH OFFSET N`, `create PATH`;
+  - `put PATH N`, `put_chunks PATH N CHUNK`, `put_at PATH OFFSET N`, `append PATH N`, `create PATH`;
   - for anything else, `rfs ARGS` on R and `ref MTOOLS-COMMAND ARGS` on M.
+  - **Long names:** mtools writes 8.3 names only, unless the command sets `MTOOLS_NO_VFAT=0` (see below).
+  - **Relative paths:** `FSTOOL_CWD=/SUB rfs write a.txt` runs fstool with `/SUB` as its current directory.
 - **An operation RetrOS should refuse:** `refused ARGS`.
 - **Checking:** `check` runs `check_fsck`, `check_same` and `check_reads`. Call them one by one when a case needs only some.
 - **Test data:** `data N TAG` makes an N-byte file that never repeats, so a misplaced piece shows.
@@ -114,7 +119,7 @@ fsck.fat -n /tmp/d.img
 
 ## Things that have tripped this up
 
-- **mtools refuses RetrOS images** without `MTOOLS_SKIP_CHECK=1`, because RetrOS writes 0 heads and sectors per track. `run.sh` sets it.
+- **`run.sh` sets `MTOOLS_SKIP_CHECK=1`.** The old FAT16 code wrote 0 heads and sectors per track, which mtools refuses without it. FatFs's and `mkfs.fat`'s images don't need it, but a damaged one might.
 - **Long names:**
   - `MTOOLS_NO_VFAT=1` stops mtools *writing* long names, but `mdir` still *lists* them, at the end of an entry's line. `run.sh` takes the long name from there, or the 8.3 name from `mdir`'s first 12 columns when there's none, to match what RetrOS's `readdir` gives.
   - A case that needs mtools to write a long name, to match one RetrOS writes, sets `MTOOLS_NO_VFAT=0` for that command, e.g. `MTOOLS_NO_VFAT=0 ref mcopy -o "$file" "::/My Projects/Long File Name.txt"`.

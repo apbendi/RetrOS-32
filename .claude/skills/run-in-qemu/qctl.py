@@ -60,9 +60,10 @@ KEYS = {" ": "spc", "\n": "ret", "\t": "tab", "-": "minus", "=": "equal", "[": "
         '"': "shift-apostrophe", "~": "shift-grave_accent", "<": "shift-comma",
         ">": "shift-dot", "?": "shift-slash"}
 
-# Serial lines left out of `log` unless --raw: focus changes, mouse events and FAT16's per-field dumps
+# Serial lines left out of `log` unless --raw: focus changes, mouse events and the line fs_open logs for every
+# file it opens. Its failures, which add a reason after the path, are kept.
 NOISE = re.compile(r"Pushing window .* to (back|front)|Removing (front )?window|Switching focus"
-                   r"|\(\): Mouse event|^fat16_\w+\(\):\s{2,}|^fat16_read\(\): Entry:|^fs_open\(\): fs_open:")
+                   r"|\(\): Mouse event|^fs_open\(\): fs_open: [^:]*$")
 
 # The mouse cursor's click point is this far from its top-left corner (VESA_CURSOR_HOTSPOT_X/Y)
 HOTSPOT = (1, 2)

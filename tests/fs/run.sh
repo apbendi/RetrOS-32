@@ -24,7 +24,7 @@ ROOT=$PWD
 HERE=$ROOT/tests/fs
 OUT=$HERE/out
 WORK=/tmp/fstest
-export MTOOLS_SKIP_CHECK=1   # RetrOS writes 0 heads and sectors per track, which mtools otherwise refuses
+export MTOOLS_SKIP_CHECK=1   # The old FAT16 code wrote 0 heads and sectors per track, which mtools refuses; a damaged image might too
 export MTOOLS_NO_VFAT=1      # mtools writes 8.3 names only, which the cases expect. mdir still lists long names.
 
 FSTOOL=$HERE/bin/fstool
@@ -75,7 +75,7 @@ base_image() {
                 truncate -s 1M "$img" && "$FSTOOL" "$img" format 1 >/dev/null ;;
             standard)       # 32 MB FAT16 as other systems make it: 2 FATs, 2 KB clusters, 512 root entries
                 mkfs.fat -F 16 -C "$img" 32768 >/dev/null ;;
-            standard-oem)   # The same, with RetrOS's name in the boot sector, which RetrOS requires to mount
+            standard-oem)   # The same, with RetrOS's name in the boot sector, which the old FAT16 code required to mount
                 mkfs.fat -F 16 -C "$img" 32768 >/dev/null && printf 'RetrOS32' | dd of="$img" bs=1 seek=3 conv=notrunc status=none ;;
             *) return 1 ;;
         esac || return 1
