@@ -243,18 +243,19 @@ void* palloc(int size)
 
 	spin_lock(&memory_permanent_lock);
 
-	if(memory_permanent_start + size >= memory_permanent_end){
+	if(memory_permanent_start + size > memory_permanent_end){
 		spin_unlock(&memory_permanent_lock);
 		dbgprintf("[WARNING] Not enough permanent memory!\n");
 		return NULL;
 	}
 
-	uint32_t new = memory_permanent_start + size;
+	/* The start of the block. This used to return its end, so each caller used the next size bytes instead. */
+	void* block = (void*) memory_permanent_start;
 	memory_permanent_start += size;
 
 	spin_unlock(&memory_permanent_lock);
 
-	return (void*) new;
+	return block;
 }
 
 int pmemory_used()

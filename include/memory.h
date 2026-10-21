@@ -16,8 +16,15 @@ extern int kernel_size;
 #define KB(kb) (kb*1024)
 
 
-#define PERMANENT_KERNEL_MEMORY_START 0x100000
-#define PMEM_END_ADDRESS 	 0x200000
+/**
+ * Fixed sizes in how memory_map_init divides the memory between 1 MB and 16 MB, from what each region holds.
+ * Measured at 1024x768 with -m 32m:
+ * - Permanent memory holds the window server's wallpaper buffer (768 KB at 1024x768), the network card's
+ *   buffers and the kernel heap's bitmap: 834 KB in all.
+ * - The page-table pool holds the kernel's own page directory and tables, built once at boot: 6 pages.
+ */
+#define PERMANENT_MEMORY_SIZE   MB(1)
+#define VMEM_MANAGER_SIZE       KB(256)
 
 
 #define VMEM_STACK          0xEFFFFFF0

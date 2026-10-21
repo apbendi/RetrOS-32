@@ -206,8 +206,14 @@ Syscalls run with interrupts enabled, so they can be preempted.
 
 ## Kernel facts that have mattered
 
-- **The kernel heap is small, and `kalloc` panics when full.**
-  - It's 4 MB (`memory_map_init` only counts RAM below 16 MB; #11), first fit, in 256-byte blocks.
+- **How memory is divided:** `memory_map_init` (`kernel/memory.c`) divides the memory between 1 MB and 16 MB. With `-m 32m` that's 15 MB:
+  - **1–11 MB, the kernel heap (`kalloc`):** whatever the other regions leave, 10 MB (#11).
+  - **11–12 MB, permanent memory (`palloc`, never freed):** a fixed 1 MB. It holds the wallpaper buffer, the network card's buffers and the heap's bitmap, about 834 KB at 1024×768.
+  - **12–16 MB, pages:** a quarter of the memory. The first 256 KB is the page-table pool for the kernel's own tables (`vmem_manager`, 6 pages used); the rest is pages for processes (`vmem_default`: page tables, code, stacks, `malloc`).
+  - **The memory above 16 MB isn't used.** The kernel's 1:1 mapping ends at 16 MB, where process code is mapped (`VMEM_DATA`). #56 covers moving it and using all of memory.
+  - The sizes are in `include/memory.h`. The shell's `meminfo` shows each region's use.
+- **`kalloc` panics when the heap is full.**
+  - The heap is first fit, in 256-byte blocks.
   - `kalloc` panics with "Out of memory!" rather than returning NULL.
   - Use `kalloc_try` for large allocations that are allowed to fail.
   - Starting a program or thread uses `kalloc_try` for the load buffer, the kernel stack and the window buffer. Running out returns `-ERROR_ALLOC`, which `exec` and the Start menu report. Smaller allocations along the way still use `kalloc`. Keeping a reserve, so a launch can't take the last free memory, is #31.

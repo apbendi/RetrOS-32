@@ -222,7 +222,7 @@ def start(args):
     cmd = ["qemu-system-i386",
            "-device", "e1000,netdev=net0",
            "-netdev", f"user,id=net0,hostfwd=tcp::{HTTP_PORT}-:80",
-           "-m", "32m",
+           "-m", f"{args.mem}m",
            "-rtc", f"base={args.rtc}" if args.rtc else "base=localtime",
            "-drive", f"file={DISK},format=raw,index=0,media=disk",
            "-display", "none",
@@ -559,6 +559,7 @@ def main():
     s.add_argument("--res", default="1024", choices=list(RESOLUTION_KEYS))
     s.add_argument("--gdb", action="store_true", help="wait for a debugger before the BIOS runs")
     s.add_argument("--rtc", help="start the clock at this time, e.g. 2026-10-20T10:05:00")
+    s.add_argument("--mem", type=int, default=32, help="memory in MB, like make qemu's -m 32m")
     sub.add_parser("stop")
     sub.add_parser("status")
     s = sub.add_parser("pick"); s.add_argument("res", choices=list(RESOLUTION_KEYS))

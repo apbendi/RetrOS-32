@@ -1001,11 +1001,11 @@ int vmem_total_usage()
  */
 void vmem_init()
 {
-	/* first 1Mb is for virtual memory managment, this gives us 256 management pages */
+	/* The start of the region is the page-table pool, for the kernel's own page directory and tables (memory.h) */
 	VMEM_MANAGER_START 	= memory_map_get()->virtual_memory.from;
-	VMEM_MANAGER_END 	= memory_map_get()->virtual_memory.from + MB(1);
+	VMEM_MANAGER_END 	= memory_map_get()->virtual_memory.from + VMEM_MANAGER_SIZE;
 
-	VMEM_START_ADDRESS 	= memory_map_get()->virtual_memory.from + MB(1);
+	VMEM_START_ADDRESS 	= memory_map_get()->virtual_memory.from + VMEM_MANAGER_SIZE;
 	VMEM_END_ADDRESS 	= memory_map_get()->virtual_memory.to;
 
 	if(vmem_allocator_create(vmem_default, VMEM_START_ADDRESS, VMEM_END_ADDRESS) < 0){

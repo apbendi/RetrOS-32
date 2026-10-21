@@ -70,17 +70,18 @@ int memory_map_init(int total_memory, int extended_memory)
 	/* memory starts at 1MB */ 
 	uintptr_t start = MB(1);
 
-	int permanent = ALIGN((int)(total_memory * (float)1/8), 1024*1024);
-	int kernel = ALIGN((int)(total_memory * (float)2/8), 1024*1024);
-
-	/* Calculate the remaining memory */
-	int remaining_memory = total_memory - permanent - kernel;
-	int virtual = ALIGN_DOWN(remaining_memory, 4096);
-
-	if (permanent + kernel + virtual > total_memory) {
-		virtual = total_memory - permanent - kernel;
-		virtual = ALIGN_DOWN(virtual, 4096);
-	}
+	/**
+	 * Permanent memory gets a fixed size, from what it holds (memory.h).
+	 * Pages for processes, and the page-table pool inside that region, get a quarter, rounded up to 1 MB. With
+	 * -m 32m that's 4 MB: nine apps open at once used 148 of its 960 process pages.
+	 * The kernel heap gets the rest, since window buffers fill it first: 10 MB of the 15 MB with -m 32m (#11).
+	 *
+	 * extended_memory, the memory above 16 MB, isn't used: the kernel's 1:1 mapping can't reach past 16 MB,
+	 * where process code is mapped. #56 covers moving that and using all of memory.
+	 */
+	int permanent = PERMANENT_MEMORY_SIZE;
+	int virtual = ALIGN(total_memory / 4, MB(1));
+	int kernel = (total_memory - permanent - virtual) & ~PAGE_MASK;
 
 	kernel_memory_map = (struct memory_map) {
 		.kernel.from 			= start,
