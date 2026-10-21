@@ -17,8 +17,6 @@
 #include <fs/fs.h>
 #include <fs/fat16.h>
 #include <memory.h>
-#include <terminal.h>
-#include <timefmt.h>
 #include <kutils.h>
 #include <errors.h>
 #include <serial.h>
@@ -82,17 +80,6 @@ static void __fatfs_time(WORD date, WORD time, struct time* out)
     out->hour = time >> 11;
     out->minute = (time >> 5) & 0x3F;
     out->second = (time & 0x1F) * 2;
-}
-
-/* Spaces that pad text out to width characters, for lining up columns. The kernel's printf has no field widths. */
-static const char* __padding(const char* text, int width)
-{
-    static const char spaces[] = "                ";
-    int pad = width - strlen(text);
-
-    if(pad < 0) pad = 0;
-    if(pad > (int)sizeof(spaces) - 1) pad = sizeof(spaces) - 1;
-    return spaces + (sizeof(spaces) - 1 - pad);
 }
 
 /* --- Directories, as the old FAT16 code read them --------------------------------------------------------------- */
@@ -474,113 +461,6 @@ static int fatfs_readdir(struct filesystem* fs, struct file* file, struct fs_dir
     return 1;
 }
 
-/* The shell's list command: one line per entry, with its size, date, time and name */
-static int fatfs_list(struct filesystem* fs, const char* path, char* buf, int size)
-{
-    FS_VALIDATE(fs);
-
-    DIR dir;
-    FILINFO info;
-    int entries = 0;
-
-    if(f_opendir(&dir, path) != FR_OK) return -ERROR_FILE_NOT_FOUND;
-
-    /* The time is right-aligned, so 12-hour times line up */
-    twritef("Size    Date%s %sTime  Name\n", __padding("Date", TIME_FORMAT_NUMERIC_DATE_MAX), __padding("Time", TIME_FORMAT_TIME_MAX));
-    while(f_readdir(&dir, &info) == FR_OK && info.fname[0] != 0){
-        char date[TIME_FORMAT_DATE_MAX + 1] = "";
-        char time[TIME_FORMAT_TIME_MAX + 1] = "";
-        if(info.fdate != 0){
-            struct time written;
-            __fatfs_time(info.fdate, info.ftime, &written);
-            time_format_date(date, sizeof(date), &written, TIME_DATE_NUMERIC);
-            time_format_time(time, sizeof(time), &written, false);
-        }
-
-        struct unit size_unit = calculate_size_unit(info.fsize);
-
-        twritef("%p%s %s%s %s%s  %s%s\n",
-            size_unit.size,
-            size_unit.unit,
-            date, __padding(date, TIME_FORMAT_NUMERIC_DATE_MAX),
-            __padding(time, TIME_FORMAT_TIME_MAX), time,
-            info.fname,
-            info.fattrib & AM_DIR ? "/" : ""
-        );
-        entries++;
-    }
-    f_closedir(&dir);
-
-    twritef("%d directory entries.\n", entries);
-    return 0;
-}
-
-static int __fatfs_lower(int c)
-{
-    return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
-}
-
-/* Whether needle appears in name, ignoring case, as FAT does */
-static int __fatfs_contains(const char* name, const char* needle)
-{
-    for(int i = 0; name[i] != 0; i++){
-        int j = 0;
-        while(needle[j] != 0 && __fatfs_lower(name[i + j]) == __fatfs_lower(needle[j])) j++;
-        if(needle[j] == 0) return 1;
-    }
-    return needle[0] == 0;
-}
-
-#define FATFS_FIND_DEPTH 16
-
-/* One level of find. Its state is on the heap: a kernel stack doesn't have room for 16 of them. */
-struct fatfs_find_level {
-    DIR dir;
-    FILINFO info;
-    char child[FS_PATH_MAX];
-};
-
-static void __fatfs_find(const char* path, const char* needle, int depth)
-{
-    struct fatfs_find_level* level = kalloc_try(sizeof(struct fatfs_find_level));
-    if(level == NULL) return;
-
-    if(f_opendir(&level->dir, path) == FR_OK){
-        int root = __fatfs_is_root(path);
-        while(f_readdir(&level->dir, &level->info) == FR_OK && level->info.fname[0] != 0){
-            int is_directory = level->info.fattrib & AM_DIR;
-            int path_len = strlen(path);
-            int name_len = strlen(level->info.fname);
-            if(path_len + 1 + name_len + 1 > FS_PATH_MAX) continue;
-
-            memcpy(level->child, path, path_len);
-            int len = path_len;
-            if(!root) level->child[len++] = '/';
-            memcpy(level->child + len, level->info.fname, name_len + 1);
-
-            if(__fatfs_contains(level->info.fname, needle)){
-                twritef("%s%s\n", level->child, is_directory ? "/" : "");
-            }
-            if(is_directory && depth < FATFS_FIND_DEPTH){
-                __fatfs_find(level->child, needle, depth + 1);
-            }
-        }
-        f_closedir(&level->dir);
-    }
-
-    kfree(level);
-}
-
-/* The shell's find command: every path under path whose name contains needle, ignoring case */
-static int fatfs_find(struct filesystem* fs, char* path, const char* needle)
-{
-    FS_VALIDATE(fs);
-    if(needle == NULL) return -ERROR_INVALID_ARGUMENTS;
-
-    __fatfs_find(path, needle, 0);
-    return 0;
-}
-
 static struct filesystem_ops fatfs_ops = {
     .write = fatfs_write,
     .read = fatfs_read,
@@ -591,8 +471,6 @@ static struct filesystem_ops fatfs_ops = {
     .rmdir = fatfs_rmdir,
     .rename = fatfs_rename,
     .stat = fatfs_stat,
-    .list = fatfs_list,
-    .find = fatfs_find,
     .readdir = fatfs_readdir
 };
 

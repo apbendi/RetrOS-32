@@ -258,32 +258,6 @@ char* error_get_string(int err)
     return "error";
 }
 
-/* Matches include/kutils.h. Only used for the list command's output, which fstool doesn't show. */
-struct unit {
-    char* unit;
-    int size;
-};
-
-struct unit calculate_size_unit(int bytes)
-{
-    struct unit u = { "b", bytes };
-    return u;
-}
-
-int time_format_date(char* buf, int size, const struct time* t, int style)
-{
-    (void)t; (void)style;
-    if(size > 0) buf[0] = 0;
-    return 0;
-}
-
-int time_format_time(char* buf, int size, const struct time* t, int seconds)
-{
-    (void)t; (void)seconds;
-    if(size > 0) buf[0] = 0;
-    return 0;
-}
-
 /**
  * $process->current is NULL, so the kernel's twritef, which writes to the current process's terminal, writes
  * nothing. Matches include/pcb.h's struct process.

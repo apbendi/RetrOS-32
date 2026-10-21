@@ -22,6 +22,8 @@
 #include <gfx/theme.h>
 #include <kevents.h>
 #include <lib/lz.h>
+#include <timefmt.h>
+#include <errors.h>
 
 #define COMMAND(name, func) \
 	int name\
@@ -98,33 +100,94 @@ static int new(int argc, char* argv[])
 }
 EXPORT_KSYMBOL(new);
 
+/* Prints why a file system command failed on path, e.g. "rm: /bin: Is a directory." */
+static void __fs_cmd_error(const char* cmd, const char* path, int err)
+{
+    twritef("%s: %s: %s\n", cmd, path, error_get_string(err));
+}
+
+/* Spaces that pad text out to width characters, for lining up columns. twritef has no field widths. */
+static const char* __padding(const char* text, int width)
+{
+    static const char spaces[] = "                ";
+    int pad = width - strlen(text);
+
+    if(pad < 0) pad = 0;
+    if(pad > (int)sizeof(spaces) - 1) pad = sizeof(spaces) - 1;
+    return spaces + (sizeof(spaces) - 1 - pad);
+}
+
+/* One line of list: the entry's size, the date and time it was last written, and its name, with "/" for a directory */
+static void __list_entry(const struct fs_dirent* entry)
+{
+    char date[TIME_FORMAT_DATE_MAX + 1] = "";
+    char time[TIME_FORMAT_TIME_MAX + 1] = "";
+    if(entry->written.centuary != 0){
+        time_format_date(date, sizeof(date), &entry->written, TIME_DATE_NUMERIC);
+        time_format_time(time, sizeof(time), &entry->written, false);
+    }
+
+    struct unit size_unit = calculate_size_unit(entry->size);
+
+    /* The time is right-aligned, so 12-hour times line up */
+    twritef("%p%s %s%s %s%s  %s%s\n",
+        size_unit.size,
+        size_unit.unit,
+        date, __padding(date, TIME_FORMAT_NUMERIC_DATE_MAX),
+        __padding(time, TIME_FORMAT_TIME_MAX), time,
+        entry->name,
+        entry->attributes & FS_ATTR_DIRECTORY ? "/" : ""
+    );
+}
+
+/* Lists a directory's entries, or one file's, with their long names, sizes and dates */
+static int __list_path(const char* path)
+{
+    struct fs_dirent entry;
+    int ret = fs_stat(path, &entry);
+    if(ret < 0){
+        __fs_cmd_error("list", path, ret);
+        return -1;
+    }
+
+    twritef("Size    Date%s %sTime  Name\n", __padding("Date", TIME_FORMAT_NUMERIC_DATE_MAX), __padding("Time", TIME_FORMAT_TIME_MAX));
+    if(!(entry.attributes & FS_ATTR_DIRECTORY)){
+        __list_entry(&entry);
+        return 0;
+    }
+
+    int fd = fs_open(path, FS_FILE_FLAG_READ);
+    if(fd < 0){
+        __fs_cmd_error("list", path, fd);
+        return -1;
+    }
+
+    int entries = 0;
+    while((ret = fs_readdir(fd, &entry)) == 1){
+        __list_entry(&entry);
+        entries++;
+    }
+    fs_close(fd);
+
+    twritef("%d directory entries.\n", entries);
+    if(ret < 0){
+        __fs_cmd_error("list", path, ret);
+        return -1;
+    }
+    return 0;
+}
+
+/* Lists each path given, or the current directory */
 static int list(int argc, char* argv[])
 {
-    if(argc < 1) {
-        twritef("Usage: list <path?>\n");
-        return 1;
+    if(argc < 2) return __list_path(".");
+
+    int failed = 0;
+    for (int i = 1; i < argc; i++){
+        if(argc > 2) twritef("%s%s:\n", i > 1 ? "\n" : "", argv[i]);
+        if(__list_path(argv[i]) < 0) failed = -1;
     }
-    
-    struct filesystem* fs = fs_get();
-	if(fs == NULL){
-		twritef("No filesystem mounted.\n");
-		return -1;
-	}
-
-	if(fs->ops->list == NULL){
-		twritef("Filesystem does not support listing\n");
-		return -1;
-	}
-
-	/* With no path, the current directory */
-	if(argc == 1){
-		fs->ops->list(fs, ".", NULL, 0);
-		return 0;
-	}
-
-	fs->ops->list(fs, argv[1], NULL, 0);
-
-    return 0;
+    return failed;
 }
 EXPORT_KSYMBOL(list);
 
@@ -133,12 +196,6 @@ static int ls(int argc, char* argv[])
     return list(argc, argv);
 }
 EXPORT_KSYMBOL(ls);
-
-/* Prints why a file system command failed on path, e.g. "rm: /bin: Is a directory." */
-static void __fs_cmd_error(const char* cmd, const char* path, int err)
-{
-    twritef("%s: %s: %s\n", cmd, path, error_get_string(err));
-}
 
 /* Changes the shell's current directory, to the root with no path */
 static int cd(int argc, char* argv[])
@@ -549,24 +606,93 @@ static int view(int argc, char* argv[]){
 }
 EXPORT_KSYMBOL(view);
 
+static int __lower(int c)
+{
+    return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
+}
+
+/* Whether needle appears in name, ignoring case, as FAT does */
+static int __contains(const char* name, const char* needle)
+{
+    for(int i = 0; name[i] != 0; i++){
+        int j = 0;
+        while(needle[j] != 0 && __lower(name[i + j]) == __lower(needle[j])) j++;
+        if(needle[j] == 0) return 1;
+    }
+    return needle[0] == 0;
+}
+
+/* How many directories deep find goes. Each level keeps a directory open, out of a process's 32 files. */
+#define FIND_DEPTH 16
+
+/* One level of find's state, on the heap: a kernel stack doesn't have room for 16 */
+struct find_level {
+    struct fs_dirent entry;
+    char child[FS_PATH_MAX];
+};
+
+/* Prints every path under path, a normalized directory, whose name contains needle */
+static void __find(const char* path, const char* needle, int depth)
+{
+    struct find_level* level = kalloc_try(sizeof(struct find_level));
+    if(level == NULL){
+        __fs_cmd_error("find", path, -ERROR_ALLOC);
+        return;
+    }
+
+    int fd = fs_open(path, FS_FILE_FLAG_READ);
+    if(fd < 0){
+        __fs_cmd_error("find", path, fd);
+        kfree(level);
+        return;
+    }
+
+    int path_len = strlen(path);
+    while(fs_readdir(fd, &level->entry) == 1){
+        int is_directory = level->entry.attributes & FS_ATTR_DIRECTORY;
+        int name_len = strlen(level->entry.name);
+        if(path_len + 1 + name_len + 1 > FS_PATH_MAX) continue;
+
+        /* The root is "/", and every other directory needs a "/" after it */
+        int len = path_len;
+        memcpy(level->child, path, path_len);
+        if(path_len > 1) level->child[len++] = '/';
+        memcpy(level->child + len, level->entry.name, name_len + 1);
+
+        if(__contains(level->entry.name, needle)){
+            twritef("%s%s\n", level->child, is_directory ? "/" : "");
+        }
+        if(is_directory && depth < FIND_DEPTH){
+            __find(level->child, needle, depth + 1);
+        }
+    }
+    fs_close(fd);
+    kfree(level);
+}
+
+/* Prints the path of every file and directory whose name contains the text, ignoring case, under a directory */
 static int find(int argc, char* argv[]){    
-    if(argc < 2) {
-        twritef("Usage: find <path>\n");
+    if(argc < 2 || argc > 3) {
+        twritef("Usage: find <text> [directory]\n");
         return 1;
     }
 
-    struct filesystem* fs = fs_get();
-    if(fs == NULL){
-        twritef("No filesystem mounted.\n");
+    const char* start = argc == 3 ? argv[2] : ".";
+    char path[FS_PATH_MAX];
+    if(fs_path_normalize(start, path) < 0){
+        __fs_cmd_error("find", start, -ERROR_INVALID_ARGUMENTS);
         return -1;
     }
 
-    if(fs->ops->find == NULL){
-        twritef("Filesystem does not support finding\n");
+    struct fs_dirent entry;
+    int ret = fs_stat(path, &entry);
+    if(ret == 0 && !(entry.attributes & FS_ATTR_DIRECTORY)) ret = -ERROR_NOT_DIRECTORY;
+    if(ret < 0){
+        __fs_cmd_error("find", start, ret);
         return -1;
     }
 
-    fs->ops->find(fs, "/", argv[1]);
+    __find(path, argv[1], 0);
     return 0;
 }
 EXPORT_KSYMBOL(find);
