@@ -77,8 +77,6 @@ struct filesystem_ops {
     int (*rmdir)(struct filesystem* fs, const char* path);
     int (*rename)(struct filesystem* fs, const char* path, const char* new_path);
     int (*stat)(struct filesystem* fs, const char* path, struct fs_dirent* out);
-    int (*list)(struct filesystem* fs, const char* path, char* buf, int size);
-    int (*find)(struct filesystem* fs, char* path, const char* needle);
     /* The next entry of an open directory, without "." and "..": 1, or 0 when there are no more */
     int (*readdir)(struct filesystem* fs, struct file* file, struct fs_dirent* out);
 };

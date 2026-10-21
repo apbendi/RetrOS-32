@@ -196,20 +196,6 @@ static int __fs_checked_readdir(struct filesystem* fs, struct file* file, struct
     return fs_backend->ops->readdir(fs_backend, file, out);
 }
 
-static int __fs_checked_list(struct filesystem* fs, const char* path, char* buf, int size)
-{
-    char normal[FS_PATH_MAX];
-    if(path == NULL || fs_path_normalize(path, normal) < 0) return -ERROR_INVALID_ARGUMENTS;
-    return fs_backend->ops->list(fs_backend, normal, buf, size);
-}
-
-static int __fs_checked_find(struct filesystem* fs, char* path, const char* needle)
-{
-    char normal[FS_PATH_MAX];
-    if(path == NULL || fs_path_normalize(path, normal) < 0) return -ERROR_INVALID_ARGUMENTS;
-    return fs_backend->ops->find(fs_backend, normal, needle);
-}
-
 static struct filesystem_ops fs_checked_ops = {
     .write = __fs_checked_write,
     .read = __fs_checked_read,
@@ -220,8 +206,6 @@ static struct filesystem_ops fs_checked_ops = {
     .rmdir = __fs_checked_rmdir,
     .rename = __fs_checked_rename,
     .stat = __fs_checked_stat,
-    .list = __fs_checked_list,
-    .find = __fs_checked_find,
     .readdir = __fs_checked_readdir
 };
 
