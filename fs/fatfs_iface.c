@@ -350,10 +350,39 @@ static int fatfs_rmdir(struct filesystem* fs, const char* path)
     return res == FR_DENIED ? -ERROR_DIRECTORY_NOT_EMPTY : __fatfs_error(res);
 }
 
-/* Renames or moves a file or directory. The new path must not exist. */
+/**
+ * Whether new_path is inside the directory at path, so that moving it there would cut it off from the root, which
+ * FatFs doesn't check. The directories are compared by their first cluster, so a path that spells a name differently,
+ * in another case or by its 8.3 name, is still caught.
+ */
+static int __fatfs_moves_into_itself(const char* path, const char* new_path)
+{
+    DIR dir;
+    if(f_opendir(&dir, path) != FR_OK) return 0;
+    DWORD cluster = dir.obj.sclust;
+    f_closedir(&dir);
+
+    /* Each directory new_path goes through, from the top: /a, then /a/b, but not new_path itself */
+    char prefix[FS_PATH_MAX];
+    for (int i = 1; new_path[i] != 0 && i < FS_PATH_MAX; i++){
+        if(new_path[i] != '/') continue;
+
+        memcpy(prefix, new_path, i);
+        prefix[i] = 0;
+        if(f_opendir(&dir, prefix) != FR_OK) return 0;
+        DWORD inside = dir.obj.sclust;
+        f_closedir(&dir);
+
+        if(inside == cluster) return 1;
+    }
+    return 0;
+}
+
+/* Renames or moves a file or directory. The new path must not exist, or be inside the directory being moved. */
 static int fatfs_rename(struct filesystem* fs, const char* path, const char* new_path)
 {
     FS_VALIDATE(fs);
+    if(__fatfs_moves_into_itself(path, new_path)) return -ERROR_MOVE_INTO_ITSELF;
     return __fatfs_error(f_rename(path, new_path));
 }
 

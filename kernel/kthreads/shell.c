@@ -62,7 +62,9 @@ static uint8_t shell_buffer_length = 0;
 static const char newline = '\n';
 static const char backspace = '\b';
 
-static char* shell_name = "Kernel >";
+/* The most of the current directory the GUI shell's prompt shows, so a deep directory leaves room to type */
+#define SHELL_PROMPT_DIR_MAX 20
+static char shell_prompt[SHELL_PROMPT_DIR_MAX + 16];
 static char* about_text = "\nRetrOS-32 - 32bit Operating System\n    " KERNEL_RELEASE " " KERNEL_VERSION " - " KERNEL_DATE "\n";
 
 /*
@@ -74,15 +76,49 @@ void shell_clear()
 	kernel_gfx_draw_rectangle($process->current->gfx_window, 0, SHELL_POSITION, gfx_get_window_height(), 8, $process->current->term->bg_color);
 }
 
+/**
+ * Writes the current directory into out, which holds max+1 bytes. One longer than max keeps its end, after "...",
+ * since that names the directory you're in.
+ */
+static void __shell_cwd(char* out, int max)
+{
+	char cwd[FS_PATH_MAX];
+	if(fs_getcwd(cwd, sizeof(cwd)) < 0) memcpy(cwd, "/", 2);
+
+	int len = strlen(cwd);
+	if(len <= max){
+		memcpy(out, cwd, len + 1);
+		return;
+	}
+	memcpy(out, "...", 3);
+	memcpy(out + 3, cwd + len - (max - 3), max - 3 + 1);
+}
+
+/* Adds a command to the terminal's history after its prompt, with the whole current directory */
+static void __shell_echo(const char* line)
+{
+	char cwd[FS_PATH_MAX];
+	if(fs_getcwd(cwd, sizeof(cwd)) < 0) memcpy(cwd, "/", 2);
+	twritef("kernel:%s> %s\n", cwd, line);
+}
+
 void reset_shell()
 {
 	struct terminal* term = $process->current->term;
 
+	/* The prompt shows the current directory, which a command may have changed */
+	char dir[SHELL_PROMPT_DIR_MAX + 1];
+	__shell_cwd(dir, SHELL_PROMPT_DIR_MAX);
+	int dir_len = strlen(dir);
+	memcpy(shell_prompt, "kernel:", 7);
+	memcpy(shell_prompt + 7, dir, dir_len);
+	memcpy(shell_prompt + 7 + dir_len, ">", 2);
+
 	shell_clear();
 	memset(&shell_buffer, 0, SHELL_MAX_SIZE);
-	shell_column = strlen(shell_name)+1;
+	shell_column = strlen(shell_prompt)+1;
 	shell_buffer_length = 0;
-	kernel_gfx_draw_text($process->current->gfx_window, 0, SHELL_POSITION, shell_name, term->text_color);
+	kernel_gfx_draw_text($process->current->gfx_window, 0, SHELL_POSITION, shell_prompt, term->text_color);
 	shell_column += 1;
 }
 
@@ -537,7 +573,7 @@ void shell_put(unsigned char c)
 
 	if(uc == newline){
 		memcpy(previous_shell_buffer, shell_buffer, strlen(shell_buffer)+1);
-		twritef("kernel> %s\n", shell_buffer);
+		__shell_echo(shell_buffer);
 		
 		/* exec_cmd reports its own errors, like an unknown command */
 		exec_cmd(shell_buffer);
@@ -698,8 +734,15 @@ static int __textshell_reset_box()
 	scrput(5, 1, ']', color);
 	scrwrite(3, SCREEN_HEIGHT-1, "[              ]", color);
 	
-	/* header */
-	scrwrite(40-(strlen(" Terminal ")/2) , 1, " Terminal ", color);
+	/* header, with the current directory, as there's no room for it before the line typed */
+	char dir[57];
+	char header[72];
+	__shell_cwd(dir, sizeof(dir) - 1);
+	int dir_len = strlen(dir);
+	memcpy(header, " Terminal: ", 11);
+	memcpy(header + 11, dir, dir_len);
+	memcpy(header + 11 + dir_len, " ", 2);
+	scrwrite(40-(strlen(header)/2) , 1, header, color);
 
 	scr_set_cursor(3, SCREEN_HEIGHT-1);
 	return 0;
@@ -800,7 +843,7 @@ static void __kthread_entry textshell()
 
 		if(c == '\n'){
 			x = 0;
-			twritef("kernel> %s\n", text_shell_buffer);
+			__shell_echo((char*)text_shell_buffer);
 
 			exec_cmd(text_shell_buffer);
 

@@ -47,6 +47,7 @@ enum errors {
     ERROR_NO_FILESYSTEM,
     ERROR_UNTERMINATED_QUOTE,
     ERROR_ARGUMENTS_TOO_LONG,
+    ERROR_MOVE_INTO_ITSELF,
 };
 
 char* error_get_string(error_t err);

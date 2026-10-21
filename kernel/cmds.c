@@ -116,9 +116,10 @@ static int list(int argc, char* argv[])
 		return -1;
 	}
 
+	/* With no path, the current directory */
 	if(argc == 1){
-		fs->ops->list(fs, "/", NULL, 0);
-		return -1;
+		fs->ops->list(fs, ".", NULL, 0);
+		return 0;
 	}
 
 	fs->ops->list(fs, argv[1], NULL, 0);
@@ -126,6 +127,130 @@ static int list(int argc, char* argv[])
     return 0;
 }
 EXPORT_KSYMBOL(list);
+
+static int ls(int argc, char* argv[])
+{
+    return list(argc, argv);
+}
+EXPORT_KSYMBOL(ls);
+
+/* Prints why a file system command failed on path, e.g. "rm: /bin: Is a directory." */
+static void __fs_cmd_error(const char* cmd, const char* path, int err)
+{
+    twritef("%s: %s: %s\n", cmd, path, error_get_string(err));
+}
+
+/* Changes the shell's current directory, to the root with no path */
+static int cd(int argc, char* argv[])
+{
+    if(argc > 2){
+        twritef("cd: too many arguments. Quote a name with spaces: cd \"my files\"\n");
+        return -1;
+    }
+    const char* path = argc < 2 ? "/" : argv[1];
+
+    int ret = fs_chdir(path);
+    if(ret < 0){
+        __fs_cmd_error("cd", path, ret);
+        return -1;
+    }
+    return 0;
+}
+EXPORT_KSYMBOL(cd);
+
+static int pwd(int argc, char* argv[])
+{
+    char cwd[FS_PATH_MAX];
+    if(fs_getcwd(cwd, sizeof(cwd)) < 0) return -1;
+
+    twritef("%s\n", cwd);
+    return 0;
+}
+EXPORT_KSYMBOL(pwd);
+
+/* Runs a file system function on each path, reporting each one that fails */
+static int __fs_each_path(const char* cmd, int argc, char* argv[], int (*op)(const char* path))
+{
+    if(argc < 2){
+        twritef("Usage: %s <path> [path ...]\n", cmd);
+        return -1;
+    }
+
+    int failed = 0;
+    for (int i = 1; i < argc; i++){
+        int ret = op(argv[i]);
+        if(ret < 0){
+            __fs_cmd_error(cmd, argv[i], ret);
+            failed = -1;
+        }
+    }
+    return failed;
+}
+
+static int mkdir(int argc, char* argv[])
+{
+    return __fs_each_path("mkdir", argc, argv, fs_mkdir);
+}
+EXPORT_KSYMBOL(mkdir);
+
+/* Deletes files. Directories are for rmdir. */
+static int rm(int argc, char* argv[])
+{
+    return __fs_each_path("rm", argc, argv, fs_unlink);
+}
+EXPORT_KSYMBOL(rm);
+
+/* Deletes empty directories */
+static int rmdir(int argc, char* argv[])
+{
+    return __fs_each_path("rmdir", argc, argv, fs_rmdir);
+}
+EXPORT_KSYMBOL(rmdir);
+
+/**
+ * Renames or moves a file or directory. A destination that's an existing directory gets the source moved into it,
+ * under the same name, as on Unix. An existing file isn't replaced.
+ */
+static int mv(int argc, char* argv[])
+{
+    if(argc != 3){
+        twritef("Usage: mv <from> <to>\n");
+        return -1;
+    }
+
+    const char* from = argv[1];
+    const char* to = argv[2];
+    char into[FS_PATH_MAX];
+
+    struct fs_dirent entry;
+    if(fs_stat(to, &entry) == 0 && (entry.attributes & FS_ATTR_DIRECTORY)){
+        /* The source's last name, ignoring any slashes after it */
+        int end = strlen(from);
+        while(end > 1 && from[end-1] == '/') end--;
+        int start = end;
+        while(start > 0 && from[start-1] != '/') start--;
+
+        int to_len = strlen(to);
+        int name_len = end - start;
+        if(to_len + 1 + name_len + 1 > FS_PATH_MAX){
+            __fs_cmd_error("mv", to, -ERROR_INVALID_ARGUMENTS);
+            return -1;
+        }
+        memcpy(into, to, to_len);
+        into[to_len] = '/';
+        memcpy(into + to_len + 1, from + start, name_len);
+        into[to_len + 1 + name_len] = 0;
+        to = into;
+    }
+
+    int ret = fs_rename(from, to);
+    if(ret < 0){
+        __fs_cmd_error("mv", from, ret);
+        return -1;
+    }
+    return 0;
+}
+EXPORT_KSYMBOL(mv);
 
 /* prints content of compressed file */
 static int lzcat(int argc, char* argv[]){
@@ -232,16 +357,17 @@ static int help(int argc, char* argv[])
 {
     twritef("Available commands:\n\n");
     twritef("Filesystem:      System:      Etc:\n");
-    twritef("  new             ps           help\n");
-    twritef("  list            tree         reset\n");
-    twritef("  view            kill         about\n");
-    twritef("  file            exec         xxd\n");
-    twritef("                  fdisk        bg\n");
-    twritef("Network:          meminfo      sh\n");
-    twritef(" socks            conf         echo\n");
-    twritef(" ifconfig         services     cc\n");
-    twritef(" dns              admin        color\n");
-    twritef(" tcp              clear        \n");
+    twritef("  ls, list        ps           help\n");
+    twritef("  cd, pwd         tree         reset\n");
+    twritef("  mkdir, rmdir    kill         about\n");
+    twritef("  rm, mv          exec         xxd\n");
+    twritef("  new, view       fdisk        bg\n");
+    twritef("  file            meminfo      sh\n");
+    twritef("Network:          conf         echo\n");
+    twritef(" socks            services     cc\n");
+    twritef(" ifconfig         admin        color\n");
+    twritef(" dns, tcp         clear\n\n");
+    twritef("Quote names with spaces: cd \"my files\"\n");
     return 0;
 }
 EXPORT_KSYMBOL(help);

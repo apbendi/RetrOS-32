@@ -401,6 +401,33 @@ ops_rename_existing() {
 }
 add ops.rename-onto-existing "RetrOS refuses to rename a file onto one that exists, and changes neither" ops_rename_existing
 
+ops_rename_into_itself() {
+    begin fresh || return
+    seed mmd ::/SUB
+    seed mmd ::/SUB/INNER
+    MTOOLS_NO_VFAT=0 seed mmd "::/SUB/INNER/Long Name"
+    ready
+    refused mv /SUB /SUB/INNER/SUB
+    refused mv /sub /Sub/inner/SUB
+    refused mv /SUB "/SUB/INNER/long name/SUB"
+    refused mv /SUB/INNER /SUB/INNER/X
+    check
+}
+add ops.rename-into-itself "RetrOS refuses to move a directory inside itself, however the path spells it" ops_rename_into_itself
+
+ops_rename_directory() {
+    begin fresh || return
+    seed mmd ::/SUB
+    seed mmd ::/SUB/INNER
+    seed mcopy "$(data 900 in)" ::/SUB/INNER/IN.TXT
+    seed mmd ::/OTHER
+    ready
+    rfs mv /SUB/INNER /OTHER/INNER
+    ref mmove ::/SUB/INNER ::/OTHER/INNER
+    check
+}
+add ops.rename-directory "RetrOS moves a directory, with a file in it, into another" ops_rename_directory
+
 ops_remove_directory() {
     begin fresh || return
     seed mmd ::/SUB

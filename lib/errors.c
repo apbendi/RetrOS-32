@@ -51,7 +51,8 @@ static char* error_string[] = {
     "Disk error.",
     "No file system.",
     "Missing closing quote.",
-    "Arguments too long."
+    "Arguments too long.",
+    "Can't move a directory inside itself."
 };
 
 char* error_get_string(error_t err)

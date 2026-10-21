@@ -567,8 +567,10 @@ int fs_chdir(const char* path)
     char normal[FS_PATH_MAX];
     if(fs_path_normalize(path, normal) < 0) return -ERROR_INVALID_ARGUMENTS;
 
+    /* A missing directory is "Directory not found", though FatFs can't tell what a missing path was meant to be */
     struct fs_dirent entry;
     int ret = fs_current->ops->stat(fs_current, normal, &entry);
+    if(ret == -ERROR_FILE_NOT_FOUND) return -ERROR_PATH_NOT_FOUND;
     if(ret < 0) return ret;
     if(!(entry.attributes & FS_ATTR_DIRECTORY)) return -ERROR_NOT_DIRECTORY;
 
