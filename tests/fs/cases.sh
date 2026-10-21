@@ -379,3 +379,69 @@ ops_rename() {
     check
 }
 add ops.rename "RetrOS renames a file" ops_rename
+
+ops_rename_move() {
+    begin fresh || return
+    seed mcopy "$(data 700 a)" ::/A.TXT
+    seed mmd ::/SUB
+    ready
+    rfs mv /A.TXT /SUB/A.TXT
+    ref mmove ::/A.TXT ::/SUB/A.TXT
+    check
+}
+add ops.rename-into-directory "RetrOS moves a file into a subdirectory by renaming it" ops_rename_move
+
+ops_rename_existing() {
+    begin fresh || return
+    seed mcopy "$(data 100 a)" ::/A.TXT
+    seed mcopy "$(data 100 b)" ::/B.TXT
+    ready
+    refused mv /A.TXT /B.TXT
+    check
+}
+add ops.rename-onto-existing "RetrOS refuses to rename a file onto one that exists, and changes neither" ops_rename_existing
+
+ops_remove_directory() {
+    begin fresh || return
+    seed mmd ::/SUB
+    ready
+    refused rm /SUB
+    check
+}
+add ops.remove-directory "RetrOS refuses to delete a directory as a file" ops_remove_directory
+
+ops_rmdir_not_empty() {
+    begin fresh || return
+    seed mmd ::/SUB
+    seed mcopy "$(data 100 in)" ::/SUB/IN.TXT
+    ready
+    refused rmdir /SUB
+    check
+}
+add ops.rmdir-not-empty "RetrOS refuses to remove a directory that has files in it" ops_rmdir_not_empty
+
+ops_mkdir_exists() {
+    begin fresh || return
+    seed mmd ::/SUB
+    ready
+    refused mkdir /SUB
+    check
+}
+add ops.mkdir-exists "RetrOS refuses to make a directory that already exists" ops_mkdir_exists
+
+ops_readdir() {
+    begin fresh || return
+    seed mmd ::/SUB
+    MTOOLS_NO_VFAT=0 seed mcopy "$(data 100 long)" ::/SUB/longfilename.txt
+    MTOOLS_NO_VFAT=0 seed mcopy "$(data 200 mixed)" ::/SUB/Mixed.Txt
+    MTOOLS_NO_VFAT=0 seed mcopy "$(data 300 space)" "::/SUB/My Notes.txt"
+    seed mmd ::/SUB/INNER
+    printf '%s\n' "D INNER" "F Mixed.Txt 200" "F My Notes.txt 300" "F longfilename.txt 100" > "$CDIR/dir-expected"
+    "$FSTOOL" "$R" dir /SUB 2> "$CDIR/err" | sort > "$CDIR/dir-retros"
+    diff -q "$CDIR/dir-expected" "$CDIR/dir-retros" >/dev/null ||
+        fail names "$(diff "$CDIR/dir-expected" "$CDIR/dir-retros" | grep '^[<>]' | head -6 | paste -sd ';' -)"
+    [ "$("$FSTOOL" "$R" stat "/sub/my notes.TXT" 2>/dev/null)" = "F My Notes.txt 300" ] ||
+        fail names "stat /sub/my notes.TXT didn't report My Notes.txt, 300 bytes"
+    [ "$("$FSTOOL" "$R" stat /SUB/INNER 2>/dev/null)" = "D INNER" ] || fail names "stat /SUB/INNER didn't report a directory"
+}
+add ops.readdir-long-names "RetrOS lists a directory with its long names, and stats files by them, ignoring case" ops_readdir

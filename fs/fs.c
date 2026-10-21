@@ -114,11 +114,14 @@ static int __fs_checked_read(struct filesystem* fs, struct file* file, void* buf
     return fs_backend->ops->read(fs_backend, file, buf, size);
 }
 
-static struct file* __fs_checked_open(struct filesystem* fs, const char* path, int flags)
+static struct file* __fs_checked_open(struct filesystem* fs, const char* path, int flags, int* error)
 {
     char normal[FS_PATH_MAX];
-    if(path == NULL || fs_path_normalize(path, normal) < 0) return NULL;
-    return fs_backend->ops->open(fs_backend, normal, flags);
+    if(path == NULL || fs_path_normalize(path, normal) < 0){
+        if(error != NULL) *error = -ERROR_INVALID_ARGUMENTS;
+        return NULL;
+    }
+    return fs_backend->ops->open(fs_backend, normal, flags, error);
 }
 
 static int __fs_checked_close(struct filesystem* fs, struct file* file)
@@ -156,11 +159,16 @@ static int __fs_checked_rename(struct filesystem* fs, const char* path, const ch
     return fs_backend->ops->rename(fs_backend, normal, new_normal);
 }
 
-static int __fs_checked_stat(struct filesystem* fs, const char* path, struct file* file)
+static int __fs_checked_stat(struct filesystem* fs, const char* path, struct fs_dirent* out)
 {
     char normal[FS_PATH_MAX];
     if(path == NULL || fs_path_normalize(path, normal) < 0) return -ERROR_INVALID_ARGUMENTS;
-    return fs_backend->ops->stat(fs_backend, normal, file);
+    return fs_backend->ops->stat(fs_backend, normal, out);
+}
+
+static int __fs_checked_readdir(struct filesystem* fs, struct file* file, struct fs_dirent* out)
+{
+    return fs_backend->ops->readdir(fs_backend, file, out);
 }
 
 static int __fs_checked_list(struct filesystem* fs, const char* path, char* buf, int size)
@@ -188,7 +196,8 @@ static struct filesystem_ops fs_checked_ops = {
     .rename = __fs_checked_rename,
     .stat = __fs_checked_stat,
     .list = __fs_checked_list,
-    .find = __fs_checked_find
+    .find = __fs_checked_find,
+    .readdir = __fs_checked_readdir
 };
 
 /* functions used by filesystem implementations */
@@ -410,9 +419,10 @@ int fs_open(const char* path, int flags)
     }
 
     /* open the file */
-    struct file* file = fs_current->ops->open(fs_current, path, flags);
+    int error = -ERROR_FILE_NOT_FOUND;
+    struct file* file = fs_current->ops->open(fs_current, path, flags, &error);
     if(file == NULL){
-        return -1;
+        return error;
     }
 
     acquire(&fs_files_lock);
@@ -431,7 +441,7 @@ int fs_open(const char* path, int flags)
         dbgprintf("fs_open: %s: the process has too many files open\n", path);
         fs_current->ops->close(fs_current, file);
         fs_free_file(file);
-        return -1;
+        return -ERROR_INDEX;
     }
 
     dbgprintf("fs_open: %s\n", path);
@@ -476,6 +486,51 @@ int fs_seek(int fd, int offset, fs_seek_flag_t flag)
 
     file->offset = position;
     return position;
+}
+
+int fs_stat(const char* path, struct fs_dirent* out)
+{
+    if(fs_current == NULL) return -ERROR_NO_FILESYSTEM;
+    if(path == NULL || out == NULL) return -ERROR_NULL_POINTER;
+    return fs_current->ops->stat(fs_current, path, out);
+}
+
+/* The next entry of a directory opened with fs_open: 1, or 0 when there are no more */
+int fs_readdir(int fd, struct fs_dirent* out)
+{
+    if(fs_current == NULL) return -ERROR_NO_FILESYSTEM;
+    if(out == NULL) return -ERROR_NULL_POINTER;
+
+    struct file* file = __fs_file(fd);
+    if(file == NULL) return -ERROR_INVALID_ARGUMENTS;
+    return fs_current->ops->readdir(fs_current, file, out);
+}
+
+int fs_mkdir(const char* path)
+{
+    if(fs_current == NULL) return -ERROR_NO_FILESYSTEM;
+    return fs_current->ops->mkdir(fs_current, path);
+}
+
+/* Deletes a file. A directory is refused: that's fs_rmdir. */
+int fs_unlink(const char* path)
+{
+    if(fs_current == NULL) return -ERROR_NO_FILESYSTEM;
+    return fs_current->ops->remove(fs_current, path);
+}
+
+/* Deletes an empty directory */
+int fs_rmdir(const char* path)
+{
+    if(fs_current == NULL) return -ERROR_NO_FILESYSTEM;
+    return fs_current->ops->rmdir(fs_current, path);
+}
+
+/* Renames or moves a file or directory. new_path must not exist. */
+int fs_rename(const char* path, const char* new_path)
+{
+    if(fs_current == NULL) return -ERROR_NO_FILESYSTEM;
+    return fs_current->ops->rename(fs_current, path, new_path);
 }
 
 int fs_read(int fd, void* buf, int size)

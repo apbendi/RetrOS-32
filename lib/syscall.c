@@ -131,6 +131,42 @@ int fclose(int fd)
     return invoke_syscall(SYSCALL_CLOSE, fd, 0, 0);
 }
 
+int seek(int fd, int offset, int whence)
+{
+    return invoke_syscall(SYSCALL_SEEK, fd, offset, whence);
+}
+
+int stat(const char* path, struct fs_dirent* out)
+{
+    return invoke_syscall(SYSCALL_STAT, (int)path, (int)out, 0);
+}
+
+/* The next entry of a directory opened with open(): 1, or 0 when there are no more */
+int readdir(int fd, struct fs_dirent* out)
+{
+    return invoke_syscall(SYSCALL_READDIR, fd, (int)out, 0);
+}
+
+int mkdir(const char* path)
+{
+    return invoke_syscall(SYSCALL_MKDIR, (int)path, 0, 0);
+}
+
+int unlink(const char* path)
+{
+    return invoke_syscall(SYSCALL_UNLINK, (int)path, 0, 0);
+}
+
+int rmdir(const char* path)
+{
+    return invoke_syscall(SYSCALL_RMDIR, (int)path, 0, 0);
+}
+
+int rename(const char* path, const char* new_path)
+{
+    return invoke_syscall(SYSCALL_RENAME, (int)path, (int)new_path, 0);
+}
+
 int system(const char* command)
 {
     return invoke_syscall(SYSCALL_SYSTEM, (int)command, 0, 0);

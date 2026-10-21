@@ -24,6 +24,17 @@ int write(int fd, void* buffer, int size);
 int read(int fd, void* buffer, int size);
 int fclose(int fd);
 
+/* Files and directories. struct fs_dirent and the seek modes are in fs/fs.h. Each returns a negative error code
+ * from errors.h on failure. */
+struct fs_dirent;
+int seek(int fd, int offset, int whence);
+int stat(const char* path, struct fs_dirent* out);
+int readdir(int fd, struct fs_dirent* out);
+int mkdir(const char* path);
+int unlink(const char* path);
+int rmdir(const char* path);
+int rename(const char* path, const char* new_path);
+
 void* zmalloc(int size);
 void* malloc(int size);
 void free(void* ptr);
