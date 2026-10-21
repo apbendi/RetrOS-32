@@ -445,3 +445,32 @@ ops_readdir() {
     [ "$("$FSTOOL" "$R" stat /SUB/INNER 2>/dev/null)" = "D INNER" ] || fail names "stat /SUB/INNER didn't report a directory"
 }
 add ops.readdir-long-names "RetrOS lists a directory with its long names, and stats files by them, ignoring case" ops_readdir
+
+# --- The current directory ------------------------------------------------------------------------------------
+
+paths_relative() {
+    begin fresh || return
+    seed mmd ::/SUB
+    seed mmd ::/SUB/INNER
+    ready
+    local file
+    file=$(data 600 rel)
+    FSTOOL_CWD=/SUB rfs write a.txt < "$file"
+    ref mcopy -o "$file" ::/SUB/A.TXT
+    check
+    [ "$(FSTOOL_CWD=/SUB/INNER "$FSTOOL" "$R" cat ../a.txt 2>/dev/null | sha256sum)" = "$(sha256sum < "$file")" ] ||
+        fail path "../a.txt from /SUB/INNER doesn't read /SUB/A.TXT"
+    [ "$(FSTOOL_CWD=/SUB/INNER "$FSTOOL" "$R" pwd 2>/dev/null)" = "/SUB/INNER" ] || fail path "pwd in /SUB/INNER isn't /SUB/INNER"
+    [ "$(FSTOOL_CWD=sub/./inner/.. "$FSTOOL" "$R" pwd 2>/dev/null)" = "/sub" ] || fail path "cd sub/./inner/.. from / doesn't end in /sub"
+}
+add paths.relative "Relative paths start from the current directory, and .. leaves it" paths_relative
+
+paths_chdir_file() {
+    begin fresh || return
+    seed mcopy "$(data 100 a)" ::/A.TXT
+    ready
+    FSTOOL_CWD=/A.TXT "$FSTOOL" "$R" pwd > /dev/null 2> "$CDIR/err" && fail op "cd to the file /A.TXT succeeded"
+    FSTOOL_CWD=/NOPE "$FSTOOL" "$R" pwd > /dev/null 2>> "$CDIR/err" && fail op "cd to /NOPE, which doesn't exist, succeeded"
+    check
+}
+add paths.chdir-refused "The current directory can't be a file, or something that doesn't exist" paths_chdir_file

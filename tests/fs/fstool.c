@@ -19,6 +19,9 @@
  *   fstool IMAGE mv OLD NEW              fs_rename
  *   fstool IMAGE stat PATH               fs_stat: "D NAME" or "F NAME SIZE"
  *   fstool IMAGE dir PATH                a directory through fs_readdir, with long names: "D NAME" and "F NAME SIZE"
+ *   fstool IMAGE pwd                     the current directory, from fs_getcwd
+ *
+ * Set FSTOOL_CWD to a directory to make it the current one, which relative paths start from.
  *
  * Directories are listed the way Finder reads them: opened like a file and read one 32-byte entry at a time,
  * skipping free entries, long-name parts and the volume label. "." and ".." are left out.
@@ -66,6 +69,8 @@ int fs_mkdir(const char* path);
 int fs_unlink(const char* path);
 int fs_rmdir(const char* path);
 int fs_rename(const char* path, const char* new_path);
+int fs_chdir(const char* path);
+int fs_getcwd(char* buf, int size);
 
 /* From host.c */
 extern FILE* fstool_disk;
@@ -271,9 +276,20 @@ int main(int argc, char* argv[])
         return finish(3);
     }
 
+    const char* cwd = getenv("FSTOOL_CWD");
+    if(cwd != NULL && cwd[0] != 0){
+        int ret = fs_chdir(cwd);
+        if(ret != 0) return finish(failed("fs_chdir", ret));
+    }
+
     int status;
     if(strcmp(op, "tree") == 0){
         status = list("/", 1, 0);
+    } else if(strcmp(op, "pwd") == 0){
+        char buf[512];
+        int ret = fs_getcwd(buf, sizeof(buf));
+        status = ret < 0 ? failed("fs_getcwd", ret) : 0;
+        if(ret >= 0) printf("%s\n", buf);
     } else if(arg == NULL){
         return finish(usage());
     } else if(strcmp(op, "ls") == 0){
@@ -316,6 +332,7 @@ int main(int argc, char* argv[])
         if(ret == 0) print_dirent(&entry);
     } else if(strcmp(op, "dir") == 0){
         status = dir(arg);
+
     } else {
         return finish(usage());
     }

@@ -219,6 +219,8 @@ void kernel(uint32_t magic)
 	add_system_call(SYSCALL_UNLINK, (syscall_t)&fs_unlink);
 	add_system_call(SYSCALL_RMDIR, (syscall_t)&fs_rmdir);
 	add_system_call(SYSCALL_RENAME, (syscall_t)&fs_rename);
+	add_system_call(SYSCALL_CHDIR, (syscall_t)&fs_chdir);
+	add_system_call(SYSCALL_GETCWD, (syscall_t)&fs_getcwd);
 	kernel_boot_printf("Systemcalls initialized.");
 #pragma GCC diagnostic pop
 

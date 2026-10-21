@@ -487,6 +487,7 @@ error_t pcb_create_process(char* program, int argc, char** argv, pcb_flag_t flag
 	pcb->term = $process->current->term;
 	pcb->user = $process->current->user;
 	pcb->parent = $process->current;
+	fs_inherit_cwd(pcb, $process->current);
 
 	pcb->thread_eip = 0;
 
@@ -553,6 +554,7 @@ error_t pcb_create_kthread(void (*entry)(), char* name, int argc, char** argv)
 	pcb->parent = NULL;
 	pcb->term = $process->current->term;
 	pcb->user = $process->current->user;
+	fs_inherit_cwd(pcb, $process->current);
 
 	pcb->thread_eip = (uintptr_t) entry;
 	pcb->page_dir = kernel_page_dir; /* This should probably be in some global $ config */
