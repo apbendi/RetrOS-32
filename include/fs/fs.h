@@ -2,6 +2,7 @@
 #define __FS_MODULE_H
 
 #include <libc.h>
+#include <rtc.h>
 
 #define FS_VERSION 1
 #define FS_VALIDATE(fs) if(!fs || fs->version != FS_VERSION) return -1;
@@ -11,6 +12,25 @@
 
 /* Open files per process, as file descriptors. 0 to 2 are never used. */
 #define FS_MAX_PROCESS_FILES 32
+
+/* The longest name of a file or directory, not counting its terminating 0 */
+#define FS_NAME_MAX 255
+
+/* A file's or directory's attributes, as FAT stores them */
+#define FS_ATTR_READ_ONLY 0x01
+#define FS_ATTR_HIDDEN 0x02
+#define FS_ATTR_SYSTEM 0x04
+#define FS_ATTR_DIRECTORY 0x10
+#define FS_ATTR_ARCHIVE 0x20
+
+/* What fs_stat and fs_readdir report about a file or directory */
+struct fs_dirent {
+    char name[FS_NAME_MAX + 1];
+    unsigned int size;
+    unsigned char attributes;
+    /* When it was last written. A year of 0 means it has no date. */
+    struct time written;
+};
 
 struct filesystem;
 struct file;
@@ -47,7 +67,8 @@ struct filesystem_ops {
     /* basic functionality */
     int (*write)(struct filesystem* fs, struct file* file, const void* buf, int size);
     int (*read)(struct filesystem* fs, struct file* file, void* buf, int size);
-    struct file* (*open)(struct filesystem* fs, const char* path, int flags);
+    /* On failure, sets *error, if error isn't NULL, to a negative error code */
+    struct file* (*open)(struct filesystem* fs, const char* path, int flags, int* error);
     int (*close)(struct filesystem* fs, struct file* file);
 
     /* extended functionality */
@@ -55,9 +76,11 @@ struct filesystem_ops {
     int (*mkdir)(struct filesystem* fs, const char* path);
     int (*rmdir)(struct filesystem* fs, const char* path);
     int (*rename)(struct filesystem* fs, const char* path, const char* new_path);
-    int (*stat)(struct filesystem* fs, const char* path, struct file* file);
+    int (*stat)(struct filesystem* fs, const char* path, struct fs_dirent* out);
     int (*list)(struct filesystem* fs, const char* path, char* buf, int size);
     int (*find)(struct filesystem* fs, char* path, const char* needle);
+    /* The next entry of an open directory, without "." and "..": 1, or 0 when there are no more */
+    int (*readdir)(struct filesystem* fs, struct file* file, struct fs_dirent* out);
 };
 
 /* filesystem flags as enum */
@@ -100,6 +123,14 @@ int fs_size(int fd);
 int fs_write(int fd, void* buf, int size);
 int fs_close_files_of(struct pcb* pcb);
 struct filesystem* fs_get();
+
+/* Directories and file information. Each returns a negative error code from errors.h on failure. */
+int fs_stat(const char* path, struct fs_dirent* out);
+int fs_readdir(int fd, struct fs_dirent* out);
+int fs_mkdir(const char* path);
+int fs_unlink(const char* path);
+int fs_rmdir(const char* path);
+int fs_rename(const char* path, const char* new_path);
 
 int fs_path_normalize(const char* path, char* out);
 

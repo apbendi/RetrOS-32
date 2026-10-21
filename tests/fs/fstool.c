@@ -15,11 +15,15 @@
  *   fstool IMAGE append PATH             stdin onto the end of an existing PATH
  *   fstool IMAGE truncate PATH           empty an existing PATH, by opening it with the truncate flag
  *   fstool IMAGE new PATH                create an empty file, as the shell's "new file" does
- *   fstool IMAGE rm|mkdir|rmdir PATH     the file system's remove, mkdir and rmdir operations
- *   fstool IMAGE mv OLD NEW              the file system's rename operation
+ *   fstool IMAGE rm|mkdir|rmdir PATH     fs_unlink, fs_mkdir and fs_rmdir, which the syscalls of the same names use
+ *   fstool IMAGE mv OLD NEW              fs_rename
+ *   fstool IMAGE stat PATH               fs_stat: "D NAME" or "F NAME SIZE"
+ *   fstool IMAGE dir PATH                a directory through fs_readdir, with long names: "D NAME" and "F NAME SIZE"
  *
  * Directories are listed the way Finder reads them: opened like a file and read one 32-byte entry at a time,
  * skipping free entries, long-name parts and the volume label. "." and ".." are left out.
+ *
+ * A failed operation prints the error code it returned, from include/errors.h.
  *
  * Exit status: 0 done, 1 the operation failed, 2 usage, 3 the image didn't mount, 4 the operation worked but the
  * code read or wrote outside the disk, wrote past a kernel allocation or misused a lock. Those are reported on
@@ -29,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <rtc.h>
 #include <fs/fat16.h>
 
 /* From include/fs/fs.h, which can't be included here: it brings in the kernel's libc declarations */
@@ -39,20 +44,13 @@
 #define FS_FILE_FLAG_APPEND (1 << 5)
 #define FS_SEEK_START 0
 
-struct filesystem;
-struct file;
-struct filesystem_ops {
-    int (*write)(struct filesystem* fs, struct file* file, const void* buf, int size);
-    int (*read)(struct filesystem* fs, struct file* file, void* buf, int size);
-    struct file* (*open)(struct filesystem* fs, const char* path, int flags);
-    int (*close)(struct filesystem* fs, struct file* file);
-    int (*remove)(struct filesystem* fs, const char* path);
-    int (*mkdir)(struct filesystem* fs, const char* path);
-    int (*rmdir)(struct filesystem* fs, const char* path);
-    int (*rename)(struct filesystem* fs, const char* path, const char* new_path);
-};
-struct filesystem {
-    struct filesystem_ops* ops;
+#define FS_ATTR_DIRECTORY 0x10
+#define FS_NAME_MAX 255
+struct fs_dirent {
+    char name[FS_NAME_MAX + 1];
+    unsigned int size;
+    unsigned char attributes;
+    struct time written;
 };
 
 int fs_mount(void);
@@ -62,7 +60,12 @@ int fs_close(int fd);
 int fs_read(int fd, void* buf, int size);
 int fs_write(int fd, void* buf, int size);
 int fs_seek(int fd, int offset, int flag);
-struct filesystem* fs_get(void);
+int fs_stat(const char* path, struct fs_dirent* out);
+int fs_readdir(int fd, struct fs_dirent* out);
+int fs_mkdir(const char* path);
+int fs_unlink(const char* path);
+int fs_rmdir(const char* path);
+int fs_rename(const char* path, const char* new_path);
 
 /* From host.c */
 extern FILE* fstool_disk;
@@ -89,7 +92,7 @@ static int usage(void)
 {
     fprintf(stderr, "usage: fstool IMAGE format [RESERVED] | tree | ls PATH | cat PATH [CHUNK] | write PATH |\n"
                     "       writes PATH CHUNK | pwrite PATH OFFSET | append PATH | truncate PATH | new PATH |\n"
-                    "       rm PATH | mkdir PATH | rmdir PATH | mv OLD NEW\n");
+                    "       rm PATH | mkdir PATH | rmdir PATH | mv OLD NEW | stat PATH | dir PATH\n");
     return 2;
 }
 
@@ -173,6 +176,25 @@ static int list(const char* path, int recurse, int depth)
     return status;
 }
 
+static void print_dirent(const struct fs_dirent* entry)
+{
+    if(entry->attributes & FS_ATTR_DIRECTORY) printf("D %s\n", entry->name);
+    else printf("F %s %u\n", entry->name, entry->size);
+}
+
+/* A directory's entries through fs_readdir, with their long names */
+static int dir(const char* path)
+{
+    int fd = fs_open(path, FS_FILE_FLAG_READ);
+    if(fd < 0) return failed("open", fd);
+
+    struct fs_dirent entry;
+    int ret;
+    while((ret = fs_readdir(fd, &entry)) > 0) print_dirent(&entry);
+    fs_close(fd);
+    return ret < 0 ? failed("readdir", ret) : 0;
+}
+
 static int cat(const char* path, int chunk)
 {
     int fd = fs_open(path, FS_FILE_FLAG_READ);
@@ -249,7 +271,6 @@ int main(int argc, char* argv[])
         return finish(3);
     }
 
-    struct filesystem* fs = fs_get();
     int status;
     if(strcmp(op, "tree") == 0){
         status = list("/", 1, 0);
@@ -277,17 +298,24 @@ int main(int argc, char* argv[])
         status = fd < 0 ? failed("open", fd) : 0;
         if(fd >= 0) fs_close(fd);
     } else if(strcmp(op, "rm") == 0){
-        int ret = fs->ops->remove(fs, arg);
-        status = ret != 0 ? failed("remove", ret) : 0;
+        int ret = fs_unlink(arg);
+        status = ret != 0 ? failed("fs_unlink", ret) : 0;
     } else if(strcmp(op, "mkdir") == 0){
-        int ret = fs->ops->mkdir(fs, arg);
-        status = ret != 0 ? failed("mkdir", ret) : 0;
+        int ret = fs_mkdir(arg);
+        status = ret != 0 ? failed("fs_mkdir", ret) : 0;
     } else if(strcmp(op, "rmdir") == 0){
-        int ret = fs->ops->rmdir(fs, arg);
-        status = ret != 0 ? failed("rmdir", ret) : 0;
+        int ret = fs_rmdir(arg);
+        status = ret != 0 ? failed("fs_rmdir", ret) : 0;
     } else if(strcmp(op, "mv") == 0 && argc > 4){
-        int ret = fs->ops->rename(fs, arg, argv[4]);
-        status = ret != 0 ? failed("rename", ret) : 0;
+        int ret = fs_rename(arg, argv[4]);
+        status = ret != 0 ? failed("fs_rename", ret) : 0;
+    } else if(strcmp(op, "stat") == 0){
+        struct fs_dirent entry;
+        int ret = fs_stat(arg, &entry);
+        status = ret != 0 ? failed("fs_stat", ret) : 0;
+        if(ret == 0) print_dirent(&entry);
+    } else if(strcmp(op, "dir") == 0){
+        status = dir(arg);
     } else {
         return finish(usage());
     }

@@ -44,3 +44,9 @@ ops.remove pass
 ops.mkdir pass
 ops.rmdir pass
 ops.rename pass
+ops.rename-into-directory pass
+ops.rename-onto-existing pass
+ops.remove-directory pass
+ops.rmdir-not-empty pass
+ops.mkdir-exists pass
+ops.readdir-long-names pass

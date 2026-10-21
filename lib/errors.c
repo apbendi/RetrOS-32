@@ -40,7 +40,16 @@ static char* error_string[] = {
     "Out of memory.",
     "Access denied.",
     "Timed out.",
-    "File too large."
+    "File too large.",
+    "Directory not found.",
+    "Already exists.",
+    "Is a directory.",
+    "Not a directory.",
+    "Directory not empty.",
+    "No space left in the directory or on the disk.",
+    "Invalid file name.",
+    "Disk error.",
+    "No file system."
 };
 
 char* error_get_string(error_t err)

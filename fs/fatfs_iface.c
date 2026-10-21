@@ -32,22 +32,39 @@ static FATFS fatfs_volume;
 struct fatfs_open {
     int is_directory;
     FIL fil;
+    /* A directory, for fs_readdir */
+    DIR dir;
     /* A directory's entries, as the old FAT16 code returned them, read when it was opened */
     struct fat16_directory_entry* entries;
     int entry_count;
 };
 
+/**
+ * RetrOS's error code for a FatFs result. FatFs says FR_DENIED both when a directory or the disk is full and when
+ * a directory to remove isn't empty, so rmdir checks for the second itself.
+ */
 static int __fatfs_error(FRESULT res)
 {
     switch(res){
     case FR_OK: return ERROR_OK;
-    case FR_NO_FILE:
-    case FR_NO_PATH: return -ERROR_FILE_NOT_FOUND;
-    case FR_INVALID_NAME: return -ERROR_INVALID_ARGUMENTS;
+    case FR_NO_FILE: return -ERROR_FILE_NOT_FOUND;
+    case FR_NO_PATH: return -ERROR_PATH_NOT_FOUND;
+    case FR_INVALID_NAME: return -ERROR_INVALID_NAME;
+    case FR_EXIST: return -ERROR_FILE_EXISTS;
+    case FR_DENIED: return -ERROR_NO_SPACE;
     case FR_NOT_ENOUGH_CORE: return -ERROR_ALLOC;
+    case FR_WRITE_PROTECTED:
+    case FR_LOCKED: return -ERROR_ACCESS_DENIED;
+    case FR_DISK_ERR:
+    case FR_INT_ERR:
+    case FR_NOT_READY: return -ERROR_DISK;
+    case FR_NO_FILESYSTEM:
+    case FR_NOT_ENABLED:
+    case FR_INVALID_DRIVE: return -ERROR_NO_FILESYSTEM;
     default: return -ERROR_UNKNOWN;
     }
 }
+
 
 static int __fatfs_is_root(const char* path)
 {
@@ -150,28 +167,39 @@ static int __fatfs_read_directory(const char* path, struct fatfs_open* open)
 
 /* --- Operations ----------------------------------------------------------------------------------------------- */
 
-static struct file* fatfs_open(struct filesystem* fs, const char* path, int flags)
+/* Sets *error, if there's somewhere to set it, and returns NULL */
+static struct file* __fatfs_open_failed(int* error, int code)
 {
-    if(fs == NULL || path == NULL) return NULL;
+    if(error != NULL) *error = code;
+    return NULL;
+}
+
+static struct file* fatfs_open(struct filesystem* fs, const char* path, int flags, int* error)
+{
+    if(fs == NULL || path == NULL) return __fatfs_open_failed(error, -ERROR_NULL_POINTER);
 
     FILINFO info;
     int is_root = __fatfs_is_root(path);
-    int exists = is_root || f_stat(path, &info) == FR_OK;
+    FRESULT found = is_root ? FR_OK : f_stat(path, &info);
+    int exists = found == FR_OK;
     int is_directory = is_root || (exists && (info.fattrib & AM_DIR));
 
     /* A directory's entries aren't file data: writing them as a file would destroy the directory (#86) */
     int writes = flags & (FS_FILE_FLAG_WRITE | FS_FILE_FLAG_CREATE | FS_FILE_FLAG_TRUNCATE | FS_FILE_FLAG_APPEND);
-    if(is_directory && writes) return NULL;
-    if(!exists && !(flags & FS_FILE_FLAG_CREATE)) return NULL;
+    if(is_directory && writes) return __fatfs_open_failed(error, -ERROR_IS_DIRECTORY);
+    if(!exists && !(flags & FS_FILE_FLAG_CREATE)) return __fatfs_open_failed(error, __fatfs_error(found));
 
     struct fatfs_open* open = kalloc_try(sizeof(struct fatfs_open));
-    if(open == NULL) return NULL;
+    if(open == NULL) return __fatfs_open_failed(error, -ERROR_ALLOC);
     memset(open, 0, sizeof(struct fatfs_open));
 
     if(is_directory){
-        if(__fatfs_read_directory(path, open) < 0){
+        int ret = __fatfs_read_directory(path, open);
+        if(ret == ERROR_OK && f_opendir(&open->dir, path) != FR_OK) ret = -ERROR_DISK;
+        if(ret < 0){
+            if(open->entries != NULL) kfree(open->entries);
             kfree(open);
-            return NULL;
+            return __fatfs_open_failed(error, ret);
         }
     } else {
         BYTE mode = 0;
@@ -188,7 +216,7 @@ static struct file* fatfs_open(struct filesystem* fs, const char* path, int flag
         if(res != FR_OK){
             dbgprintf("[FATFS] Can't open %s: %d\n", path, res);
             kfree(open);
-            return NULL;
+            return __fatfs_open_failed(error, __fatfs_error(res));
         }
     }
 
@@ -196,11 +224,12 @@ static struct file* fatfs_open(struct filesystem* fs, const char* path, int flag
     if(file == NULL){
         if(is_directory){
             if(open->entries != NULL) kfree(open->entries);
+            f_closedir(&open->dir);
         } else {
             f_close(&open->fil);
         }
         kfree(open);
-        return NULL;
+        return __fatfs_open_failed(error, -ERROR_INDEX);
     }
 
     file->flags = flags;
@@ -274,6 +303,7 @@ static int fatfs_close(struct filesystem* fs, struct file* file)
     if(open != NULL){
         if(open->is_directory){
             if(open->entries != NULL) kfree(open->entries);
+            f_closedir(&open->dir);
         } else {
             f_close(&open->fil);
         }
@@ -289,10 +319,12 @@ static int fatfs_remove(struct filesystem* fs, const char* path)
 {
     FS_VALIDATE(fs);
 
+    if(__fatfs_is_root(path)) return -ERROR_IS_DIRECTORY;
+
     FILINFO info;
     FRESULT res = f_stat(path, &info);
     if(res != FR_OK) return __fatfs_error(res);
-    if(info.fattrib & AM_DIR) return -ERROR_INVALID_ARGUMENTS;
+    if(info.fattrib & AM_DIR) return -ERROR_IS_DIRECTORY;
 
     return __fatfs_error(f_unlink(path));
 }
@@ -303,17 +335,19 @@ static int fatfs_mkdir(struct filesystem* fs, const char* path)
     return __fatfs_error(f_mkdir(path));
 }
 
-/* Removes an empty directory. FatFs refuses one that isn't. */
+/* Removes an empty directory. FatFs refuses one that isn't, with FR_DENIED. */
 static int fatfs_rmdir(struct filesystem* fs, const char* path)
 {
     FS_VALIDATE(fs);
+    if(__fatfs_is_root(path)) return -ERROR_ACCESS_DENIED;
 
     FILINFO info;
     FRESULT res = f_stat(path, &info);
     if(res != FR_OK) return __fatfs_error(res);
-    if(!(info.fattrib & AM_DIR)) return -ERROR_INVALID_ARGUMENTS;
+    if(!(info.fattrib & AM_DIR)) return -ERROR_NOT_DIRECTORY;
 
-    return __fatfs_error(f_unlink(path));
+    res = f_unlink(path);
+    return res == FR_DENIED ? -ERROR_DIRECTORY_NOT_EMPTY : __fatfs_error(res);
 }
 
 /* Renames or moves a file or directory. The new path must not exist. */
@@ -323,13 +357,63 @@ static int fatfs_rename(struct filesystem* fs, const char* path, const char* new
     return __fatfs_error(f_rename(path, new_path));
 }
 
-static int fatfs_stat(struct filesystem* fs, const char* path, struct file* file)
+static void __fatfs_dirent(const FILINFO* info, struct fs_dirent* out)
+{
+    memset(out, 0, sizeof(*out));
+    int len = strlen(info->fname);
+    if(len > FS_NAME_MAX) len = FS_NAME_MAX;
+    memcpy(out->name, info->fname, len);
+    out->name[len] = 0;
+    out->size = info->fsize;
+    out->attributes = info->fattrib;
+    if(info->fdate != 0) __fatfs_time(info->fdate, info->ftime, &out->written);
+}
+
+/**
+ * f_stat reports a long name as the path spelled it, not as it's stored: it copies the name it searched for. The
+ * 8.3 name it reports is the stored one, and unique in the directory, so this finds the entry in its directory by
+ * that and takes the stored long name from there. A name with no long name and no case flags has no altname, and
+ * its fname is already the stored one.
+ */
+static void __fatfs_stored_name(const char* path, FILINFO* info)
+{
+    if(info->altname[0] == 0) return;
+
+    char parent[FS_PATH_MAX];
+    int len = strlen(path);
+    while(len > 0 && path[len - 1] != '/') len--;
+    if(len <= 1){
+        parent[0] = '/';
+        parent[1] = 0;
+    } else {
+        memcpy(parent, path, len - 1);
+        parent[len - 1] = 0;
+    }
+
+    DIR dir;
+    FILINFO entry;
+    if(f_opendir(&dir, parent) != FR_OK) return;
+    while(f_readdir(&dir, &entry) == FR_OK && entry.fname[0] != 0){
+        /* Not strcmp: the kernel's only compares as many characters as the first string has */
+        int alt_len = strlen(entry.altname);
+        if(alt_len == strlen(info->altname) && memcmp(entry.altname, info->altname, alt_len) == 0){
+            memcpy(info->fname, entry.fname, sizeof(info->fname));
+            break;
+        }
+    }
+    f_closedir(&dir);
+}
+
+static int fatfs_stat(struct filesystem* fs, const char* path, struct fs_dirent* out)
 {
     FS_VALIDATE(fs);
-    ERR_ON_NULL(file);
+    ERR_ON_NULL(out);
 
+    /* The root directory has no entry of its own */
     if(__fatfs_is_root(path)){
-        file->size = 0;
+        memset(out, 0, sizeof(*out));
+        out->name[0] = '/';
+        out->attributes = FS_ATTR_DIRECTORY;
         return ERROR_OK;
     }
 
@@ -337,8 +421,28 @@ static int fatfs_stat(struct filesystem* fs, const char* path, struct file* file
     FRESULT res = f_stat(path, &info);
     if(res != FR_OK) return __fatfs_error(res);
 
-    file->size = info.fsize;
+    __fatfs_stored_name(path, &info);
+    __fatfs_dirent(&info, out);
     return ERROR_OK;
+}
+
+static int fatfs_readdir(struct filesystem* fs, struct file* file, struct fs_dirent* out)
+{
+    FS_VALIDATE(fs);
+    ERR_ON_NULL(file);
+    ERR_ON_NULL(out);
+
+    struct fatfs_open* open = file->data;
+    if(file->nlinks == 0 || open == NULL) return -ERROR_INVALID_ARGUMENTS;
+    if(!open->is_directory) return -ERROR_NOT_DIRECTORY;
+
+    FILINFO info;
+    FRESULT res = f_readdir(&open->dir, &info);
+    if(res != FR_OK) return __fatfs_error(res);
+    if(info.fname[0] == 0) return 0;
+
+    __fatfs_dirent(&info, out);
+    return 1;
 }
 
 /* The shell's list command: one line per entry, with its size, date, time and name */
@@ -459,7 +563,8 @@ static struct filesystem_ops fatfs_ops = {
     .rename = fatfs_rename,
     .stat = fatfs_stat,
     .list = fatfs_list,
-    .find = fatfs_find
+    .find = fatfs_find,
+    .readdir = fatfs_readdir
 };
 
 /* --- Mounting and formatting ------------------------------------------------------------------------------------ */
