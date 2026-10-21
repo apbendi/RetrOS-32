@@ -13,6 +13,7 @@
 #include <utils/Thread.hpp>
 #include <utils/Widgets.hpp>
 #include <syscall_helper.h>
+#include <errors.h>
 
 extern "C" int invoke_syscall(int i, int arg1, int arg2, int arg3);
 
@@ -55,46 +56,124 @@ static int digitCount(int value)
     return digits;
 }
 
+/**
+ * Writes path into out, which holds FS_PATH_MAX bytes, as an absolute path without empty, "." or ".." parts. A
+ * relative path starts from the Editor's current directory, the one it was started in, as the kernel takes it. So
+ * the status line and Save name the file the same way however it was typed.
+ * @return 0, or -1 if the path is too long
+ */
+static int editor_absolute_path(const char* path, char* out)
+{
+    char joined[FS_PATH_MAX];
+    int len = 0;
+    if (path[0] != '/') {
+        if (getcwd(joined, sizeof(joined)) < 0) {
+            return -1;
+        }
+        len = strlen(joined);
+        joined[len++] = '/';
+    }
+
+    int path_len = strlen(path);
+    if (len + path_len >= (int)sizeof(joined)) {
+        return -1;
+    }
+    memcpy(joined + len, path, path_len + 1);
+
+    /* Copy each part, skipping empty ones and ".", and going back over the last part for ".." */
+    int out_len = 0;
+    const char* p = joined;
+    while (*p != 0) {
+        while (*p == '/') {
+            p++;
+        }
+        if (*p == 0) {
+            break;
+        }
+
+        const char* part = p;
+        while (*p != 0 && *p != '/') {
+            p++;
+        }
+        int part_len = p - part;
+
+        if (part_len == 1 && part[0] == '.') {
+            continue;
+        }
+        if (part_len == 2 && part[0] == '.' && part[1] == '.') {
+            while (out_len > 0 && out[out_len - 1] != '/') {
+                out_len--;
+            }
+            if (out_len > 0) {
+                out_len--;
+            }
+            continue;
+        }
+
+        if (out_len + 1 + part_len >= FS_PATH_MAX) {
+            return -1;
+        }
+        out[out_len++] = '/';
+        memcpy(out + out_len, part, part_len);
+        out_len += part_len;
+    }
+
+    if (out_len == 0) {
+        out[out_len++] = '/';
+    }
+    out[out_len] = 0;
+    return 0;
+}
+
+/* The longest window title, without its 0: GFX_MAX_WINDOW_NAME_SIZE in include/gfx/window.h, less one */
+#define EDITOR_TITLE_MAX 19
+
+/* The window title for a file: its name without its directory, shortened to fit a title */
+static void editor_title(const char* path, char* out, int size)
+{
+    const char* name = path;
+    for (const char* p = path; *p != 0; p++) {
+        if (*p == '/' && p[1] != 0) {
+            name = p + 1;
+        }
+    }
+
+    int max = EDITOR_TITLE_MAX;
+    if (max > size - 1) {
+        max = size - 1;
+    }
+
+    int len = strlen(name);
+    if (len <= max) {
+        memcpy(out, name, len + 1);
+        return;
+    }
+    memcpy(out, name, max - 3);
+    memcpy(out + max - 3, "...", 4);
+}
+
 /* Opens path for saving: created if it doesn't exist, and emptied, so a shorter text leaves nothing of the old one */
 static int open_editor_file_for_save(const char* path)
 {
-    int flags = FS_FILE_FLAG_CREATE | FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE | FS_FILE_FLAG_TRUNCATE;
-
     if (path == nullptr || path[0] == 0) {
-        return -1;
+        return -ERROR_INVALID_ARGUMENTS;
     }
-
-    int fd = open(path, flags);
-    if (fd < 0 && path[0] == '/' && path[1] != 0) {
-        fd = open(path + 1, flags);
-    }
-    return fd;
+    return open(path, FS_FILE_FLAG_CREATE | FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE | FS_FILE_FLAG_TRUNCATE);
 }
 
+/* Opens path to edit, creating it if it doesn't exist. @return the fd, or a negative error code from errors.h */
 static int open_editor_file(const char* path)
 {
     if (path == nullptr || path[0] == 0) {
-        return -1;
+        return -ERROR_INVALID_ARGUMENTS;
     }
 
     int flags_rw = FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE;
-    int flags_create = FS_FILE_FLAG_CREATE | flags_rw;
-
     int fd = open(path, flags_rw);
-    if (fd >= 0) {
+    if (fd != -ERROR_FILE_NOT_FOUND) {
         return fd;
     }
-
-    fd = open(path, flags_create);
-    if (fd >= 0) {
-        return fd;
-    }
-
-    if (path[0] == '/' && path[1] != 0) {
-        fd = open(path + 1, flags_create);
-    }
-
-    return fd;
+    return open(path, FS_FILE_FLAG_CREATE | flags_rw);
 }
 
 enum {
@@ -111,7 +190,7 @@ enum {
 struct EditorNewFilePopupShared {
     volatile int running;
     volatile int result;
-    char path[256];
+    char path[FS_PATH_MAX];
 };
 
 static int trim_copy_path(const char* src, char* dst, int dst_size)
@@ -322,7 +401,7 @@ static void __editor_new_file_popup_thread(void* arg)
             action = EDITOR_NEW_FILE_POPUP_ACTION_NONE;
             memset(status, 0, sizeof(status));
 
-            char trimmed[256];
+            char trimmed[FS_PATH_MAX];
             memset(trimmed, 0, sizeof(trimmed));
             if (path_input == nullptr || trim_copy_path(path_input->getData(), trimmed, sizeof(trimmed)) <= 0) {
                 strncpy(status, "Path is empty.", (uint32_t)(sizeof(status) - 1));
@@ -363,6 +442,7 @@ Editor::Editor()
     m_y = 0;
     m_dirty = 0;
     m_preferredColumn = -1;
+    m_keepStatus = 0;
     scrollY = 0;
     m_scrollWrap = 0;
     m_textColor = COLOR_TEXT;
@@ -755,7 +835,8 @@ void Editor::drawLineNumbers(const int* row_lines, int row_count)
 
 void Editor::drawStatusLine(color_t color, const char* fmt, ...)
 {
-    char msg[256];
+    /* csprintf writes up to 1,023 characters and a 0. Static, to keep it off the app's 8 KB stack. */
+    static char msg[1024];
     memset(msg, 0, sizeof(msg));
 
     va_list args;
@@ -784,6 +865,7 @@ void Editor::drawStatusLine(color_t color, const char* fmt, ...)
     }
 
     gfx_draw_format_text(x, y, color, "%s", msg);
+    m_keepStatus = color == COLOR_VGA_RED;
 }
 
 void Editor::reDrawHeader()
@@ -950,7 +1032,20 @@ void Editor::reDraw(int from, int to)
     const char* file_label = m_currentPath[0] ? m_currentPath : "(untitled)";
     const char* dirty_tag = hasUnsavedChanges() ? "*" : "";
 
-    drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "%s%s  Ln:%d Col:%d", file_label, dirty_tag, line, colnum);
+    /* A long path keeps its end, after "...", so the line and column stay in view */
+    const char* dots = "";
+    int room = textClipWidth() / 8 - (int)strlen("*  Ln:99999 Col:9999");
+    int label_len = strlen(file_label);
+    if (room > 4 && label_len > room) {
+        file_label += label_len - (room - 3);
+        dots = "...";
+    }
+
+    if (m_keepStatus) {
+        m_keepStatus = 0;
+        return;
+    }
+    drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "%s%s%s  Ln:%d Col:%d", dots, file_label, dirty_tag, line, colnum);
 }
 
 void Editor::setColor(color_t color)
@@ -1527,10 +1622,17 @@ bool Editor::Open(char* path)
         }
     }
 
-    int new_fd = open_editor_file(path);
+    static char absolute[FS_PATH_MAX];
+    if (editor_absolute_path(path, absolute) < 0) {
+        printf("[editor] Open: path too long %s\n", path);
+        drawStatusLine(COLOR_VGA_RED, "Can't open %s: the path is too long.", path);
+        return false;
+    }
+
+    int new_fd = open_editor_file(absolute);
     if (new_fd < 0) {
-        printf("[editor] Open: failed %s\n", path);
-        drawStatusLine(COLOR_VGA_RED, "Unable to open/create %s", path);
+        printf("[editor] Open: failed %s: %s\n", absolute, error_get_string(new_fd));
+        drawStatusLine(COLOR_VGA_RED, "Can't open %s: %s", absolute, error_get_string(new_fd));
         return false;
     }
 
@@ -1539,9 +1641,11 @@ bool Editor::Open(char* path)
     }
     m_fd = new_fd;
 
-    setTitle(path);
+    char title[EDITOR_TITLE_MAX + 1];
+    editor_title(absolute, title, sizeof(title));
+    setTitle(title);
 
-    strncpy(m_currentPath, path, (uint32_t)(sizeof(m_currentPath) - 1));
+    strncpy(m_currentPath, absolute, (uint32_t)(sizeof(m_currentPath) - 1));
     m_currentPath[sizeof(m_currentPath) - 1] = 0;
 
     memset(m_textBuffer, 0, m_bufferSize);
@@ -1587,7 +1691,7 @@ bool Editor::Open(char* path)
 
     reDrawHeader();
     reDraw(0, m_bufferHead);
-    printf("[editor] Open: success %s (bytes=%d)\n", path, m_bufferHead);
+    printf("[editor] Open: success %s (bytes=%d)\n", m_currentPath, m_bufferHead);
     return true;
 }
 
@@ -1614,18 +1718,28 @@ bool Editor::Save()
             m_fd = -1;
         }
 
-        m_fd = open_editor_file_for_save(m_currentPath);
-        if (m_fd < 0) {
-            drawStatusLine(COLOR_VGA_RED, "Save failed.");
+        int fd = open_editor_file_for_save(m_currentPath);
+        if (fd < 0) {
+            printf("[editor] Save: can't open %s: %s\n", m_currentPath, error_get_string(fd));
+            drawStatusLine(COLOR_VGA_RED, "Can't save %s: %s", m_currentPath, error_get_string(fd));
             return false;
         }
+        m_fd = fd;
     }
 
     int ret = write(m_fd, m_textBuffer, m_bufferHead);
-    if (ret < 0 || ret != m_bufferHead) {
-        drawStatusLine(COLOR_VGA_RED, "Save failed.");
+    if (ret < 0) {
+        printf("[editor] Save: can't write %s: %s\n", m_currentPath, error_get_string(ret));
+        drawStatusLine(COLOR_VGA_RED, "Can't save %s: %s", m_currentPath, error_get_string(ret));
         return false;
     }
+    if (ret != m_bufferHead) {
+        /* A short write means the disk is full */
+        printf("[editor] Save: wrote %d of %d bytes to %s\n", ret, m_bufferHead, m_currentPath);
+        drawStatusLine(COLOR_VGA_RED, "Saved only %d of %d bytes: %s", ret, m_bufferHead, error_get_string(-ERROR_NO_SPACE));
+        return false;
+    }
+    printf("[editor] Save: saved %s (bytes=%d)\n", m_currentPath, m_bufferHead);
 
     m_fileSize = m_bufferHead;
     m_dirty = 0;
@@ -1708,7 +1822,7 @@ bool Editor::showNewFileDialog(char* out_path, int out_path_size)
 
 void Editor::FileChooser()
 {
-    char selected_file[256];
+    char selected_file[FS_PATH_MAX];
     memset(selected_file, 0, sizeof(selected_file));
 
     enum {
@@ -2007,15 +2121,12 @@ void Editor::FileChooser()
         if (chooser_action == CHOOSER_ACTION_NEW) {
             chooser_action = CHOOSER_ACTION_NONE;
 
-            char new_file[256];
+            char new_file[FS_PATH_MAX];
             memset(new_file, 0, sizeof(new_file));
             if (showNewFileDialog(new_file, sizeof(new_file)) && new_file[0] != 0) {
                 printf("[editor] chooser new: trying open %s\n", new_file);
                 if (!Open(new_file)) {
-                    reDrawHeader();
-                    treeView->drawTree(this);
-                    reDraw(0, m_bufferHead);
-                    drawStatusLine(COLOR_VGA_RED, "Create failed: %s", new_file);
+                    /* Open said why on the status line, which the redraw would cover */
                     printf("[editor] chooser new: open failed %s\n", new_file);
                     continue;
                 }

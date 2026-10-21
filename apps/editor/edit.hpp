@@ -124,7 +124,9 @@ private:
     int m_y;
     int m_dirty;
     int m_preferredColumn;
-    char m_currentPath[256];
+    char m_currentPath[FS_PATH_MAX];
+    /* An error is on the status line, which the next redraw leaves in place instead of drawing the file's name */
+    int m_keepStatus;
 
     int scrollY;
     int m_scrollWrap;

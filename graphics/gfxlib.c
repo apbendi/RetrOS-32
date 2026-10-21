@@ -303,9 +303,10 @@ int kernel_gfx_draw_text(struct window* w, int x, int y, const char* str, unsign
 	return 0;
 }
 
+/* A title or header has to fit with its terminating 0, and a thread without a window has none to set */
 int kernel_gfx_set_title(const char* title)
 {
-	if(strlen(title) > GFX_MAX_WINDOW_NAME_SIZE)
+	if(title == NULL || $process->current->gfx_window == NULL || strlen(title) >= GFX_MAX_WINDOW_NAME_SIZE)
 		return -1;
 	
 	memset($process->current->gfx_window->name, 0, GFX_MAX_WINDOW_NAME_SIZE);
@@ -316,7 +317,7 @@ int kernel_gfx_set_title(const char* title)
 
 int kernel_gfx_set_header(const char* header)
 {
-	if(strlen(header) > GFX_MAX_WINDOW_NAME_SIZE)
+	if(header == NULL || $process->current->gfx_window == NULL || strlen(header) >= GFX_MAX_WINDOW_NAME_SIZE)
 		return -1;
 	
 	memset($process->current->gfx_window->header, 0, GFX_MAX_WINDOW_NAME_SIZE);
