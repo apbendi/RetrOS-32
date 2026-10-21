@@ -31,6 +31,7 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
 - **Apps are processes.** `pcb_create_process` loads a flat binary at `0x1000000` into its own page directory and runs it in ring 3. Apps reach the kernel only through `int $48` (`lib/syscall.c`), drawing included.
 - **Any thread can be preempted.** The timer interrupt runs at 1000 Hz and calls `kernel_yield()` on every tick. There's one CPU, so `ENTER_CRITICAL()`, which turns interrupts off, is what keeps other threads out.
 - **Boot:** `boot/bootloader.s` → `kernel/kcrt0.s` → `kernel()` in `kernel/kernel.c`.
+  - **Interrupts stay off** from the bootloader until `kernel()` has loaded its interrupt table (`init_interrupts()`). An interrupt taken before then triple-faults (#41).
   - `kernel()` initializes each subsystem, starts `idled`, `workd`, `wind` and, if `default.cfg` enables it, `netd`, then starts the timer.
   - `wind` starts `login`, which runs `rootfs/sysutil/startup.sh`.
   - **The kernel image** is a flat binary loaded at `0x10000`, and `.bss` is the last part of it (`kernel/linker.ld`). The bootloader doesn't always load the end of the image (#32), so `kcrt0` clears `.bss` before calling `kernel()`.

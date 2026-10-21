@@ -373,7 +373,11 @@ setup_gdt:
     movw %ax, %ss
     movl $0x3000, %esp
 
-    sti
+    /**
+     * Interrupts stay off into the kernel. There's no protected-mode interrupt table until the kernel's
+     * init_interrupts(), so an interrupt taken before then, such as a timer tick that's already pending,
+     * triple-faults (#41). The kernel enables interrupts itself once it's ready.
+     */
     ljmp $0x8, $enter32
 
 /* Set a20 line from: http://www.brokenthorn.com/Resources/OSDev9.html*/

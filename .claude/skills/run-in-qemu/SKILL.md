@@ -88,9 +88,6 @@ done
 
 - **`start` reports a crash during boot.** It stops waiting at `KERNEL PANIC`, `[exception]` or a page fault, and points you to `log --all`. Read the log with the `debug-kernel-panic` skill.
 - **A triple fault stops the VM** instead of rebooting it (`-no-reboot -no-shutdown`), so `$Q mon "info registers"` still shows the CPU state.
-- **Rarely, the boot triple-faults right after the resolution is picked.** `pick` then says the kernel didn't start, and `.qemu/qemu-debug.log` says `Triple fault`. Under lldb, it reports SIGQUIT at `0x81f2`.
-  - **Probable cause:** the bootloader enables interrupts (`sti` in `boot/bootloader.s`) before the kernel has an interrupt table, so an interrupt that's already pending can't be handled.
-  - **What to do:** start again.
 - **`.qemu/qemu-debug.log`** has QEMU's register dump at every CPU reset, including the first one at power-on, and any guest errors QEMU noticed.
 - **Monitor commands worth knowing:**
   - `info registers`;
