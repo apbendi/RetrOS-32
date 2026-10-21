@@ -3,6 +3,11 @@
 
 #define TAR_BLOCK_SIZE 512
 
+/* Header typeflags: a file, which old archives mark with a zero byte, and a directory */
+#define TAR_TYPE_FILE '0'
+#define TAR_TYPE_FILE_OLD '\0'
+#define TAR_TYPE_DIRECTORY '5'
+
 #ifdef __cplusplus
 extern "C" {
 #endif
