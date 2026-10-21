@@ -59,6 +59,14 @@ int fs_backend_format(const char* label, int reserved)
     return fat16_format((char*)label, reserved);
 }
 
+/* Counts the FAT's used entries, of 65,536, as 512-byte blocks */
+int fs_backend_usage(int* used_kb, int* total_kb)
+{
+    *used_kb = fat16_used_blocks() / 2;
+    *total_kb = 65536 / 2;
+    return 0;
+}
+
 int fat16_init()
 {
     /* load the fat16 filesystem */

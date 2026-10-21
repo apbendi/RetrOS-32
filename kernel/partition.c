@@ -11,7 +11,6 @@
 
 #include <mbr.h>
 #include <fs/fs.h>
-#include <fs/fat16.h>
 #include <kutils.h>
 #include <libc.h>
 #include <serial.h>
@@ -43,7 +42,8 @@ const char* mbr_partition_type_string(mbr_partition_type_t type)
 static struct mbr mbr = {0};
 
 /**
- * @brief Parses the partition table and loads the filesystems.
+ * @brief Logs the partition table. Mounting doesn't depend on it: fs_mount finds the volume either way. A disk
+ * formatted without a partition table has boot code where the table would be, so its entries are meaningless.
  * 
  * @return int 
  */
@@ -53,15 +53,6 @@ int mbr_partitions_parse()
     for(int i = 0; i < 4; i++){
         if(mbr.part[i].type == 0) continue;
 
-        switch (mbr.part[i].type){
-        case MBR_TYPE_FAT16_LBA:
-            fat16_init();
-            break;
-        default:
-            dbgprintf("Unsupported partition type: %d\n", mbr.part[i].type);
-            break;
-        }
-        
         dbgprintf("Partition %d:   %s    %s,       %d,         %d\n", i, mbr.part[i].status == MBR_STATUS_ACTIVE ? "*": " ",  mbr_partition_type_string(mbr.part[i].type), mbr.part[i].lba_start, mbr.part[i].num_sectors);
     }
 

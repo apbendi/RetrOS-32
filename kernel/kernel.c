@@ -175,11 +175,10 @@ void kernel(uint32_t magic)
 	net_init_loopback();
 	kernel_boot_printf("Networking initialized.");
 
-	/* initilize file systems and disk */
-	if(!disk_attached()){
-		
-	} else {
+	/* initilize file systems and disk. FatFs finds the volume, whether it has a partition table or not. */
+	if(disk_attached()){
 		mbr_partition_load();
+		fs_mount();
 	}
 	kernel_boot_printf("Filesystem initialized.");
 

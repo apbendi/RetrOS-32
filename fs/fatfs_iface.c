@@ -479,6 +479,18 @@ int fs_backend_mount(void)
     return 0;
 }
 
+int fs_backend_usage(int* used_kb, int* total_kb)
+{
+    DWORD free_clusters;
+    FATFS* volume;
+    if(f_getfree("", &free_clusters, &volume) != FR_OK) return -1;
+
+    DWORD clusters = volume->n_fatent - 2;
+    *total_kb = (int)(clusters * volume->csize / 2);
+    *used_kb = (int)((clusters - free_clusters) * volume->csize / 2);
+    return 0;
+}
+
 /* Where the boot sector keeps its copy of the volume label, and the field that's 0 only on FAT32 */
 #define BOOT_LABEL_FAT16 43
 #define BOOT_LABEL_FAT32 71
