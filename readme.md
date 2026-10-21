@@ -148,23 +148,18 @@ _To compile the kernel and its needed programs you simply need to run *make img*
    ./debian.sh
    ```
 
-3. Initialize Git submodules (C-Compiler)
-   ```sh
-   git submodule update --init --recursive
-   ```
-
-4. Compile and create image
+3. Compile and create image
    ```sh
    make compile
    make img
    ```
    
-5. Launch QEMU
+4. Launch QEMU
    ```sh
    make qemu
    ```
 
-6. Use GRUB (Optional)
+5. Use GRUB (Optional)
    ```sh
    make grub
    ```
@@ -179,12 +174,7 @@ Docker is the simplest way if you still wish to compile the operating system.
    git clone https://github.com/joexbayer/RetrOS-32.git
    ```
 
-2. Initialize Git submodules (C-Compiler)
-   ```sh
-   git submodule update --init --recursive
-   ```
-
-3. Build using Docker
+2. Build using Docker
    ```sh
    docker-compose up --build
    ```
@@ -347,6 +337,14 @@ See the [open issues](https://github.com/joexbayer/RetrOS-32/issues) for a full 
 ## License
 
 Distributed under the MIT License. See `LICENSE.txt` for more information.
+
+### Third-party code
+
+These directories come from other projects and keep their own licenses:
+
+| Directory | Project | License |
+|---|---|---|
+| `apps/C-Compiler` | [joexbayer/C-Compiler](https://github.com/joexbayer/C-Compiler), the compiler installed as `/bin/cc.o` | GNU GPL version 2 (`apps/C-Compiler/LICENSE`) |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
