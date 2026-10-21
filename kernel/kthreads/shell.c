@@ -224,6 +224,8 @@ void xxd(int argc, char* argv[])
 	char* buf = kalloc(32*1024);
 	int ret = fs_read(inode, buf, 32*1024);
 	if(ret < 0){
+		fs_close(inode);
+		kfree(buf);
 		twritef("Error reading file\n");
 		return;
 	}
@@ -245,7 +247,7 @@ void sh(int argc, char* argv[])
 	}
 
 	int inode = fs_open(argv[1], FS_FILE_FLAG_READ);
-	if(inode <= 0){
+	if(inode < 0){
 		twritef("File %s not found.\n", argv[1]);
 		return;
 	}
@@ -254,6 +256,7 @@ void sh(int argc, char* argv[])
 	int ret = fs_read(inode, buf, 32*1024);
 	if(ret < 0){
 		fs_close(inode);
+		kfree(buf);
 		twritef("Error reading file\n");
 		return;
 	}

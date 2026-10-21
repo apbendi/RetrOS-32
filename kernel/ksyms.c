@@ -59,16 +59,17 @@ static int __init_symbols(void)
 
 static int __load_symbols(void)
 {
-    struct filesystem* fs = fs_get();
-    if(fs == NULL) return -1;
-
-    struct file* file = fs->ops->open(fs, "/sysutil/symbols.map", FS_FILE_FLAG_READ);
-    if(file == NULL) return -2;
+    int fd = fs_open("/sysutil/symbols.map", FS_FILE_FLAG_READ);
+    if(fd < 0) return -2;
 
     char* buf = (char*) kalloc(MAX_SYMBOLS*50);
-    if(buf == NULL) return -3;
+    if(buf == NULL){
+        fs_close(fd);
+        return -3;
+    }
 
-    int read = fs->ops->read(fs, file, buf, MAX_SYMBOLS*50);
+    int read = fs_read(fd, buf, MAX_SYMBOLS*50);
+    fs_close(fd);
     if(read < 0){
         kfree(buf);
         return -4;

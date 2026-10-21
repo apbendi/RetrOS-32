@@ -355,6 +355,9 @@ int pcb_cleanup_routine(void* arg)
 
 	/* Gracefully tear down any sockets owned by this PCB before freeing memory. */
 	net_close_sockets_owned_by(pcb);
+
+	/* And close its files, so their slots don't stay taken (#61) */
+	fs_close_files_of(pcb);
 	
 	switch (pcb->is_process){
 	case PCB_PROCESS:
