@@ -141,6 +141,11 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - **Size limits:** `gfx_window_clamp_size` enforces a minimum of `GFX_WINDOW_MIN_WIDTH`×`GFX_WINDOW_MIN_HEIGHT` (128×48) and keeps the window on screen. The resize outline and `gfx_window_resize` both use it, so they agree. When there isn't enough memory, `gfx_window_resize` keeps the old size.
 - **Creating:** `gfx_new_window` returns NULL when there isn't enough memory for the buffer. Kernel threads check for it and return. For apps, `gfx_create_window` in `lib/syscall.c` prints a message and exits, since an app without a window can't be seen or closed.
 - **Resizing:** dragging the corner only moves an outline, drawn from `pending_size`. The window keeps its size and buffer until the release, when `gfx_default_mouse_up` calls `gfx_window_resize` once (#10). Maximize and restore resize right away.
+- **Fullscreen (F10):** the window's `inner` becomes the window server's composition buffer, at screen size, and the window server stops compositing.
+  - **What's recorded:** the window server remembers which window it is (`ws->_fullscreen`) and the fields it changed (`ws->_saved`). F10 restores exactly those on that window, even if another window has come to the front since.
+  - **No resizing:** while `is_fullscreen` is set, `gfx_window_resize` refuses, since it would free the composition buffer.
+  - **Closing it:** `ws_remove` leaves fullscreen before the window's buffer is freed.
+  - **The taskbar** (`GFX_IS_IMMUATABLE`) doesn't go fullscreen.
 - **Moving:** `is_moving.x`/`y` hold where the title bar was grabbed, relative to the window's position. `gfx_default_hover` keeps that point under the cursor, clamping each axis to the screen on its own, so a window pushed against an edge slides along it. The whole window has to stay on screen because drawing isn't clipped (#4). #18 covers letting windows hang off the edge.
 
 **Drawing:**

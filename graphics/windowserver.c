@@ -24,6 +24,7 @@ static int ws_init(struct windowserver* ws);
 static int ws_add(struct windowserver* ws, struct window* window);
 static int ws_remove(struct windowserver* ws, struct window* window);
 static int ws_fullscreen(struct windowserver* ws, struct window* window);
+static void __ws_leave_fullscreen(struct windowserver* ws);
 static int ws_set_background(struct windowserver* ws, color_t color);
 static int ws_set_background_file(struct windowserver* ws, const char* path);
 static int ws_draw(struct windowserver* ws);
@@ -49,7 +50,7 @@ static int ws_init(struct windowserver* ws)
     dbgprintf("[WSERVER] Initializing window manager.\n");
 
     ws->sleep_time = WINDOW_SERVER_SLEEP_TIME;
-    ws->_is_fullscreen = false;
+    ws->_fullscreen = NULL;
 
     struct windowmanager* wm = wm_new(0);
     if(wm == NULL){
@@ -118,6 +119,16 @@ static int ws_remove(struct windowserver* ws, struct window* window)
         ws->_wm->pressed_window = NULL;
     }
 
+    /**
+     * A fullscreen window's buffer is the composition buffer, and gfx_destroy_window frees the window's
+     * buffer next. Give it its own back first, which also lets the desktop be composited again.
+     * Its owner has exited and interrupts are off, so nothing else draws into it, and buffer_lock isn't
+     * needed. It couldn't be taken here anyway: spin_lock waits by yielding.
+     */
+    if(ws->_fullscreen == window){
+        __ws_leave_fullscreen(ws);
+    }
+
     if(ws->_wm->ops->remove(ws->_wm, window) < 0){
         return -ERROR_OPS_CORRUPTED;
     }
@@ -125,44 +136,78 @@ static int ws_remove(struct windowserver* ws, struct window* window)
     return ERROR_OK;
 }
 
+/* Points the window at the composition buffer, at screen size, and saves what it had */
+static void __ws_enter_fullscreen(struct windowserver* ws, struct window* window)
+{
+    ws->_saved.inner = window->inner;
+    ws->_saved.inner_width = window->inner_width;
+    ws->_saved.inner_height = window->inner_height;
+    ws->_saved.pitch = window->pitch;
+    ws->_saved.x = window->x;
+    ws->_saved.y = window->y;
+
+    window->inner = ws->_wm->composition_buffer;
+    window->inner_width = vbe_info->width;
+    window->inner_height = vbe_info->height;
+    window->pitch = vbe_info->width;
+    window->x = 0;
+    window->y = 0;
+    window->is_fullscreen = 1;
+
+    ws->_fullscreen = window;
+}
+
+/* Gives the fullscreen window back what it had before, and composites the desktop again */
+static void __ws_leave_fullscreen(struct windowserver* ws)
+{
+    struct window* window = ws->_fullscreen;
+
+    window->inner = ws->_saved.inner;
+    window->inner_width = ws->_saved.inner_width;
+    window->inner_height = ws->_saved.inner_height;
+    window->pitch = ws->_saved.pitch;
+    window->x = ws->_saved.x;
+    window->y = ws->_saved.y;
+    window->is_fullscreen = 0;
+    window->changed = 1;
+
+    ws->_fullscreen = NULL;
+    ws->window_changes = 1;
+}
+
+/**
+ * Makes the window fullscreen, or gives it back its own buffer if it already is.
+ * Only one window can be fullscreen at a time, so for any other window this fails.
+ */
 static int ws_fullscreen(struct windowserver* ws, struct window* window)
 {
     ERR_ON_NULL(ws);
     ERR_ON_NULL(window);
     WS_VALIDATE(ws);
 
+    if(ws->_fullscreen != NULL && ws->_fullscreen != window){
+        return -ERROR_INVALID_ARGUMENTS;
+    }
+
+    /**
+     * Windows that can't be moved or resized, like the taskbar, don't go fullscreen either. The taskbar
+     * doesn't draw over the whole screen, so the display would just look frozen until the next F10.
+     */
+    if(ws->_fullscreen == NULL && HAS_FLAG(window->flags, GFX_IS_IMMUATABLE)){
+        return -ERROR_INVALID_ARGUMENTS;
+    }
+
     /* The window's owner may be drawing into it on its own thread, so swap buffers between its draws */
     spin_lock(&window->buffer_lock);
 
-    if(ws->_is_fullscreen){
-        
-         /* store and backup original window information */
-        window->inner_width = window->width-16;
-        window->inner_height = window->height-16;
-
-        window->inner = ws->_tmp;
-        window->pitch = window->inner_width;
-        window->y = 10;
-        window->x = 10;
-
-        ws->_is_fullscreen = false;
-
+    /* ws_remove runs on another thread with interrupts off, so keep it from seeing a half-done swap */
+    ENTER_CRITICAL();
+    if(ws->_fullscreen == window){
+        __ws_leave_fullscreen(ws);
     } else {
-        window->inner_width = vbe_info->width;
-        window->inner_height = vbe_info->height;
-
-        /* save old window */
-        ws->_tmp = window->inner;
-
-        /* set new window */
-        window->inner = ws->_wm->composition_buffer;
-        window->pitch = vbe_info->width;
-
-        window->y = 0;
-        window->x = 0;
-
-        ws->_is_fullscreen = true;
+        __ws_enter_fullscreen(ws, window);
     }
+    LEAVE_CRITICAL();
 
     spin_unlock(&window->buffer_lock);
 
@@ -291,9 +336,15 @@ static int __ws_key_event(struct windowserver* ws, unsigned char key)
         }
         break;
     case F10:{
-            /* Fullscreen of window current in focus*/
-            struct window* w = ws->_wm->windows;
-            ws->ops->fullscreen(ws, w);
+            /**
+             * Leave fullscreen on the fullscreen window, even if another window has come to the front since:
+             * a click, TAB or the fullscreen window's exit can change the front window. Otherwise make the
+             * front window fullscreen.
+             */
+            struct window* w = ws->_fullscreen != NULL ? ws->_fullscreen : ws->_wm->windows;
+            if(w == NULL || ws->ops->fullscreen(ws, w) < 0){
+                break;
+            }
 
             struct gfx_event e = {
                 .data = w->inner_width,
@@ -339,7 +390,7 @@ static int ws_draw(struct windowserver* ws)
 
     __ws_key_event(ws, key);
     
-    if((ws->window_changes || mouse_changed ) && !ws->_is_fullscreen){
+    if((ws->window_changes || mouse_changed ) && ws->_fullscreen == NULL){
         memcpy(ws->_wm->composition_buffer, ws->background, ws->_wm->composition_buffer_size);
 
         /* write current workspace at the right bottom of screen */

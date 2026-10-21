@@ -43,10 +43,15 @@ struct windowserver {
     struct pcb* server;
     struct pcb* taskbar;
 
-    bool_t _is_fullscreen;
+    /* The window F10 made fullscreen, or NULL. It draws straight into the composition buffer. */
+    struct window* _fullscreen;
 
-    /* value to hold a pointer while window is in fullscreen. */
-    void* _tmp;
+    /* What going fullscreen changed on that window, so leaving gives it back exactly */
+    struct {
+        uint8_t* inner;
+        uint16_t inner_width, inner_height, pitch;
+        uint16_t x, y;
+    } _saved;
     /* frame buffers */
     ubyte_t* background;
 

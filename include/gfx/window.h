@@ -104,7 +104,10 @@ struct window {
     /* Pointer to inner memory where applications draw. */
     uint8_t* inner;
     uint8_t is_resizable;
-    uint8_t resize;    
+    uint8_t resize;
+
+    /* Set while F10 has the window fullscreen. inner is then the window server's composition buffer, which must not be replaced or freed. */
+    uint8_t is_fullscreen;
 
     /* Content size the outline shows during a resize. The buffer is only resized to it on release. */
     struct {

@@ -213,6 +213,14 @@ static void gfx_window_clamp_size(struct window* w, int* width, int* height)
 /* under construction */
 static int gfx_window_resize(struct window* w, int width, int height)
 {
+    /**
+     * A fullscreen window's buffer is the window server's composition buffer. Resizing would free it
+     * while the window server still draws into it. F10 gives the window its own buffer back first.
+     */
+    if(w->is_fullscreen){
+        return -ERROR_INVALID_ARGUMENTS;
+    }
+
     /* Width and height are the content size, 16 px smaller than the window. */
     gfx_window_clamp_size(w, &width, &height);
     if(width <= 0 || height <= 0){
@@ -546,6 +554,7 @@ struct window* gfx_new_window(int width, int height, window_flag_t flags)
         w->is_resizable = 0;
     }
     w->resize = 0;
+    w->is_fullscreen = 0;
     w->pending_size.width = 0;
     w->pending_size.height = 0;
     
