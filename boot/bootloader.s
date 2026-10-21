@@ -124,6 +124,8 @@ total_error_str:
     .asciz "\nUnable to load stage 2 bootloader\n"
 drive_num:
     .word 0x0000
+kernel_sectors_left:
+    .word 0x0000
 
 # Boot partition set.
 . = _start + 446
@@ -214,6 +216,7 @@ new_line_str:
 disk_address_packet:
     .byte 0x10 /* size of DAP (set this to 10h) */
     .byte 0x00
+sectors_to_read:
     .word 0x0040 /* number of sectors to be read */
 offset:
     .word 0x0000 /* segment:offset pointer to the memory buffer to which sectors will be transferred */ 
@@ -308,44 +311,53 @@ print_main_window:
 _stage2:
     call print_main_window
 
-    /* Read reserved_blocks */
-    movw _start+14, %bx
-
-    movw %bx, %ax      /* Copy %bx to %ax */
-    xorw %dx, %dx      /* Clear %dx, now DX:AX contains the value from %bx */
-    movw $64, %cx       /* Load divisor value (64 * 512) into %cx */
-    divw %cx           /* Divide AX by %cx. Quotient goes in %ax, Remainder in %dx */
-    movw %ax, %cx      /* Move the result into %cx */
+    /**
+     * The kernel starts at sector 4, after the bootloader, and the boot sector's reserved sector count
+     * (reserved_blocks, at offset 14) is the kernel's sectors plus those 4. Read exactly the kernel's sectors (#32).
+     */
+    movw _start+14, %ax
+    subw $4, %ax
+    movw %ax, kernel_sectors_left
 
     /**
-     * Using int 13h with 42 Extended Reac Sectors from Drive, to read inn sectors.
-     * The loop will run 15 times, each time reading 0x0040 (64) * 512 bytes = 0x8000 (32768) bytes
-     * Loading in a total of around 500Kb staying inside of the ram we have.
+     * Using int 13h with 42 Extended Read Sectors from Drive, to read in sectors.
+     * Each pass reads 64 sectors (0x8000 bytes), or what's left of the kernel if that's fewer.
      * Making sure to increase to the next segment if needed.
      */
-    # movw $8, %cx /* Set cx 15 as loop variable meaning it will loop 15 times. */
     movb drive_num, %dl
     movw $disk_address_packet, %si
-    movw $0x1000, segment /* Load the kernel at 0x100000 -> segment 0x10000 */
+    movw $0x1000, segment /* Load the kernel at 0x10000 -> segment 0x1000 */
     movw $4, sector
 
 read_loop:
+    movw kernel_sectors_left, %ax
+    cmpw $0, %ax
+    je read_done
+    cmpw $64, %ax
+    jbe read_count_set
+    movw $64, %ax
+read_count_set:
+    movw %ax, sectors_to_read /* the DAP's sector count */
     movb $0x42, %ah /* 0x42 Extended Read Sectors From Drive */
     int $0x13
     jc kill
 
+    /* Advance past the sectors just read */
+    movw sectors_to_read, %ax
+    subw %ax, kernel_sectors_left
+    addw %ax, sector
+    shlw $9, %ax /* sectors * 512 bytes */
+
     /* Check if still in same segment. */
-    addw $64, sector /* Adding the 64 sectors read*/
-    addw $0x8000, offset /* Each iteration reads in 0x8000 bytes */
-    jnc reading_same_segment
+    addw %ax, offset
+    jnc read_loop
 
     /* increment segment, reset offset if on different segment */
     addw $0x1000, segment
     movw $0x0000, offset
+    jmp read_loop
 
-reading_same_segment:
-    /* decrements %cx and loops if nonzero */
-    loop read_loop
+read_done:
 
     call detect_memory_size
 
