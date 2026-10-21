@@ -46,7 +46,7 @@ $Q stop
   - **`focus`** lists the windows (F12), then clicks a part of NAME's title bar that no window in front covers, and checks the log for `Pushing window <name> to front`. That takes about half a second.
   - If the title bar is covered everywhere, `focus` falls back to Alt+Tab, which sends the front window to the back. It presses Alt+Tab until the window order repeats, then stops with NAME in front. That takes a couple of seconds.
   - **F12 and the shell's `windows` command** list the windows. F12 is handled by the window server, so it works whatever has focus. Its lines look like `wm_log_windows(): 1 "Clock" x=450 y=50 w=126 h=156 pid=6`.
-- **Terminal output is in the serial log,** one line at a time, as `term[<writer>]: <text>`. That includes the shell's echo of each command (`term[shell]: kernel> exec ...`), kernel commands' output, and apps' `printf`. So `$Q wait "term\[shell\]: .*File too large"` checks a command's result without a screenshot.
+- **Terminal output is in the serial log,** one line at a time, as `term[<writer>]: <text>`. That includes the shell's echo of each command after its prompt (`term[shell]: kernel:/> exec ...`, with the shell's current directory), kernel commands' output, and apps' `printf`. So `$Q wait "term\[shell\]: .*File too large"` checks a command's result without a screenshot.
   - A line is logged when it ends with a newline, so a prompt without one waits for the next newline.
   - Lines over 127 characters are split across log lines.
 - **Text mode has no windows,** so use `type` rather than `shell` or `focus` there. `text` prints its screen.
