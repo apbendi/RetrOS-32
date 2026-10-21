@@ -78,29 +78,56 @@ inline unsigned char* getpixel(uint8_t* buffer, int x,int y, int pitch) {
     return pixel_offset;
 }
 
+/**
+ * The vesa_* helpers draw into screen-sized buffers: the composition buffer, the framebuffer or the window server's
+ * background. They skip whatever falls outside the screen, so a window partly off screen is cut off instead of
+ * writing past the buffer into the kernel heap (#4). putpixel itself isn't clipped: it also draws into windows'
+ * own buffers, which have their own size, and the kernel_gfx_* functions check against that.
+ */
+static inline int vesa_on_screen(int x, int y)
+{
+    return x >= 0 && y >= 0 && x < vbe_info->width && y < vbe_info->height;
+}
+
+/* The lines clamp their range once, rather than checking each pixel, since compositing draws them constantly */
+static inline int vesa_clip_start(int start)
+{
+    return start < 0 ? 0 : start;
+}
+
+static inline int vesa_clip_end(int end, int limit)
+{
+    return end > limit ? limit : end;
+}
+
+/* Stripes are picked by absolute coordinate, so clamping the range keeps the pattern where it was */
 inline void vesa_striped_line_horizontal(uint8_t* buffer, int x, int y, int length, int color, int stripe_width)
 {
-    for (int i = x; i < (x+length); i++)
+    if (y < 0 || y >= vbe_info->height) return;
+    for (int i = vesa_clip_start(x); i < vesa_clip_end(x+length, vbe_info->width); i++)
         if (i % stripe_width == 0)
             putpixel(buffer, i, y, color, vbe_info->pitch);
 }
 
 inline void vesa_line_horizontal(uint8_t* buffer, int x, int y, int length, int color)
 {
-    for (int i = x; i < (x+length); i++)
+    if (y < 0 || y >= vbe_info->height) return;
+    for (int i = vesa_clip_start(x); i < vesa_clip_end(x+length, vbe_info->width); i++)
         putpixel(buffer, i, y, color, vbe_info->pitch);
 }
 
 inline void vesa_striped_line_vertical(uint8_t* buffer, int x, int y, int length, int color, int stripe_width)
 {
-    for (int i = y; i < (y+length); i++)
+    if (x < 0 || x >= vbe_info->width) return;
+    for (int i = vesa_clip_start(y); i < vesa_clip_end(y+length, vbe_info->height); i++)
         if (i % stripe_width == 0)
             putpixel(buffer, x, i, color, vbe_info->pitch);
 }
 
 inline void vesa_line_vertical(uint8_t* buffer, int x, int y, int length, int color)
 {
-    for (int i = y; i < (y+length); i++)
+    if (x < 0 || x >= vbe_info->width) return;
+    for (int i = vesa_clip_start(y); i < vesa_clip_end(y+length, vbe_info->height); i++)
         putpixel(buffer, x, i, color, vbe_info->pitch);
 }
 

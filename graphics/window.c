@@ -99,17 +99,27 @@ void gfx_draw_window(uint8_t* buffer, struct window* window)
         return;
     }
 
-    /* Copy inner window framebuffer to given buffer with relativ pitch.  If it is NOT hidden.*/
+    /**
+     * Copy the window's content into the screen buffer, if it isn't minimized. Only the part on screen is copied,
+     * so a window partly off screen is cut off instead of writing past the buffer (#4). The source is indexed by
+     * the window's own row and column, so the visible part stays aligned.
+     */
     if(window->inner != NULL && !HAS_FLAG(window->flags, GFX_IS_HIDDEN)){
-        int i, j, c = 0;
-        for (j = window->y+padding; j < (window->y+padding+window->inner_height); j++)
-            for (i = window->x+padding; i < (window->x+padding+window->inner_width); i++){
-                if(HAS_FLAG(window->flags, GFX_IS_TRANSPARENT) && window->inner[c] == 255){
-                    c++;
+        int left = window->x+padding;
+        int top = window->y+padding;
+        int x_start = vesa_clip_start(left), x_end = vesa_clip_end(left+window->inner_width, vbe_info->width);
+        int y_start = vesa_clip_start(top), y_end = vesa_clip_end(top+window->inner_height, vbe_info->height);
+        bool_t transparent = HAS_FLAG(window->flags, GFX_IS_TRANSPARENT);
+
+        for (int j = y_start; j < y_end; j++){
+            uint8_t* source = window->inner + (j-top)*window->pitch + (x_start-left);
+            for (int i = x_start; i < x_end; i++, source++){
+                if(transparent && *source == 255){
                     continue;
                 }
-                putpixel(buffer, i, j, window->inner[c++], vbe_info->pitch);
+                putpixel(buffer, i, j, *source, vbe_info->pitch);
             }
+        }
     }
 
      if(!HAS_FLAG(window->flags, GFX_HIDE_HEADER)){            
@@ -200,8 +210,8 @@ void gfx_window_set_resizable()
 
 /**
  * @brief Limit a content size (16 px smaller than the window) to what a resize allows.
- * Keep the title bar usable, but staying on screen wins: drawing isn't clipped,
- * so anything off screen would land outside the screen buffer.
+ * Keep the title bar usable, but staying on screen wins: drawing is clipped (#4), so a window past
+ * the edge would just be cut off, with its resize corner out of reach.
  * Used by both the resize outline and the resize itself, so they agree.
  */
 static void gfx_window_clamp_size(struct window* w, int* width, int* height)
@@ -379,8 +389,8 @@ static void gfx_default_hover(struct window* window, int x, int y)
         /**
          * Keep the point where the window was grabbed under the cursor. Each axis is clamped on its own,
          * so a window pushed against an edge slides along it instead of stopping.
-         * Everything the window draws stays on screen, including the frame above window->y.
-         * Drawing isn't clipped, so anything off screen would land outside the screen buffer.
+         * Everything the window draws stays on screen, including the frame above window->y. Drawing is
+         * clipped to the screen (#4), but a window cut off at an edge can't be dragged back; #18 covers that.
          */
         window->x = MAX(MIN(x - window->is_moving.x, vbe_info->width - window->width), 0);
         window->y = MAX(MIN(y - window->is_moving.y, vbe_info->height - window->height), GFX_WINDOW_HEADER_OVERHANG);

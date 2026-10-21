@@ -146,10 +146,13 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **No resizing:** while `is_fullscreen` is set, `gfx_window_resize` refuses, since it would free the composition buffer.
   - **Closing it:** `ws_remove` leaves fullscreen before the window's buffer is freed.
   - **The taskbar** (`GFX_IS_IMMUATABLE`) doesn't go fullscreen.
-- **Moving:** `is_moving.x`/`y` hold where the title bar was grabbed, relative to the window's position. `gfx_default_hover` keeps that point under the cursor, clamping each axis to the screen on its own, so a window pushed against an edge slides along it. The whole window has to stay on screen because drawing isn't clipped (#4). #18 covers letting windows hang off the edge.
+- **Moving:** `is_moving.x`/`y` hold where the title bar was grabbed, relative to the window's position. `gfx_default_hover` keeps that point under the cursor, clamping each axis to the screen on its own, so a window pushed against an edge slides along it. The whole window stays on screen. Drawing is clipped (#4), so that's for usability, not safety. #18 covers letting windows hang off the edge.
 
 **Drawing:**
-- **The `vesa_*` helpers aren't clipped** (`include/vbe.h`, `drivers/vbe.c`; #4). Anything the window server draws off screen lands outside the screen buffer, in the kernel heap.
+- **The `vesa_*` helpers are clipped to the screen** (`include/vbe.h`, `drivers/vbe.c`; #4). They draw only into screen-sized buffers: the composition buffer, the framebuffer and the window server's background. Whatever falls off screen is skipped.
+  - **Lines and filled rectangles** clamp their range before looping. **Characters, icons and single pixels** check each pixel with `vesa_on_screen`.
+  - **`gfx_draw_window`** copies only the on-screen part of a window's content.
+  - **`putpixel` isn't clipped,** because it also draws into windows' own buffers. Use it only with a size check of your own, as the `kernel_gfx_*` functions do.
 - **The window drawing functions** in `gfxlib.c` (`kernel_gfx_*`) check against the window's content size. Lines and circles clip every pixel.
 
 **Coordinates:**

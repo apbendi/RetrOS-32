@@ -95,9 +95,12 @@ unsigned short b8to16(unsigned char c)
     return (((unsigned short)c)<<8 ) | c;
 }
 
+/* Skips pixels off the screen, like every vesa_* helper (#4) */
 void vesa_put_pixel(uint8_t* buffer, int x,int y, unsigned char color)
 {
-    putpixel(buffer, x , y, color, vbe_info->pitch);
+    if(vesa_on_screen(x, y)){
+        putpixel(buffer, x , y, color, vbe_info->pitch);
+    }
 }
 
 void vesa_put_block(uint8_t* buffer, unsigned char c, int x, int y, int color) 
@@ -105,7 +108,7 @@ void vesa_put_block(uint8_t* buffer, unsigned char c, int x, int y, int color)
     for (int l = 0; l < 8; l++) {
         for (int i = 8; i >= 0; i--) {
             if (font8x8_block[c][l] & (1 << i)) {
-                putpixel(buffer, (x)+i,  (y)+l, color, vbe_info->pitch);
+                vesa_put_pixel(buffer, (x)+i,  (y)+l, color);
             }
         }
     }
@@ -116,7 +119,7 @@ void vesa_put_char(uint8_t* buffer, unsigned char c, int x, int y, int color)
     for (int l = 0; l < 8; l++) {
         for (int i = 8; i >= 0; i--) {
             if (font8x8_basic[c][l] & (1 << i)) {
-                putpixel(buffer, (x)+i,  (y)+l, color, vbe_info->pitch);
+                vesa_put_pixel(buffer, (x)+i,  (y)+l, color);
             }
         }
     }
@@ -127,7 +130,7 @@ void vesa_put_char16(uint8_t* buffer, unsigned char c, int x, int y, int color)
     for (int l = 0; l < 16; l++) {
         for (int i = 15; i >= 0; i--) {
             if (font8x8_basic[c][l/2] & (1 << (i/2))) {
-                putpixel(buffer, (x)+i,  (y)+l, color, vbe_info->pitch);
+                vesa_put_pixel(buffer, (x)+i,  (y)+l, color);
             }
         }
     }
@@ -144,7 +147,7 @@ void vesa_put_icon16(uint8_t* buffer, int x, int y)
 
         for (int i = 0; i < 16; i++) {
             if (cursor[l][i] != 0x0) {
-                putpixel(buffer, (x)+i,  (y)+l, cursor[l][i], vbe_info->pitch);
+                vesa_put_pixel(buffer, (x)+i,  (y)+l, cursor[l][i]);
             } else {
                 //putpixel((x)+i,  (y)+l, VESA_BG_COLOR);
             }
@@ -181,10 +184,13 @@ void vesa_fill(uint8_t* buffer, unsigned char color)
             putpixel(buffer, j, i, color, vbe_info->pitch);
 }
 
+/* Clamps its range to the screen once, since compositing fills rectangles constantly */
 void vesa_fillrect(uint8_t* buffer, int x, int y, int w, int h, int color){
     int i, j;
-    for (j = y; j < (y+h); j++)
-        for (i = x; i < (x+w); i++)
+    int x_end = vesa_clip_end(x+w, vbe_info->width);
+    int y_end = vesa_clip_end(y+h, vbe_info->height);
+    for (j = vesa_clip_start(y); j < y_end; j++)
+        for (i = vesa_clip_start(x); i < x_end; i++)
             putpixel(buffer, i, j, color, vbe_info->pitch);
 }
 
