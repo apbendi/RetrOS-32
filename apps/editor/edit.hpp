@@ -6,7 +6,6 @@
 #include <gfx/events.h>
 #include <libc.h>
 #include <colors.h>
-#include <fs/ext.h>
 #include <fs/fs.h>
 
 #include <utils/TreeView.hpp>

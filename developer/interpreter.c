@@ -23,7 +23,7 @@
 
 int rc(int argc, char **argv)
 {
-    inode_t fd;
+    int fd;
     int i;
     char *src, *old_src;
     struct vm vm;
@@ -87,7 +87,7 @@ int rc(int argc, char **argv)
 
 int as(int argc, char **argv)
 {
-    inode_t fd;
+    int fd;
     int i;
     char *src, *old_src;
 
@@ -176,7 +176,7 @@ int as(int argc, char **argv)
 static int __cc(int argc, char **argv)
 {
     struct vm vm;
-    inode_t fd;
+    int fd;
     static char *src, *old_src;
     int i = 0;
 

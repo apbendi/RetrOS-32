@@ -3,7 +3,7 @@
 
 //#define DEBUG
 
-#include <fs/ext.h>
+#include <fs/fs.h>
 #include <terminal.h>
 #include <memory.h>
 #include <libc.h>

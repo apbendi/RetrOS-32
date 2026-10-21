@@ -16,8 +16,7 @@
 #include <utils/StringHelper.hpp>
 #include <utils/StdLib.hpp>
 #include <utils/Thread.hpp>
-#include <fs/ext.h>
-#include <fs/directory.h>
+#include <fs/fs.h>
 #include <utils/TreeView.hpp>
 
 #include <fs/fat16.h>
@@ -137,7 +136,7 @@ public:
     }
 
     void loadIcon(const char* path, int index){
-        int fd = open(path, FS_FLAG_READ);
+        int fd = open(path, FS_FILE_FLAG_READ);
         read(fd, (void*)icon[index], ICON_SIZE*ICON_SIZE);
         fclose(fd);
     }
@@ -162,7 +161,7 @@ public:
 
         m_cache->clear();
 
-        m_fd = open(path->getData(), FS_FLAG_READ);
+        m_fd = open(path->getData(), FS_FILE_FLAG_READ);
         if(m_fd <= -1) return -1;
 
         while (1) {
