@@ -116,26 +116,36 @@ static int wm_default_add(struct windowmanager* wm, struct window* window)
     ERR_ON_NULL(wm);
     ERR_ON_NULL(window);
 
-    if (wm->window_count == 0) {
-        wm->windows = window;
-        
-        window->in_focus = 1;
+    /**
+     * Under the lock: windows are added on whichever thread opens them, often several at once at boot, and
+     * removed on the cleanup worker. Unlocked, two adds could both read the same front window, and the first
+     * window added would be lost (#37).
+     */
+    spin_lock(&wm->spinlock);
 
-        wm->window_count++;
-        return ERROR_OK;
+    /* A window being destroyed is out of the lists for good (#16). The F4 handler re-adds the taskbar's window. */
+    if(window->removed){
+        spin_unlock(&wm->spinlock);
+        return -ERROR_WINDOW_NOT_FOUND;
     }
 
+    /* Whether this workspace's list is empty. Not window_count, which counts every workspace's windows. */
     struct window* current = wm->windows;
-    wm->windows = window;
-    window->next = current;
 
+    /* Set next before publishing the window, so a walk without the lock never sees the list cut short */
+    window->next = current;
+    COMPILER_BARRIER();
+    wm->windows = window;
     wm->window_count++;
 
-    if(!HAS_FLAG(window->flags, GFX_HIDE_HEADER)){
+    if(current == NULL){
+        window->in_focus = 1;
+    } else if(!HAS_FLAG(window->flags, GFX_HIDE_HEADER)){
         window->in_focus = 1;
         current->in_focus = 0;
     }
 
+    spin_unlock(&wm->spinlock);
 
     return ERROR_OK;
 }
@@ -296,7 +306,9 @@ static int wm_default_push_front(struct windowmanager* wm, struct window* window
     if(!HAS_FLAG(window->flags, GFX_HIDE_HEADER) && wm->windows != NULL){
         wm->windows->in_focus = 0;
     }
+    /* As in add: next first, so a walk without the lock never sees the list cut short */
     window->next = wm->windows;
+    COMPILER_BARRIER();
     wm->windows = window;
 
     if(!HAS_FLAG(window->flags, GFX_HIDE_HEADER)){

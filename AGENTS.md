@@ -189,8 +189,11 @@ The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but no
 - **Freeing it:** the window server frees the window and its buffer at the start of its next frame (`__ws_free_windows`), when it holds no window pointers.
 - **Rules for window manager and window server code:**
   - Don't keep a window pointer from one frame to the next. Anything that does, like `pressed_window` or `ws->_fullscreen`, has to be cleared in `ws_remove`.
-  - Don't put a window with `removed` set back into a list, or store it anywhere. `push_front` and `push_back` check it under `wm->spinlock`.
-  - The walks in `wm_default_draw`, `wm_default_mouse_event` and `wm_default_changes` don't take the lock. That's safe because a removed window keeps its `next` pointer until it's freed.
+  - Don't put a window with `removed` set back into a list, or store it anywhere. `add`, `push_front` and `push_back` check it under `wm->spinlock`.
+  - **Every change to the window lists holds `wm->spinlock`:** `add`, `remove`, `push_front`, `push_back` and the workspace switch.
+  - The walks in `wm_default_draw`, `wm_default_mouse_event` and `wm_default_changes` don't take the lock. That's safe for two reasons:
+    - a removed window keeps its `next` pointer until it's freed;
+    - a window's `next` is set before it's published at the front, with `COMPILER_BARRIER()` between the two stores.
 
 Syscalls run with interrupts enabled, so they can be preempted.
 

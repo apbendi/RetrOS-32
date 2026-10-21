@@ -110,6 +110,12 @@ extern int __cli_cnt;
         asm ("sti");\
     }\
 
+/**
+ * Keeps the compiler from moving memory accesses across this point. x86 already keeps stores in order, so this is
+ * enough when another thread reads without a lock, e.g. setting a list node's next before publishing the node.
+ */
+#define COMPILER_BARRIER() asm volatile ("" ::: "memory")
+
 
 #define HLT() asm ("hlt")
 #define PANIC()\
