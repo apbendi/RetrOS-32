@@ -252,14 +252,16 @@ void sh(int argc, char* argv[])
 		return;
 	}
 
+	/* script_parse stops at a 0, so the script ends where the file does, not at leftover heap text (#80) */
 	char* buf = kalloc(32*1024);
-	int ret = fs_read(inode, buf, 32*1024);
+	int ret = fs_read(inode, buf, 32*1024 - 1);
 	if(ret < 0){
 		fs_close(inode);
 		kfree(buf);
 		twritef("Error reading file\n");
 		return;
 	}
+	buf[ret] = 0;
 	
 	script_parse(buf);
 	

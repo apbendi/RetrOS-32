@@ -48,7 +48,7 @@ static int __read_file(char* filename, char** buffer){
 }
 
 static int __write_file(char* filename, char* buffer, int size){
-    int fd = fs_open(filename, FS_FILE_FLAG_CREATE | FS_FILE_FLAG_WRITE);
+    int fd = fs_open(filename, FS_FILE_FLAG_CREATE | FS_FILE_FLAG_WRITE | FS_FILE_FLAG_TRUNCATE);
     if(fd < 0){
         twritef("Failed to open file %s\n", filename);
         return -1;

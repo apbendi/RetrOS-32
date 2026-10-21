@@ -221,9 +221,9 @@ static int textbuffer_save_file(struct textbuffer *buffer, const char *filename)
 	}
 	
 #ifndef NCURSES
-	int fd = open(buffer->filename, FS_FILE_FLAG_CREATE | FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE);
+	int fd = open(buffer->filename, FS_FILE_FLAG_CREATE | FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE | FS_FILE_FLAG_TRUNCATE);
 #else
-	int fd = open(buffer->filename, O_WRONLY | O_CREAT, 0644);
+	int fd = open(buffer->filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 #endif // !NCURSES
 	if (fd < 0) {
 		free(file);

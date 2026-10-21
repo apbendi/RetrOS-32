@@ -55,6 +55,22 @@ static int digitCount(int value)
     return digits;
 }
 
+/* Opens path for saving: created if it doesn't exist, and emptied, so a shorter text leaves nothing of the old one */
+static int open_editor_file_for_save(const char* path)
+{
+    int flags = FS_FILE_FLAG_CREATE | FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE | FS_FILE_FLAG_TRUNCATE;
+
+    if (path == nullptr || path[0] == 0) {
+        return -1;
+    }
+
+    int fd = open(path, flags);
+    if (fd < 0 && path[0] == '/' && path[1] != 0) {
+        fd = open(path + 1, flags);
+    }
+    return fd;
+}
+
 static int open_editor_file(const char* path)
 {
     if (path == nullptr || path[0] == 0) {
@@ -1598,7 +1614,7 @@ bool Editor::Save()
             m_fd = -1;
         }
 
-        m_fd = open_editor_file(m_currentPath);
+        m_fd = open_editor_file_for_save(m_currentPath);
         if (m_fd < 0) {
             drawStatusLine(COLOR_VGA_RED, "Save failed.");
             return false;
