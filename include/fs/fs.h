@@ -6,6 +6,9 @@
 #define FS_VERSION 1
 #define FS_VALIDATE(fs) if(!fs || fs->version != FS_VERSION) return -1;
 
+/* The longest path, including its terminating 0. Paths are checked against it before the file system sees them. */
+#define FS_PATH_MAX 512
+
 struct filesystem;
 struct file;
 
@@ -26,6 +29,8 @@ struct file {
     int identifier;
     int directory;
     int size;
+    /* The file system's own state for the open file or directory, if it keeps any */
+    void* data;
 };
 
 /* none of the functions can ever be NULL */
@@ -84,6 +89,16 @@ int fs_read(int fd, void* buf, int size);
 int fs_size(int fd);
 int fs_write(int fd, void* buf, int size);
 struct filesystem* fs_get();
+
+int fs_path_normalize(const char* path, char* out);
+
+/* Mount the disk's file system, or format the disk, with whichever FAT code the kernel is built with */
+int fs_mount(void);
+int fs_format(const char* label, int reserved);
+
+/* The FAT code provides these. reserved is the number of blocks before the file system; FatFs ignores it. */
+int fs_backend_mount(void);
+int fs_backend_format(const char* label, int reserved);
 
 
 #endif /* !__FS_MODULE_H */
