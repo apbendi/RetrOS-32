@@ -764,7 +764,8 @@ static void __kthread_entry textshell()
 	struct terminal* term = terminal_create(TERMINAL_TEXT_MODE);
 	term->ops->attach(term);
 
-	text_shell_buffer = kalloc(1024);
+	/* Zeroed, since a line is read up to its first zero byte */
+	text_shell_buffer = kcalloc(1024);
 	if(text_shell_buffer == NULL){
 		warningf("Failed to allocate text shell buffer");
 		return;
@@ -809,6 +810,14 @@ static void __kthread_entry textshell()
 			memset(text_shell_buffer, 0, 1024);
 			term->ops->commit(term);
 			__textshell_reset_box();
+			continue;
+		}
+
+		/**
+		 * The line is typed on the frame's bottom row, from column 4 to the right border at column
+		 * SCREEN_WIDTH-1, so it holds 75 characters. Ignore keys past that; Enter and backspace still work (#44).
+		 */
+		if(4+x >= SCREEN_WIDTH-1){
 			continue;
 		}
 

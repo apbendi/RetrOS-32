@@ -42,6 +42,11 @@ static inline uint16_t vga_entry(unsigned char uc, uint8_t color)
 
 void scr_set_cursor(int x, int y)
 {
+	/* screeny draws the cursor into its window from this position, so keep it on the screen (#44) */
+	if(x < 0 || y < 0 || x >= SCREEN_WIDTH || y >= SCREEN_HEIGHT){
+		return;
+	}
+
 	cursor.x = x;
 	cursor.y = y;
 
@@ -76,6 +81,11 @@ void scrcolor_set(enum vga_color fg, enum vga_color bg)
  */
 void scrput(int x, int y, unsigned char c, uint8_t color)
 {
+	/* Off the 80x25 screen, the index would be past the end of text memory and VGA_BUFFER (#44) */
+	if(x < 0 || y < 0 || x >= SCREEN_WIDTH || y >= SCREEN_HEIGHT){
+		return;
+	}
+
 	const int index = y * SCREEN_WIDTH + x;
 	VGA_MEMORY[index] = vga_entry(c, color);
 	if(VGA_BUFFER != NULL){
@@ -85,7 +95,7 @@ void scrput(int x, int y, unsigned char c, uint8_t color)
 
 uint16_t scrget(int x, int y)
 {
-	if(VGA_BUFFER == NULL){
+	if(VGA_BUFFER == NULL || x < 0 || y < 0 || x >= SCREEN_WIDTH || y >= SCREEN_HEIGHT){
 		return 0;
 	}
 
