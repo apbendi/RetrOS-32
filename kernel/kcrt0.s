@@ -14,8 +14,9 @@ _start:
     cli
 
     /**
-     * Clear .bss. In the flat kernel image it's the zeros at the end,
-     * and the bootloader doesn't always load all of them from the disk.
+     * Clear .bss. In the flat kernel image it's the zeros at the end.
+     * The bootloader reads exactly the image's sectors (#32), but .bss
+     * mustn't depend on what was in memory or on the disk past them.
      * The stack is in .data, so the values pushed above are kept.
      */
     movl $_bss_s, %edi
