@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Checks RetrOS's FAT16 code against mtools and fsck.fat. Run it in the Docker builder, from the repo root:
 #
-#   docker compose run --rm --entrypoint tests/fs/run.sh builder [-k] [-v] [PATTERN...]
+#   docker compose run --rm --entrypoint tests/fs/run.sh builder [--impl fatfs] [-k] [-v] [PATTERN...]
+#
+# --impl picks the FAT code under test: fat16, the old code (the default), or fatfs, FatFs. Each has its own
+# expected results: tests/fs/expected.txt and tests/fs/expected-fatfs.txt.
 #
 # PATTERN picks cases by name with shell globs, e.g. 'write.*'. Failing cases leave their notes, trees and fsck
 # findings in tests/fs/out/CASE/; -k keeps every case's, with its R and M images. -v shows the details of every
@@ -17,28 +20,35 @@
 #   op     RetrOS's operations succeeded, or failed when they should have
 #   mount  RetrOS mounted the image
 # The results go to tests/fs/out/results.txt, one line per case with the checks that failed, and are compared
-# with tests/fs/expected.txt.
+# with the expected results.
 set -u
 cd "$(dirname "$0")/../.." || exit 1
 ROOT=$PWD
 HERE=$ROOT/tests/fs
 OUT=$HERE/out
 WORK=/tmp/fstest
-FSTOOL=$HERE/bin/fstool
 export MTOOLS_SKIP_CHECK=1   # RetrOS writes 0 heads and sectors per track, which mtools otherwise refuses
 export MTOOLS_NO_VFAT=1      # 8.3 names only, like RetrOS: mtools neither writes nor lists long names
 
 KEEP=0
 VERBOSE=0
+IMPL=fat16
 PATTERNS=()
 while [ $# -gt 0 ]; do
     case $1 in
         -k) KEEP=1 ;;
         -v) VERBOSE=1 ;;
+        --impl) IMPL=$2; shift ;;
         *) PATTERNS+=("$1") ;;
     esac
     shift
 done
+
+case $IMPL in
+    fat16) FSTOOL=$HERE/bin/fstool; EXPECTED_FILE=$HERE/expected.txt ;;
+    fatfs) FSTOOL=$HERE/bin/fstool-fatfs; EXPECTED_FILE=$HERE/expected-fatfs.txt ;;
+    *) echo "--impl is fat16 or fatfs"; exit 1 ;;
+esac
 
 # fstool, from the current fs/ sources
 make -s -C fs >/dev/null || { echo "Building fs/ failed"; exit 1; }
@@ -61,6 +71,14 @@ base_image() {
                 truncate -s 32M "$img" && "$FSTOOL" "$img" format 4 >/dev/null ;;
             small)          # 3 MB formatted by RetrOS, for filling up
                 truncate -s 3M "$img" && "$FSTOOL" "$img" format 4 >/dev/null ;;
+            root16)         # 32 MB FAT16 with room for only 16 entries in the root directory, and no volume label.
+                            # 512-byte clusters, since mkfs.fat rounds the root directory up to whole clusters.
+                mkfs.fat -F 16 -r 16 -s 1 -C "$img" 32768 >/dev/null ;;
+            partitioned)    # 32 MB with an MBR partition table: one FAT16 partition from sector 2048 (1 MB) to the end
+                truncate -s 32M "$img" &&
+                    printf '\x00\x00\x00\x00\x0e\x00\x00\x00\x00\x08\x00\x00\x00\xf8\x00\x00' | dd of="$img" bs=1 seek=446 conv=notrunc status=none &&
+                    printf '\x55\xaa' | dd of="$img" bs=1 seek=510 conv=notrunc status=none &&
+                    mkfs.fat -F 16 --offset=2048 "$img" 31744 >/dev/null ;;
             virtual)        # 1 MB formatted by RetrOS, the size of the virtual disk login makes
                 truncate -s 1M "$img" && "$FSTOOL" "$img" format 1 >/dev/null ;;
             standard)       # 32 MB FAT16 as other systems make it: 2 FATs, 2 KB clusters, 512 root entries
@@ -295,10 +313,10 @@ selected() {
 }
 
 declare -A EXPECTED=()
-if [ -f "$HERE/expected.txt" ]; then
+if [ -f "$EXPECTED_FILE" ]; then
     while read -r name result; do
         [ -n "$name" ] && [[ $name != \#* ]] && EXPECTED[$name]=$result
-    done < "$HERE/expected.txt"
+    done < "$EXPECTED_FILE"
 fi
 
 passed=0
@@ -354,5 +372,5 @@ for entry in "${CASES[@]}"; do
 done
 
 echo
-echo "$passed passed, $failed failed, $changed changed from tests/fs/expected.txt. Results: tests/fs/out/results.txt"
+echo "$IMPL: $passed passed, $failed failed, $changed changed from ${EXPECTED_FILE#$ROOT/}. Results: tests/fs/out/results.txt"
 [ $changed -eq 0 ]

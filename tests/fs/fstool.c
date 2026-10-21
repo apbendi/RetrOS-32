@@ -2,10 +2,11 @@
  * @file fstool.c
  * @brief Runs RetrOS's own file system code on a disk image file, one operation per run.
  *
- * It links bin/fat16.o and bin/fs.o, the objects the kernel is built from, with host.c's stand-ins for the
- * kernel functions they call. tests/fs/run.sh uses it to check RetrOS against mtools and fsck.fat.
+ * It links the objects the kernel is built from, bin/fs.o and a FAT layer, with host.c's stand-ins for the kernel
+ * functions they call. bin/fstool has the old FAT16 code (bin/fat16.o and bin/fat16_iface.o), and bin/fstool-fatfs
+ * has FatFs (bin/fatfs.o). tests/fs/run.sh uses them to check RetrOS against mtools and fsck.fat.
  *
- *   fstool IMAGE format [RESERVED]       format the image with fat16_format, as login does for the virtual disk
+ *   fstool IMAGE format [RESERVED]       format the image with fs_format, as login does for the virtual disk
  *   fstool IMAGE tree                    every directory and file: "D /PATH" and "F /PATH SIZE"
  *   fstool IMAGE ls PATH                 one directory: "D NAME" and "F NAME SIZE"
  *   fstool IMAGE cat PATH [CHUNK]        a file's bytes to stdout, read CHUNK bytes at a time (default 4096)
@@ -51,6 +52,8 @@ struct filesystem {
     struct filesystem_ops* ops;
 };
 
+int fs_mount(void);
+int fs_format(const char* label, int reserved);
 int fs_open(const char* path, int flags);
 int fs_close(int fd);
 int fs_read(int fd, void* buf, int size);
@@ -104,6 +107,18 @@ static char* read_stdin(int* size)
     return data;
 }
 
+/* An entry's name as text, "NAME.EXT", from its padded 8.3 fields */
+static void entry_name(const struct fat16_directory_entry* entry, char* name)
+{
+    int len = 0;
+    for(int i = 0; i < 8 && entry->filename[i] != ' '; i++) name[len++] = entry->filename[i];
+    if(entry->extension[0] != ' '){
+        name[len++] = '.';
+        for(int i = 0; i < 3 && entry->extension[i] != ' '; i++) name[len++] = entry->extension[i];
+    }
+    name[len] = 0;
+}
+
 /**
  * Lists one directory, as Finder does. With recurse, prints full paths and walks into subdirectories.
  * @return 0, or 1 if a directory couldn't be opened
@@ -116,24 +131,25 @@ static int list(const char* path, int recurse, int depth)
         return 1;
     }
 
-    /* Collect first, since walking into a subdirectory opens other files */
-    struct fat16_directory_entry entries[64];
+    /* Collect first, since walking into a subdirectory opens other files. One buffer per level, 8 levels. */
+    static struct fat16_directory_entry entries[8][1024];
+    struct fat16_directory_entry* found = entries[depth];
     int count = 0;
     struct fat16_directory_entry entry;
-    while(count < 64 && fs_read(fd, &entry, sizeof(entry)) > 0){
-        entries[count++] = entry;
+    while(count < 1024 && fs_read(fd, &entry, sizeof(entry)) > 0){
+        found[count++] = entry;
     }
     fs_close(fd);
 
     int status = 0;
     for(int i = 0; i < count; i++){
-        struct fat16_directory_entry* e = &entries[i];
+        struct fat16_directory_entry* e = &found[i];
         if(e->filename[0] == 0x00 || e->filename[0] == 0xE5) continue;
         if(FAT16_IS_LONG_NAME(e) || (e->attributes & FAT16_FLAG_VOLUME_LABEL)) continue;
         if(e->filename[0] == '.') continue;
 
         char name[FAT16_NAME_MAX + 1];
-        fat16_entry_name(e, name);
+        entry_name(e, name);
         int is_directory = e->attributes & FAT16_FLAG_SUBDIRECTORY;
 
         if(!recurse){
@@ -146,7 +162,7 @@ static int list(const char* path, int recurse, int depth)
         snprintf(child, sizeof(child), "%s%s%s", path, path[1] == 0 ? "" : "/", name);
         if(is_directory){
             printf("D %s\n", child);
-            if(depth < 8) status |= list(child, 1, depth + 1);
+            if(depth < 7) status |= list(child, 1, depth + 1);
         } else {
             printf("F %s %u\n", child, e->file_size);
         }
@@ -218,11 +234,11 @@ int main(int argc, char* argv[])
     fstool_disk_blocks = ftell(fstool_disk) / 512;
 
     if(strcmp(op, "format") == 0){
-        int ret = fat16_format("RETROS", arg != NULL ? atoi(arg) : 4);
-        return finish(ret == 0 ? 0 : failed("fat16_format", ret));
+        int ret = fs_format("RETROS", arg != NULL ? atoi(arg) : 4);
+        return finish(ret == 0 ? 0 : failed("fs_format", ret));
     }
 
-    if(fat16_init() != 0){
+    if(fs_mount() != 0){
         fprintf(stderr, "fstool: the image didn't mount\n");
         return finish(3);
     }

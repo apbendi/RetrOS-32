@@ -48,6 +48,17 @@ static struct filesystem_ops fat16_ops = {
 };
 
 
+/* fs.c's mount and format, for a kernel built with this FAT16 code */
+int fs_backend_mount(void)
+{
+    return fat16_init();
+}
+
+int fs_backend_format(const char* label, int reserved)
+{
+    return fat16_format((char*)label, reserved);
+}
+
 int fat16_init()
 {
     /* load the fat16 filesystem */

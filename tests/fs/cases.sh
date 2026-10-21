@@ -56,6 +56,23 @@ read_standard_oem() {
 }
 add read.standard-geometry "The same, with the boot sector's name changed to RetrOS's, so only the layout differs" read_standard_oem
 
+read_partitioned() {
+    begin partitioned || return
+    # mtools reaches the partition with image@@offset; RetrOS has to find it from the partition table
+    local img
+    for img in "$R" "$M"; do
+        { mmd -i "$img@@1M" ::/SUB &&
+            mcopy -i "$img@@1M" "$(data 3000 a)" ::/A.TXT &&
+            mcopy -i "$img@@1M" "$(data 100 b)" ::/SUB/B.TXT; } >/dev/null 2>&1 || fail setup "mtools couldn't write the partition"
+    done
+    rfs tree >/dev/null || return
+    rfs_tree "$R" > "$CDIR/tree-R-retros"
+    ref_tree "$M@@1M" > "$CDIR/tree-M-mtools"
+    diff -q "$CDIR/tree-R-retros" "$CDIR/tree-M-mtools" >/dev/null ||
+        fail reads "$(diff "$CDIR/tree-M-mtools" "$CDIR/tree-R-retros" | grep '^[<>]' | head -6 | paste -sd ';' -)"
+}
+add read.partitioned "RetrOS finds and reads a FAT16 partition on a disk with a partition table" read_partitioned
+
 read_multi_cluster() {
     begin fresh || return
     seed mcopy "$(data 20000 big)" ::/BIG.BIN
@@ -184,6 +201,14 @@ write_real() {
 }
 add write.real-image "RetrOS writes a file on the image make img builds" write_real
 
+write_standard() {
+    begin standard || return
+    put /A.TXT 3000
+    put /B.TXT 100
+    check
+}
+add write.standard "RetrOS writes files on a FAT16 disk another system formatted, keeping both FAT copies the same" write_standard
+
 write_lowercase() {
     begin fresh || return
     put /lower.txt 100
@@ -272,12 +297,12 @@ limits_directory() {
 add limits.full-directory "RetrOS writes 20 files to a directory, past one cluster's 16 entries (#88)" limits_directory
 
 limits_root() {
-    begin fresh || return
-    # RetrOS formats the root directory with 16 entries, one of them the volume label
-    for i in $(seq -w 1 15); do
+    begin root16 || return
+    # A FAT16 root directory has a fixed size, here 16 entries
+    for i in $(seq -w 1 16); do
         put "/F$i.TXT" 100
     done
-    refused write /F16.TXT < "$(data 100 f16)"
+    refused write /F17.TXT < "$(data 100 f17)"
     check
 }
 add limits.full-root "RetrOS reports a full root directory and leaves the disk consistent" limits_root

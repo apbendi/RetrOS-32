@@ -26,7 +26,140 @@
 /* default filesystem struct */
 static struct file fs_file_table[FS_MAX_FILES];
 static struct filesystem* fs_table[FS_MAX_FILESYSTEMS] = {NULL};
+
+/**
+ * The file system fs_get() returns and fs_open and friends use: the first one registered, behind operations that
+ * normalize every path first (fs_path_normalize). Callers that use the operations directly, like the shell's
+ * list and file commands, get the same paths as fs_open.
+ */
+static struct filesystem* fs_backend = NULL;
+static struct filesystem fs_checked;
 static struct filesystem* fs_current = NULL;
+
+/**
+ * Writes path into out, which holds FS_PATH_MAX bytes, in canonical form: absolute, without empty or "." parts,
+ * with each ".." removing the part before it, and without a trailing slash. ".." at the root stays at the root.
+ * A path that doesn't start with "/" is taken from the root directory, as every lookup used to.
+ * @return the length, or -ERROR_INVALID_ARGUMENTS if the result wouldn't fit
+ */
+int fs_path_normalize(const char* path, char* out)
+{
+    int len = 1;
+    out[0] = '/';
+
+    while(*path){
+        while(*path == '/') path++;
+        if(*path == 0) break;
+
+        const char* part = path;
+        while(*path && *path != '/') path++;
+        int n = path - part;
+
+        if(n == 1 && part[0] == '.') continue;
+        if(n == 2 && part[0] == '.' && part[1] == '.'){
+            /* Back to the slash before the last part, and past it unless it's the root's */
+            while(len > 1 && out[len - 1] != '/') len--;
+            if(len > 1) len--;
+            continue;
+        }
+
+        int sep = len > 1 ? 1 : 0;
+        if(len + sep + n + 1 > FS_PATH_MAX) return -ERROR_INVALID_ARGUMENTS;
+        if(sep) out[len++] = '/';
+        memcpy(out + len, part, n);
+        len += n;
+    }
+
+    out[len] = 0;
+    return len;
+}
+
+static int __fs_checked_write(struct filesystem* fs, struct file* file, const void* buf, int size)
+{
+    return fs_backend->ops->write(fs_backend, file, buf, size);
+}
+
+static int __fs_checked_read(struct filesystem* fs, struct file* file, void* buf, int size)
+{
+    return fs_backend->ops->read(fs_backend, file, buf, size);
+}
+
+static struct file* __fs_checked_open(struct filesystem* fs, const char* path, int flags)
+{
+    char normal[FS_PATH_MAX];
+    if(path == NULL || fs_path_normalize(path, normal) < 0) return NULL;
+    return fs_backend->ops->open(fs_backend, normal, flags);
+}
+
+static int __fs_checked_close(struct filesystem* fs, struct file* file)
+{
+    return fs_backend->ops->close(fs_backend, file);
+}
+
+static int __fs_checked_remove(struct filesystem* fs, const char* path)
+{
+    char normal[FS_PATH_MAX];
+    if(path == NULL || fs_path_normalize(path, normal) < 0) return -ERROR_INVALID_ARGUMENTS;
+    return fs_backend->ops->remove(fs_backend, normal);
+}
+
+static int __fs_checked_mkdir(struct filesystem* fs, const char* path)
+{
+    char normal[FS_PATH_MAX];
+    if(path == NULL || fs_path_normalize(path, normal) < 0) return -ERROR_INVALID_ARGUMENTS;
+    return fs_backend->ops->mkdir(fs_backend, normal);
+}
+
+static int __fs_checked_rmdir(struct filesystem* fs, const char* path)
+{
+    char normal[FS_PATH_MAX];
+    if(path == NULL || fs_path_normalize(path, normal) < 0) return -ERROR_INVALID_ARGUMENTS;
+    return fs_backend->ops->rmdir(fs_backend, normal);
+}
+
+static int __fs_checked_rename(struct filesystem* fs, const char* path, const char* new_path)
+{
+    char normal[FS_PATH_MAX];
+    char new_normal[FS_PATH_MAX];
+    if(path == NULL || new_path == NULL) return -ERROR_INVALID_ARGUMENTS;
+    if(fs_path_normalize(path, normal) < 0 || fs_path_normalize(new_path, new_normal) < 0) return -ERROR_INVALID_ARGUMENTS;
+    return fs_backend->ops->rename(fs_backend, normal, new_normal);
+}
+
+static int __fs_checked_stat(struct filesystem* fs, const char* path, struct file* file)
+{
+    char normal[FS_PATH_MAX];
+    if(path == NULL || fs_path_normalize(path, normal) < 0) return -ERROR_INVALID_ARGUMENTS;
+    return fs_backend->ops->stat(fs_backend, normal, file);
+}
+
+static int __fs_checked_list(struct filesystem* fs, const char* path, char* buf, int size)
+{
+    char normal[FS_PATH_MAX];
+    if(path == NULL || fs_path_normalize(path, normal) < 0) return -ERROR_INVALID_ARGUMENTS;
+    return fs_backend->ops->list(fs_backend, normal, buf, size);
+}
+
+static int __fs_checked_find(struct filesystem* fs, char* path, const char* needle)
+{
+    char normal[FS_PATH_MAX];
+    if(path == NULL || fs_path_normalize(path, normal) < 0) return -ERROR_INVALID_ARGUMENTS;
+    return fs_backend->ops->find(fs_backend, normal, needle);
+}
+
+static struct filesystem_ops fs_checked_ops = {
+    .write = __fs_checked_write,
+    .read = __fs_checked_read,
+    .open = __fs_checked_open,
+    .close = __fs_checked_close,
+    .remove = __fs_checked_remove,
+    .mkdir = __fs_checked_mkdir,
+    .rmdir = __fs_checked_rmdir,
+    .rename = __fs_checked_rename,
+    .stat = __fs_checked_stat,
+    .list = __fs_checked_list,
+    .find = __fs_checked_find
+};
 
 int fs_file2fd(struct file* file)
 {
@@ -72,6 +205,7 @@ int fs_free_file(struct file* file)
     file->flags = 0;
     file->identifier = 0;
     file->directory = 0;
+    file->data = NULL;
 
     return 0;
 }
@@ -90,7 +224,12 @@ int fs_register(struct filesystem* fs)
         if(fs_table[i] == NULL){
             fs_table[i] = fs;
 
-            if(fs_current == NULL) fs_current = fs;
+            if(fs_backend == NULL){
+                fs_backend = fs;
+                fs_checked = *fs;
+                fs_checked.ops = &fs_checked_ops;
+                fs_current = &fs_checked;
+            }
             dbgprintf("Registered filesystem: %s\n", fs->name);
             return 0;
         }
@@ -107,6 +246,16 @@ int fs_init()
     return 0;
 }
 
+int fs_mount(void)
+{
+    return fs_backend_mount();
+}
+
+int fs_format(const char* label, int reserved)
+{
+    return fs_backend_format(label, reserved);
+}
+
 int fs_unregister(struct filesystem* fs)
 {
     ERR_ON_NULL(fs);
@@ -115,6 +264,10 @@ int fs_unregister(struct filesystem* fs)
     for(int i = 0; i < FS_MAX_FILESYSTEMS; i++){
         if(fs_table[i] == fs){
             fs_table[i] = NULL;
+            if(fs == fs_backend){
+                fs_backend = NULL;
+                fs_current = NULL;
+            }
             return 0;
         }
     }

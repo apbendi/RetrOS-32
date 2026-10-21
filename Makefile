@@ -24,7 +24,7 @@ GFXOBJ := $(addprefix $(BUILD_DIR)/,window.o component.o composition.o gfxlib.o 
 KERNELOBJ := $(addprefix $(BUILD_DIR)/,kernel.o terminal.o helpers.o pci.o virtualdisk.o windowmanager.o icons.o vga.o \
 	libc.o interrupts.o irs_entry.o timer.o gdt.o smp.o keyboard.o pcb.o pcb_queue.o memory.o vmem.o kmem.o e1000.o display.o env.o conf.o \
 	sync.o kthreads.o ata.o atapi.o bitmap.o rtc.o tss.o kutils.o login.o cmds.o diskdev.o scheduler.o work.o rbuffer.o errors.o kclock.o tar.o color.o loopback.o \
-	serial.o io.o syscalls.o list.o hashmap.o vbe.o ksyms.o windowserver.o encoding.o mouse.o ipc.o sysinf.o font8.o net.o fs.o fat16.o partition.o \
+	serial.o io.o syscalls.o list.o hashmap.o vbe.o ksyms.o windowserver.o encoding.o mouse.o ipc.o sysinf.o font8.o net.o fs.o fat16.o fat16_iface.o partition.o \
 	admin.o usermanager.o user.o group.o snake.o msgbox.o kevents.o textmode.o lz.o timefmt.o)
 KERNELOBJ += $(PROGRAMOBJ) $(GFXOBJ)
 
@@ -80,7 +80,7 @@ tests: compile
 # The phony targets run those Makefiles on every build, once each, and they rebuild what changed.
 $(BUILD_DIR)/net.o: net_objects ;
 
-$(BUILD_DIR)/fat16.o $(BUILD_DIR)/fs.o: fs_objects ;
+$(BUILD_DIR)/fat16.o $(BUILD_DIR)/fat16_iface.o $(BUILD_DIR)/fs.o $(BUILD_DIR)/fatfs.o: fs_objects ;
 
 net_objects:
 	$(MAKE) -C net
