@@ -345,6 +345,7 @@ These directories come from other projects and keep their own licenses:
 | Directory | Project | License |
 |---|---|---|
 | `apps/C-Compiler` | [joexbayer/C-Compiler](https://github.com/joexbayer/C-Compiler), the compiler installed as `/bin/cc.o` | GNU GPL version 2 (`apps/C-Compiler/LICENSE`) |
+| `fs/fatfs` | [FatFs](https://elm-chan.org/fsw/ff/), the FAT file system code | FatFs license, BSD-style (`fs/fatfs/LICENSE.txt`) |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
