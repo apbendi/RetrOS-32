@@ -641,7 +641,7 @@ void vmem_init_process_thread(struct pcb* parent, struct pcb* thread)
 
 	uint32_t* thread_stack_page2 = vmem_default->ops->alloc(vmem_default);
 	memset(thread_stack_page2, 0, PAGE_SIZE);
-	vmem_map(thread_stack_table, VMEM_STACK+PAGE_SIZE, (uint32_t) thread_stack_page2, USER);
+	vmem_map(thread_stack_table, VMEM_STACK-PAGE_SIZE, (uint32_t) thread_stack_page2, USER);
 
 	/* Insert and replace stack in directory. */
 	vmem_add_table(thread_directory, VMEM_STACK, thread_stack_table, USER);
@@ -781,7 +781,7 @@ void vmem_cleanup_process_thead(struct pcb* thread)
 
 	uint32_t stack_table = (uint32_t)thread->page_dir[DIRECTORY_INDEX(VMEM_STACK)] & ~PAGE_MASK;
 	uint32_t stack_page = (uint32_t)((uint32_t*)(thread->page_dir[DIRECTORY_INDEX(VMEM_STACK)] & ~PAGE_MASK))[TABLE_INDEX(VMEM_STACK)]& ~PAGE_MASK;
-	uint32_t stack_page2 = (uint32_t)((uint32_t*)(thread->page_dir[DIRECTORY_INDEX((VMEM_STACK-PAGE_SIZE))] & ~PAGE_MASK))[TABLE_INDEX(VMEM_STACK)]& ~PAGE_MASK;
+	uint32_t stack_page2 = (uint32_t)((uint32_t*)(thread->page_dir[DIRECTORY_INDEX((VMEM_STACK-PAGE_SIZE))] & ~PAGE_MASK))[TABLE_INDEX((VMEM_STACK-PAGE_SIZE))]& ~PAGE_MASK;
 
 	vmem_default->ops->free(vmem_default, (void*) stack_page);
 	vmem_default->ops->free(vmem_default, (void*) stack_page2);
@@ -845,7 +845,7 @@ void vmem_cleanup_process(struct pcb* pcb)
 	 */
 	uint32_t stack_table = (uint32_t)pcb->page_dir[DIRECTORY_INDEX(VMEM_STACK)] & ~PAGE_MASK;
 	uint32_t stack_page = (uint32_t)((uint32_t*)(pcb->page_dir[DIRECTORY_INDEX(VMEM_STACK)] & ~PAGE_MASK))[TABLE_INDEX(VMEM_STACK)]& ~PAGE_MASK;
-	uint32_t stack_page2 = (uint32_t)((uint32_t*)(pcb->page_dir[DIRECTORY_INDEX((VMEM_STACK-PAGE_SIZE))] & ~PAGE_MASK))[TABLE_INDEX(VMEM_STACK)]& ~PAGE_MASK;
+	uint32_t stack_page2 = (uint32_t)((uint32_t*)(pcb->page_dir[DIRECTORY_INDEX((VMEM_STACK-PAGE_SIZE))] & ~PAGE_MASK))[TABLE_INDEX((VMEM_STACK-PAGE_SIZE))]& ~PAGE_MASK;
 
 	vmem_default->ops->free(vmem_default, (void*) stack_page);
 	freed_pages++;

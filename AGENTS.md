@@ -207,7 +207,9 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - Files `make img` copies in get the build container's clock, which is UTC. So they look a few hours off from files created in RetrOS, which use the host's local time.
 - **Timers and sleeping:** the timer runs at 1000 Hz, so `sleep(ms)` and ticks are milliseconds. PCB sleep deadlines are `uint32_t`; a 16-bit field used to overflow after ~65 s.
 - **Fixed offsets:** `struct pcb` fields above the "DO NOT CHANGE ABOVE" marker are read by assembly at fixed offsets. The ISR stubs in `kernel/irs_entry.s` build exactly the frame described by `struct registers`.
-- **Freeing pages:** a process exit currently double-frees a stack page and leaks another (#12), which logs `[VMEM] Double free or invalid free`.
+- **User stacks:** a process's stack, and each of its threads', is two 4 KB pages, at `VMEM_STACK` and `VMEM_STACK - PAGE_SIZE` in the same page table. Exiting frees both.
+  - **A double free:** `[VMEM] Double free or invalid free for page N` in the log means something freed a page twice. Every exit logged it until #12 was fixed, so now it points to a new bug.
+  - **Checking for a leak:** in lldb, compare `p vmem_default->used_pages`, the pages in use, before and after, e.g. stopping on `meminfo` both times. Opening and closing an app should leave it unchanged.
 
 ## Writing an app
 
