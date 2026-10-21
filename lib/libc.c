@@ -230,62 +230,6 @@ int32_t csprintf(char *buffer, const char *fmt, va_list args)
     return written;
 }
 
-#define MAX_ARGS 5
-int parse_arguments(const char *input_string, char tokens[10][100]) {
-    int num_tokens = 0;  /* Number of arguments */
-    int token_start = -1;  /* Index of start of current token */
-    int token_end = -1;  /* Index of end of current token */
-    int i;
-
-    /* Tokenize input string using space as delimiter */
-    for (i = 0; input_string[i] != '\0'; i++) {
-        char c = input_string[i];
-
-        if (c == ' ' || c == '\n') {
-            /* End of token, add to tokens array */
-            if (token_start != -1) {
-                token_end = i - 1;
-                int token_length = token_end - token_start + 1;
-
-                /* Copy characters from input string to token string */
-                for (int j = 0; j < token_length; j++) {
-                    tokens[num_tokens][j] = input_string[token_start + j];
-                }
-                tokens[num_tokens][token_length] = '\0';
-                
-                num_tokens++;
-                token_start = -1;
-            }
-        } else {
-            /* Start of new token */
-            if (token_start == -1) {
-                token_start = i;
-            }
-        }
-
-        /* Maximum number of arguments reached, break loop */
-        if (num_tokens == MAX_ARGS) {
-            break;
-        }
-    }
-    
-    if (token_start != -1) {
-        token_end = i - 1;
-        int token_length = token_end - token_start + 1;
-    
-        /* Copy characters from input string to token string */
-        for (int j = 0; j < token_length; j++) {
-            tokens[num_tokens][j] = input_string[token_start + j];
-        }
-        tokens[num_tokens][token_length] = '\0';
-    
-        num_tokens++;
-    }
-    
-    
-    return num_tokens;
-}
-
 char* strchr(const char* str, int ch)
 {
     while (*str != '\0') {

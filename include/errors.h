@@ -45,6 +45,8 @@ enum errors {
     ERROR_INVALID_NAME,
     ERROR_DISK,
     ERROR_NO_FILESYSTEM,
+    ERROR_UNTERMINATED_QUOTE,
+    ERROR_ARGUMENTS_TOO_LONG,
 };
 
 char* error_get_string(error_t err);

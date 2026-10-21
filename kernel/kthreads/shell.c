@@ -401,13 +401,13 @@ void kill(int argc, char* argv[])
 }
 EXPORT_KSYMBOL(kill);
 
+/* Prints the arguments, separated by single spaces. With none, it prints an empty line. */
 void echo(int argc, char* argv[])
 {	
-	if(argc <= 1){
-		return;
+	for (int i = 1; i < argc; i++){
+		twritef(i < argc-1 ? "%s " : "%s", argv[i]);
 	}
-
-	twritef("%s\n", argv[1]);
+	twritef("\n");
 }
 EXPORT_KSYMBOL(echo);
 
@@ -539,11 +539,8 @@ void shell_put(unsigned char c)
 		memcpy(previous_shell_buffer, shell_buffer, strlen(shell_buffer)+1);
 		twritef("kernel> %s\n", shell_buffer);
 		
-		//ENTER_CRITICAL();
-		if(exec_cmd(shell_buffer) < 0){
-			twritef("Unknown command\n");
-		}
-		//LEAVE_CRITICAL();
+		/* exec_cmd reports its own errors, like an unknown command */
+		exec_cmd(shell_buffer);
 		
 		terminal_commit();
 		reset_shell();

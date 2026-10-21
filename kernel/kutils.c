@@ -58,32 +58,110 @@ int align_to_pointer_size(int size)
     return aligned_size;
 }
 
+/**
+ * Scans line's words, as __split_command describes them, writing each into text, if it isn't NULL, followed by a 0.
+ * @return the number of words, or -1 if a quote isn't closed
+ */
+static int __scan_words(const char* line, char* text)
+{
+    int words = 0;
+    bool_t in_word = false;
+    bool_t quoted = false;
+
+    for(; *line; line++){
+        char c = *line;
+
+        if(c == '"'){
+            /* A quote starts a word even if nothing follows it, so "" is an empty word */
+            quoted = !quoted;
+            in_word = true;
+            continue;
+        }
+
+        if(!quoted && (c == ' ' || c == '\t' || c == '\n' || c == '\r')){
+            if(in_word){
+                if(text != NULL) *text++ = 0;
+                words++;
+                in_word = false;
+            }
+            continue;
+        }
+
+        if(text != NULL) *text++ = c;
+        in_word = true;
+    }
+
+    if(quoted) return -1;
+
+    if(in_word){
+        if(text != NULL) *text = 0;
+        words++;
+    }
+    return words;
+}
+
+/**
+ * Splits line into words. Spaces, tabs and newlines separate words, except between double quotes, so
+ * `mkdir "my projects"` makes one directory. The quotes are dropped wherever they are in a word, and "" is an empty
+ * word. There's no limit on the number of words or their length.
+ * @return the number of words, with *out set to a NULL-terminated array of them, which the caller frees with one
+ * kfree; -ERROR_UNTERMINATED_QUOTE; or -ERROR_ALLOC
+ */
+static int __split_command(const char* line, char*** out)
+{
+    int words = __scan_words(line, NULL);
+    if(words < 0) return -ERROR_UNTERMINATED_QUOTE;
+
+    /* The words and their terminating zeros take no more room than the line, quotes and separators included */
+    char** argv = kalloc_try((words + 1) * sizeof(char*) + strlen(line) + 1);
+    if(argv == NULL) return -ERROR_ALLOC;
+
+    char* text = (char*)(argv + words + 1);
+    __scan_words(line, text);
+    for (int i = 0; i < words; i++){
+        argv[i] = text;
+        text += strlen(text) + 1;
+    }
+    argv[words] = NULL;
+
+    *out = argv;
+    return words;
+}
+
+/**
+ * Runs a command line: its first word names a command or kernel function, which is called with every word as
+ * argc/argv. Errors are reported on the terminal. A blank line does nothing.
+ * @return 0, or a negative error code if the line couldn't be parsed or names no command
+ */
 int exec_cmd(char* str)
 {
-    if(str == NULL || *str == 0) return -1;
+    if(str == NULL) return -ERROR_NULL_POINTER;
 
-    struct args args = {
-        .argc = 0
-    };
-
-    for (int i = 0; i < 10; i++){
-        args.argv[i] = args.data[i];
+    char** argv;
+    int argc = __split_command(str, &argv);
+    if(argc < 0){
+        twritef("%s\n", error_get_string(argc));
+        return argc;
     }
-    
-	args.argc = parse_arguments(str, args.data);
-	if(args.argc == 0) return -1;
+    if(argc == 0){
+        kfree(argv);
+        return 0;
+    }
 
-	void (*ptr)(int argc, char* argv[]) = (void (*)(int argc, char* argv[])) ksyms_resolve_symbol(args.argv[0]);
+	void (*ptr)(int argc, char* argv[]) = (void (*)(int argc, char* argv[])) ksyms_resolve_symbol(argv[0]);
 	if(ptr == NULL){
-		return -1;
+		twritef("Unknown command: %s\n", argv[0]);
+		kfree(argv);
+		return -ERROR_UNKNOWN;
 	}
 
-    dbgprintf("Executing %s\n", args.argv[0]);
+    dbgprintf("Executing %s\n", argv[0]);
     /* execute command */
-	ptr(args.argc, args.argv);
+	ptr(argc, argv);
 
 	gfx_commit();
 
+	kfree(argv);
 	return 0;
 }
 EXPORT_KSYMBOL(exec_cmd);

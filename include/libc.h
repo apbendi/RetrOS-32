@@ -49,7 +49,6 @@ void* memmove(void *dest, const void *src, size_t n);
 
 int32_t csprintf(char *buffer, const char *fmt, va_list args);
 
-int parse_arguments(const char *input_string, char tokens[10][100]);
 
 void hexdump(const void *data, int size);
 
@@ -62,12 +61,6 @@ int isdigit(char c);
 int isspace(char c);
 int tolower(int c);
 int rand(void);
-
-struct args {
-    int argc;
-    char* argv[10];
-    char data[10][100];
-};
 
 #define SAVE_AND_RESTORE(x, code_block) \
 do { \
