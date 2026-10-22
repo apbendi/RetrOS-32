@@ -47,7 +47,7 @@ for f in "${files[@]}"; do
         continue
     fi
     case "$f" in
-        apps/C-Compiler/*) echo "$f: submodule, skipped"; continue ;;
+        apps/tcc/tinycc/*|libc/musl/*) echo "$f: vendored, skipped"; continue ;;
     esac
 
     dir=$(dirname "$f")

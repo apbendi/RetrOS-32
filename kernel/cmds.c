@@ -516,10 +516,11 @@ static int help(int argc, char* argv[])
     twritef("  new, view       fdisk        bg\n");
     twritef("  file            meminfo      sh\n");
     twritef("Network:          conf         echo\n");
-    twritef(" socks            services     cc\n");
+    twritef(" socks            services\n");
     twritef(" ifconfig         admin        color\n");
     twritef(" dns, tcp         clear\n\n");
     twritef("Quote names with spaces: cd \"my files\"\n");
+    twritef("Compile C: exec /bin/tcc.o hello.c -o hello\n");
     return 0;
 }
 EXPORT_KSYMBOL(help);
