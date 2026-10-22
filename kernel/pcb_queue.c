@@ -18,6 +18,19 @@
 #include <errors.h>
 
 /* Prototype functions for pcb queue interface */
+/**
+ * The scheduler runs from the timer interrupt, with interrupts off, and uses these queues. If a thread were preempted
+ * while holding a queue's spinlock, the scheduler would wait for it on that same thread's stack: spin_lock waits by
+ * yielding, which runs the scheduler again, until the kernel stack overflows. So each operation runs with interrupts
+ * off instead, which on one CPU means nothing can preempt it, and the do/while lets a break still leave it.
+ */
+#define QUEUE_CRITICAL(code_block) \
+    ENTER_CRITICAL(); \
+    do { \
+        code_block \
+    } while (0); \
+    LEAVE_CRITICAL();
+
 static error_t __pcb_queue_push(struct pcb_queue* queue, struct pcb* pcb);
 static error_t __pcb_queue_add(struct pcb_queue* queue, struct pcb* pcb);
 static void __pcb_queue_remove(struct pcb_queue* queue, struct pcb* pcb);
@@ -75,7 +88,7 @@ static error_t __pcb_queue_push(struct pcb_queue* queue, struct pcb* pcb)
 	}
 
 	/* This approach is suboptimal for large pcb queues, as you have to iterate over all pcbs */
-	SPINLOCK(queue, {
+	QUEUE_CRITICAL({
 
 		struct pcb* current = queue->_list;
 		if(current == NULL){
@@ -113,7 +126,7 @@ static error_t __pcb_queue_add(struct pcb_queue* queue, struct pcb* pcb)
 		return -ERROR_PCB_QUEUE_NULL;
 	}
 
-	SPINLOCK(queue, {
+	QUEUE_CRITICAL({
 
 		/* Add the pcb to the front of the queue */
 		pcb->next = queue->_list; /* Set the next pointer of the new pcb to the current head of the queue */
@@ -143,7 +156,7 @@ static void __pcb_queue_remove(struct pcb_queue* queue, struct pcb* pcb)
 		return;
 	}
 
-	SPINLOCK(queue, {
+	QUEUE_CRITICAL({
 
 		if(queue->_list == pcb){
 			queue->_list = pcb->next;
@@ -184,7 +197,7 @@ static struct pcb* __pcb_queue_pop(struct pcb_queue* queue)
 	}
 
 	struct pcb* front = NULL;
-	SPINLOCK(queue, {
+	QUEUE_CRITICAL({
 
 		front = queue->_list;
 		queue->_list = front->next;
@@ -213,7 +226,7 @@ static struct pcb* __pcb_queue_peek(struct pcb_queue* queue)
 	}
 
 	struct pcb* front = NULL;
-	SPINLOCK(queue, {
+	QUEUE_CRITICAL({
 		front = queue->_list;
 	});
 
