@@ -5,13 +5,14 @@
 # - out/retros/NAME-gcc, built with gcc on RetrOS's C library (libc/program.mk);
 # - out/retros/NAME-tcc, built with TCC's cross compiler (apps/tcc).
 # TinyCC's own tests are built by tests2.sh into out/tests2 (see tests2.conf).
-# out/test.img is a copy of RetrOS-32-debug.img with the RetrOS programs and the sources in /t, and TinyCC's tests in
-# /t/2.
+# out/test.img is a copy of RetrOS-32-debug.img with the RetrOS programs and the sources in /t, and TinyCC's tests,
+# built and as sources, in /t/tests2 (TinyCC's 18_include needs that name), for compiling on RetrOS (run.py --native).
 
 ROOT := $(abspath ../..)
 include $(ROOT)/libc/program.mk
 
 TCC := $(ROOT)/apps/tcc/bin/i386-retros-tcc
+TESTS2 := $(ROOT)/apps/tcc/tinycc/tests/tests2
 OUT := out
 CASES := $(basename $(notdir $(wildcard cases/*.c)))
 HEADERS := $(wildcard cases/*.h)
@@ -51,9 +52,10 @@ tests2:
 
 $(OUT)/test.img: $(ROOT)/RetrOS-32-debug.img $(RETROS) $(wildcard cases/*) tests2
 	@cp $(ROOT)/RetrOS-32-debug.img $@.tmp
-	@mmd -i $@.tmp ::/t ::/t/2
+	@mmd -i $@.tmp ::/t ::/t/tests2
 	@mcopy -i $@.tmp $(RETROS) $(wildcard cases/*) ::/t/
-	@cd $(OUT)/tests2 && mcopy -i ../../$@.tmp $$(ls | grep -v '\.compile$$\|\.expect$$') ::/t/2/
+	@cd $(OUT)/tests2 && mcopy -i ../../$@.tmp $$(ls | grep -v '\.compile$$\|\.expect$$\|\.c$$') ::/t/tests2/
+	@mcopy -i $@.tmp $(TESTS2)/*.c $(TESTS2)/*.h ::/t/tests2/
 	@mv $@.tmp $@
 	@echo "[c harness] built $(words $(CASES)) programs into $@"
 

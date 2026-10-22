@@ -29,6 +29,4 @@ for c in "$SRC"/[0-9][0-9]_*.c "$SRC"/[0-9][0-9][0-9]_*.c; do
 	cp "$SRC/$name.expect" "$OUT/"
 	built=$((built + 1))
 done
-# 46_grep reads its own source
-cp "$SRC/46_grep.c" "$OUT/"
 echo "[c harness] built $built of TinyCC's tests into out/tests2"

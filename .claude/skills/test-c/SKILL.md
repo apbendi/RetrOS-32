@@ -10,9 +10,14 @@ description: Use when changing RetrOS-32's standard C library (libc/), TinyCC (a
   - for Linux, with gcc and glibc in the Docker builder, where it runs to give the expected output;
   - for RetrOS with gcc on RetrOS's C library (variant `gcc`);
   - for RetrOS with TCC's cross compiler (variant `tcc`).
+- **With `--native`,** everything is also compiled on RetrOS itself, by `/bin/tcc.o`:
+  - each case to a file and run (variant `native`), and with `tcc -run` (variant `run`), compiled with `-w`;
+  - each of TinyCC's tests as its Makefile does it, with `-run`, or to a file for the `norun` ones in `tests2.conf` (`tests2.NAME.native`).
+
+  `expected.txt` has these results too; a run without `--native` leaves them out.
 - **TinyCC's own tests** (`apps/tcc/tinycc/tests/tests2`, 143 programs) run too, as `tests2.NAME`.
   - `tests2.sh` builds them with the cross compiler, as `tests2.conf` says: skips with reasons, flags, extra files and arguments.
-  - Each is compared with its `.expect` file, which has the compiler's messages first, then the program's output. As in TCC's own Makefile, runs of spaces count as one, and the test directory (`/t/2/` here) is taken out of the output.
+  - Each is compared with its `.expect` file, which has the compiler's messages first, then the program's output. As in TCC's own Makefile, runs of spaces count as one, and the test directory (`/t/tests2/` here) is taken out of the output.
   - A skipped test shows as `skip:` and its reason, and counts as expected.
 - **The RetrOS programs run in QEMU,** through the `run-in-qemu` skill's `qctl.py`, so the human's OK to boot QEMU covers this too. A run takes a few seconds per program, plus a build.
 
@@ -22,6 +27,7 @@ description: Use when changing RetrOS-32's standard C library (libc/), TinyCC (a
 tests/c/run.py                 # build everything, then run every case
 tests/c/run.py 'str*'          # cases whose names match a glob
 tests/c/run.py -v --no-build   # skip the build, and print each failure's difference
+tests/c/run.py --native        # also compile everything on RetrOS with /bin/tcc.o (about 15 minutes)
 ```
 
 - **What it builds,** in one builder container: `make img`, then `make -C tests/c`.
