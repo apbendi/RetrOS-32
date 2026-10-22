@@ -1797,6 +1797,8 @@ static const char dumpmachine_str[] =
     "openbsd"
 #elif TARGETOS_NetBSD
     "netbsd"
+#elif TARGETOS_RetrOS /* RetrOS */
+    "retros"
 #elif CONFIG_TCC_MUSL
     "linux-musl"
 #else

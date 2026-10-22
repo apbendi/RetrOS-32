@@ -203,6 +203,8 @@ static const char version[] =
         " OpenBSD"
 #elif TARGETOS_NetBSD
         " NetBSD"
+#elif TARGETOS_RetrOS /* RetrOS */
+        " RetrOS"
 #else
         " Linux"
 #endif

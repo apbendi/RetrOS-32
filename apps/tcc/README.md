@@ -19,13 +19,23 @@ The files in `tinycc/` are upstream's, unmodified, except for the patches listed
 - **`Makefile`** builds the cross compiler and `libtcc1.a` (below).
 
 **Patches:**
-1. **A RetrOS target OS** (`tcc.h`, `tccpp.c`). With `TARGETOS_RetrOS`, TCC predefines `__retros__` instead of `__linux__`, `__linux`, `__unix__` and `__unix`. In `tcc.h`, it keeps TCC from defaulting to `TARGETOS_Linux`.
+1. **A RetrOS target OS** (`tcc.h`, `tccpp.c`, `tcc.c`, `libtcc.c`). With `TARGETOS_RetrOS`, TCC predefines `__retros__` instead of `__linux__`, `__linux`, `__unix__` and `__unix`. In `tcc.h`, it keeps TCC from defaulting to `TARGETOS_Linux`. `tcc -v` says "i386 RetrOS", and `-dumpmachine` says `i386-retros`.
 2. **Code first** (`tccelf.c`, `sort_sections`). RetrOS starts a program at its first byte, but TCC puts read-only data before code. For RetrOS, executable sections sort first, so `crt1.o`'s `_start`, linked first, is at `0x1000000`.
 3. **`.bss` in flat binaries** (`tccelf.c`, `tcc_output_binary`). TCC leaves `SHT_NOBITS` sections out of a flat binary, and RetrOS's loader maps only what's in the file. For RetrOS, they're written as zeros, placed by address.
 
 ## The cross compiler
 
 `make -C apps/tcc`, which the normal build runs, makes `apps/tcc/bin/i386-retros-tcc`, a compiler that runs in the Docker builder and makes RetrOS programs. By default they're linked against RetrOS's C library (`libc/`), with its headers, as the compiler on RetrOS will link them: `crt1.o`, `libc.a` and `libtcc1.a`. It's built from the same sources and `config.h`, with its paths pointing into the repo's `rootfs/`, where the disk's files come from: TCC's headers and `libtcc1.a` go to `rootfs/lib/tcc`. `libtcc1.a`, TCC's runtime library (64-bit arithmetic and the like), is built with it from `tinycc/lib`, minus the Linux-only pieces.
+
+## On RetrOS
+
+`tcc.o`, installed as `/bin/tcc.o`, is TCC built with the builder's gcc on RetrOS's C library (`libc/program.mk`), from the same sources and `config.h`, with the paths as they are on RetrOS's disk. In the shell:
+
+```
+cd "/my projects"
+exec /bin/tcc.o main.c -o main
+exec main
+```
 
 **Testing:** the C harness (`tests/c`, the `test-c` skill) runs the harness's own programs and TCC's tests built with it on RetrOS.
 
