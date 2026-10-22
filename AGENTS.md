@@ -1,6 +1,6 @@
 # Notes for agents working on RetrOS-32
 
-RetrOS-32 is a 32-bit x86 hobby OS: kernel, window server, drivers, networking, a FAT file system on FatFs, and C/C++ userspace apps. This file covers how to build, run, check and debug it, and the parts of the codebase that have been easy to get wrong.
+RetrOS-32 is a 32-bit x86 hobby OS: kernel, window server, drivers, networking, a FAT file system on FatFs, C/C++ userspace apps, and TinyCC, a C compiler that runs on RetrOS, with a standard C library built from musl. This file covers how to build, run, check and debug it, and the parts of the codebase that have been easy to get wrong.
 
 This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens on the `development` branch, and issues are tracked on the fork (`gh issue list --repo apbendi/RetrOS-32`).
 
@@ -10,6 +10,7 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
 - `file-issue`: this fork's issue format and the `gh` steps.
 - `run-in-qemu`: booting RetrOS-32 in QEMU without a display and driving it, once the human says you may: shell commands, clicks, screenshots, the serial log and lldb. Its `qctl.py` does the work.
 - `test-filesystem`: checking the file system code against mtools and `fsck.fat` on disk images, without booting.
+- `test-c`: running C programs on RetrOS in QEMU and comparing their output with the same programs on Linux, for the C library, TinyCC and the kernel under them. It runs TinyCC's own test suite too.
 
 ## Layout
 
@@ -23,9 +24,10 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
 | `lib/` | Userspace libraries linked into apps (`graphics.c`, `libc.c` with the sin/cos tables, …) |
 | `apps/` | Userspace apps. Each has a `Makefile` that includes `apps/app.mk`. `apps/utils/Graphics.hpp` is the C++ `Window` class |
 | `include/` | Headers for everything above |
-| `rootfs/` | Files copied into the disk image. `rootfs/sysutil/startup.sh` is run at boot. `rootfs/bin/` (installed apps) and `rootfs/sysutil/symbols.map` are generated |
-| `tests/` | `tests/fs/`: the file system harness (the `test-filesystem` skill). The rest is host-side tests (`make test`), not exercised recently; the CI workflow has them commented out |
-| `apps/C-Compiler` | The C compiler, installed as `/bin/cc.o`. A vendored copy, not a submodule, under its own `LICENSE` (GPLv2); `README.md` says where it came from |
+| `rootfs/` | Files copied into the disk image. `rootfs/sysutil/startup.sh` is run at boot. `rootfs/bin/` (installed apps), `rootfs/usr/` (the C library), `rootfs/lib/tcc/` (TinyCC's headers and runtime) and `rootfs/sysutil/symbols.map` are generated |
+| `tests/` | `tests/fs/`: the file system harness (the `test-filesystem` skill). `tests/c/`: the C harness (the `test-c` skill). The rest is host-side tests (`make test`), not exercised recently; the CI workflow has them commented out |
+| `apps/tcc` | TinyCC (TCC), the C compiler, installed as `/bin/tcc.o`. `tinycc/` is upstream's whole tree, with a few patches; `README.md` lists them. See "C programs" below |
+| `libc/` | The standard C library for C programs: `musl/`, a whole musl release, built in part, with RetrOS's own startup, system calls and `malloc` in `src/`. See "C programs" below |
 
 ## Architecture
 
@@ -44,6 +46,7 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
 - **Shell commands:** `exec_cmd` (`kernel/kutils.c`) splits a line into `argc`/`argv`, looks up the first word with `ksyms_resolve_symbol`, and calls the result on the caller's thread. `sh` scripts and the `system` syscall go through it too.
   - **Splitting:** spaces, tabs and newlines separate words, except between double quotes, which are dropped: `cd "my projects"` passes one argument, and `""` an empty one. There's no limit on the number of words or their length (#51). `argv` ends with NULL.
   - **Errors:** `exec_cmd` prints its own, "Unknown command: <name>" or "Missing closing quote.". A blank line does nothing.
+  - **Finished:** it logs `exec_cmd(): Finished <command>` when the command returns. For `exec` without `-d`, that's when the program has exited, which is how the `test-c` harness waits for one.
   - The lookup tries `EXPORT_KSYMBOL` names first, then every function in `symbols.map`. So any kernel function's name runs as a command, with `(argc, argv)` as its arguments (#27), e.g. `exec_cmd` itself.
   - **Passing arguments on:** a kernel thread gets copies of its arguments. A process gets `argv` and its strings copied into its memory, which have to fit in one 4 KB page, or it fails with "Arguments too long.".
 - **Where data comes in:**
@@ -65,6 +68,7 @@ docker compose up
 ```
 
 - **What it runs:** `make img` in a container, with the repo mounted at `/RetrOS-32`. It compiles the kernel, libraries and apps, generates `rootfs/sysutil/symbols.map`, builds `RetrOS-32-debug.img` with `tools/build.c`, and copies `rootfs/` into it through a Linux `vfat` mount, long names included.
+  - **The C library and TinyCC:** `make img` builds `libc/` first, then `apps/`, which builds `apps/tcc`: TinyCC's cross compiler, which runs in the container, and `/bin/tcc.o`, both linked against the C library.
 - **Incremental builds are reliable:**
   - Objects track header dependencies (`-MMD -MP`), and the kernel always relinks.
   - `fs/` and `net/` have their own Makefiles. The top-level Makefile runs them on every build, through the phony targets `fs_objects` and `net_objects`, so their header tracking works too. A rule for a subdirectory's objects without a prerequisite like that only ever builds them once. That's how `list` crashed after #33 changed `struct terminal`: `fs/` still had the old layout compiled in.
@@ -87,12 +91,14 @@ HOSTFWD_PORT=8081 make qemu    # if port 8080 is taken (the default forward to t
 - **`make qemu` is interactive** and opens a window. The maintainer usually runs it and pastes the serial log. Ask before booting it yourself. When asked whether a build worked, check the build output and artifacts; don't boot it.
 - **Without a display:** when the human says you may boot it, `.claude/skills/run-in-qemu/qctl.py` boots a copy of the image in a headless QEMU and drives it. It picks the resolution, types into the shell, clicks, saves screenshots you can look at, and reads the serial log. See the `run-in-qemu` skill.
 - **Starting apps:** from the shell, `exec -d /bin/<app>.o` starts an app without waiting for it; without `-d`, the shell waits until it exits. Kernel threads start by name, e.g. `exec kclock`. The Start menu entries are defined in `kernel/kthreads/taskbar.c`.
-  - A program starts in the shell's current directory, so relative paths work: `cd "/my projects"`, then `exec -d /bin/edit.o main.c`, `exec /bin/cc.o main.c -o main.o` and `exec main.o`.
+  - A program starts in the shell's current directory, so relative paths work: `cd "/my projects"`, then `exec -d /bin/edit.o main.c`, `exec /bin/tcc.o main.c -o main` and `exec main`, or `exec /bin/tcc.o -run main.c`.
 - **Resolution varies:** the screen has been both 640×480 and 1024×768. Don't hard-code a resolution; use `vbe_info->width`/`height`.
 
 ## Checking a change without a full build
 
 These were fast and caught real problems. `.claude/skills/check-change/check.sh` automates the first two: the clang check, compared with HEAD, and the runtime-library check for apps.
+
+For the C library, TinyCC, and the kernel code programs depend on (loading, memory, files, the terminal), the `test-c` skill's harness runs C programs on RetrOS in QEMU and compares them with Linux. It found most of the bugs in that code so far.
 
 **Syntax-check kernel C with clang**, using the kernel's flags:
 
@@ -135,6 +141,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - The kernel heap is first fit, in boot order. At boot, netd's stack sits right before the window manager's screen buffer, so drawing above the top of the screen used to crash *netd*.
   - When you find a corrupted pointer, read its bytes as data. `20 1c 04 1c` turned out to look like text pixels in the terminal's color `0x1c`, which pointed at a drawing overflow.
   - A global that's already wrong before its thread first runs can come from the disk image, not the heap. `netd` crashed at boot on an interface pointer of `0xffff00a3`: two FAT entries, which the bootloader had loaded over the end of `.bss` (fixed in 2f52aa1, and the bootloader now reads only the kernel's sectors, #32).
+- **Temporary logging in `kernel/vmem.c`:** it turns `dbgprintf` off at the top, so use `warningf` there.
 - **To test crash output,** temporarily add a fault to a kernel thread that only starts on demand, e.g. the first line of `about()` in `kernel/kthreads/about.c`, which runs when you open About. Remove it afterwards.
   - Invalid opcode: `asm volatile("ud2");`
   - An exception with an error code: `asm volatile("movw $0x1234, %%ax\n\tmovw %%ax, %%ds" ::: "eax");`, which raises #GP with error code `0x1234`.
@@ -246,6 +253,43 @@ Syscalls run with interrupts enabled, so they can be preempted.
 
 **Testing:** the `test-filesystem` skill. `tests/fs/run.sh` runs the real `fs.o` and `fatfs.o` on disk images through `tests/fs/fstool`, and compares the result with mtools and `fsck.fat`, in the Docker builder, without booting. Then check syscalls, the shell and apps in QEMU.
 
+## C programs
+
+A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on RetrOS or in the builder, or with the builder's gcc. RetrOS's own apps (`apps/`, "Writing an app") use `libcore` and `libgraphic` instead, which aren't standard C.
+
+**The C library** (`libc/`, its `README.md`):
+- **What it is:** musl, a whole release vendored in `libc/musl/` with its three security patches, of which `libc/Makefile` builds a part: strings, stdio, the stdlib, math, time, the environment, `setjmp`. RetrOS's own code in `libc/src/` does the startup, the POSIX calls on RetrOS's system calls, `errno` and `malloc`.
+- **How it fits RetrOS:**
+  - `libc/arch/` replaces two of musl's i386 headers by coming first in the include path, so musl's files stay unmodified:
+    - **The current thread:** musl finds it through `%gs`, which RetrOS doesn't set up, so it's one static structure, shared by a program's threads.
+    - **Linux system calls:** the ones musl's own code makes, like stdio's `writev`, go to `libc/src/linux.c`, which does them with the library's functions; the rest return `ENOSYS`.
+  - **The kernel's numbers:** system call numbers, error codes and file flags come from the kernel's own headers, which the library includes next to standard ones: `syscall_helper.h`, `errors.h` with `ERRORS_CODES_ONLY`, and `fs/fs_types.h`.
+- **Where it's installed:** headers in `/usr/include`, and `libc.a` and `crt1.o` in `/usr/lib`, with empty `libm.a` and friends as musl has them. In the repo, `rootfs/usr/`.
+- **How programs behave:**
+  - descriptors 0 to 2 are the terminal. `stdout` is line-buffered, and `stdin` is always at its end (#113);
+  - RetrOS's errors become `errno` values;
+  - `rename` replaces an existing file;
+  - the clock has whole seconds of local time;
+  - at most 4 MB of heap and 64 KB of stack.
+- **Not yet:** thread safety, `dup`, `exec`, signals, exit codes and windows (#117).
+
+**Building a program:**
+- **TinyCC on RetrOS:** `exec /bin/tcc.o main.c -o main`, then `exec main`, or `exec /bin/tcc.o -run main.c`.
+- **TinyCC in the builder:** `apps/tcc/bin/i386-retros-tcc main.c -o main`, with the same defaults, finding the library under `rootfs/`.
+- **gcc in the builder:** include `libc/program.mk` and link with its `STDC_*` variables (`libc/retros.ld`).
+- **Either way, a program** is a flat binary at `0x1000000`. RetrOS starts it at its first byte, so `crt1.o`'s `_start` comes first, and `.bss` is written into the file as zeros, because RetrOS maps only what's in the file.
+
+**TinyCC** (`apps/tcc`, its `README.md`):
+- **Patches:** upstream's tree in `tinycc/`, with a few, each marked `RetrOS` in the code:
+  - a RetrOS target, which predefines `__retros__`, not `__linux__`;
+  - code sorted first;
+  - `.bss` in flat binaries;
+  - `-run` using TCC's own C library through a generated symbol table, since the program would have no set-up library of its own.
+- **Settings:** `apps/tcc/config.h`, in place of what TCC's configure script writes.
+- **Its own files** are in `/lib/tcc`: headers, `libtcc1.a` (64-bit arithmetic and the like) and `runmain.o` (for `-run`).
+
+**Testing:** the `test-c` skill's harness (`tests/c/run.py`) runs C programs and TinyCC's own tests on RetrOS, compiled with gcc and the cross compiler, and with `--native`, with `/bin/tcc.o` on RetrOS.
+
 ## Kernel facts that have mattered
 
 - **How memory is divided:** `memory_map_init` (`kernel/memory.c`) divides the memory between 1 MB and 16 MB. With `-m 32m` that's 15 MB:
@@ -254,6 +298,12 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - **12–16 MB, pages:** a quarter of the memory. The first 256 KB is the page-table pool for the kernel's own tables (`vmem_manager`, 6 pages used); the rest is pages for processes (`vmem_default`: page tables, code, stacks, `malloc`).
   - **The memory above 16 MB isn't used.** The kernel's 1:1 mapping ends at 16 MB, where process code is mapped (`VMEM_DATA`). #56 covers moving it and using all of memory.
   - The sizes are in `include/memory.h`. The shell's `meminfo` shows each region's use.
+- **Pages come from `vmem_alloc` as their last user left them.** Clear any page used as a page table or directory, as `vmem_init_process` does: one that isn't cleared maps whatever its page held.
+- **A process's `malloc` system call** (`vmem_stack_alloc`) allocates from regions of pages in its heap, one page table at `VMEM_HEAP`, so 4 MB at most (`VMEM_HEAP_SIZE`).
+  - **New regions** go in the first gap between regions that fits, or after the last.
+  - **Freeing a region** unmaps its pages, and `vmem_unmap` flushes each from the TLB.
+  - **The C library** asks for blocks of 128 KB or more and divides them itself (`libc/src/malloc.c`); `libcore` apps make a system call per allocation.
+- **Programs** are up to `PROGRAM_MAX_SIZE`, 2 MB, mapped at `VMEM_DATA` through one page table.
 - **`kalloc` panics when the heap is full.**
   - The heap is first fit, in 256-byte blocks.
   - `kalloc` panics with "Out of memory!" rather than returning NULL.
@@ -273,8 +323,10 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - **File dates:** FAT keeps the time of each file's last write. FatFs sets it from `get_fattime` (`fs/fatfs_port.c`), which reads the RTC, and `fs_stat` and `fs_readdir` report it as a `struct time` in `struct fs_dirent`'s `written`, with a `centuary` of 0 for none.
   - Files `make img` copies in get the build container's clock, which is UTC. So they look a few hours off from files created in RetrOS, which use the host's local time.
 - **Timers and sleeping:** the timer runs at 1000 Hz, so `sleep(ms)` and ticks are milliseconds. PCB sleep deadlines are `uint32_t`; a 16-bit field used to overflow after ~65 s.
+- **The scheduler's queues:** the scheduler runs from the timer interrupt, with interrupts off, and uses the PCB queues. So each queue operation runs with interrupts off (`QUEUE_CRITICAL` in `kernel/pcb_queue.c`), not under a spinlock. Don't guard anything the scheduler uses with `spin_lock`: if the timer preempts a thread holding the lock, the scheduler waits for it on that thread's stack, yielding into itself until the kernel stack overflows.
+- **Printing from programs:** `SYSCALL_TERM_WRITE` (`terminal_write`) writes a buffer to the program's terminal in one call. A graphics terminal is repainted in full for each call, and for each newline `putchar` writes, so many small writes are slow (#118). A program's unfinished last line goes to the log when it exits.
 - **Fixed offsets:** `struct pcb` fields above the "DO NOT CHANGE ABOVE" marker are read by assembly at fixed offsets. The ISR stubs in `kernel/irs_entry.s` build exactly the frame described by `struct registers`.
-- **User stacks:** a process's stack, and each of its threads', is two 4 KB pages, at `VMEM_STACK` and `VMEM_STACK - PAGE_SIZE` in the same page table. Exiting frees both.
+- **User stacks:** a process's stack, and each of its threads', is `VMEM_STACK_PAGES` pages below `VMEM_STACK`, 64 KB, all mapped when it starts. Exiting frees them. Growing on demand instead is #115.
   - **A double free:** `[VMEM] Double free or invalid free for page N` in the log means something freed a page twice. Every exit logged it until #12 was fixed, so now it points to a new bug.
   - **Checking for a leak:** in lldb, compare `p vmem_default->used_pages`, the pages in use, before and after, e.g. stopping on `meminfo` both times. Opening and closing an app should leave it unchanged.
 
@@ -288,9 +340,11 @@ Syscalls run with interrupts enabled, so they can be preempted.
    - draw;
    - `sleep(ms)`.
    `apps/breakout`, `apps/bcalc` and `apps/cube` follow this pattern.
-3. **Math:** there's no libm. `sin_60`/`cos_60` in `lib/libc.c` are 6° tables, offset by 90°: `cos_60[i]` is sin(6i°), and `sin_60[i]` is −cos(6i°). Avoid 64-bit integer division.
+3. **Math:** `libcore` has no libm. `sin_60`/`cos_60` in `lib/libc.c` are 6° tables, offset by 90°: `cos_60[i]` is sin(6i°), and `sin_60[i]` is −cos(6i°). Avoid 64-bit integer division.
 4. **Files:** the file syscalls are in `lib/syscall.c` and `include/lib/syscall.h`; see "File system" for how they behave. They return negative codes from `include/errors.h`, and `error_get_string` (in `libcore`) gives a code's message.
 5. **Build and launch:** `docker compose up` installs the app into `rootfs/bin`. Launch it with `exec -d /bin/<name>.o`.
+
+These apps use RetrOS's own libraries, `libcore` and `libgraphic`, which aren't standard C. A program in standard C uses the C library instead: see "C programs".
 
 ## Workflow conventions
 

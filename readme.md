@@ -313,7 +313,7 @@ To run RetrOS-32:
 - [x] Library (printf, memcpy, etc)
 - [x] IPC
 - [x] System calls
-- [x] C Compiler / interpreter to bytecode
+- [x] C compiler: TinyCC, running on RetrOS, with a standard C library built from musl
 - [x] Custom VM to run bytecode.
 - [x] Editor with Syntax Highlighting
 - [x] Calculator
