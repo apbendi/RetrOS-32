@@ -28,6 +28,8 @@ extern int kernel_size;
 
 
 #define VMEM_STACK          0xEFFFFFF0
+/* A process's or thread's stack: this many pages below VMEM_STACK, all allocated when it starts. 16 pages is 64 KB. */
+#define VMEM_STACK_PAGES    16
 #define VMEM_HEAP           0xE0000000
 #define VMEM_DATA           0x1000000
 
@@ -149,7 +151,7 @@ void vmem_init_kernel();
 void vmem_cleanup_process(struct pcb* pcb);
 void vmem_cleanup_process_thead(struct pcb* thread);
 
-void vmem_init_process_thread(struct pcb* parent, struct pcb* thread);
+int vmem_init_process_thread(struct pcb* parent, struct pcb* thread);
 int vmem_init_process(struct pcb* pcb, byte_t* data, int size);
 void vmem_stack_free(struct pcb* pcb, void* ptr);
 void* vmem_stack_alloc(struct pcb* pcb, int size);
