@@ -5,9 +5,9 @@ QEMU runs in the background with no window. Its serial log, a copy of the disk
 image and screenshots go in .qemu/ at the repo root. The script talks to QEMU's
 monitor over TCP to press keys, move the mouse and take screenshots.
 
-  start [--res 640|800|1024|text] [--gdb] [--rtc TIME]
-                          boot a copy of RetrOS-32-debug.img, pick the resolution
-                          (default 1024) and wait for the desktop
+  start [--res 640|800|1024|text] [--gdb] [--rtc TIME] [--image IMG]
+                          boot a copy of RetrOS-32-debug.img (or IMG), pick the
+                          resolution (default 1024) and wait for the desktop
   stop                    quit QEMU
   status                  is it running, and where are its files
   pick RES                at the boot menu, press the key for RES (after start --gdb)
@@ -209,13 +209,14 @@ def pick(res, timeout=30):
 
 
 def start(args):
+    image = getattr(args, "image", None) or IMAGE
     if qemu_pid():
         die("QEMU is already running; stop it first (qctl.py stop)")
-    if not os.path.exists(IMAGE):
-        die(f"{IMAGE} doesn't exist. Build it first: docker compose up")
+    if not os.path.exists(image):
+        die(f"{image} doesn't exist. Build it first: docker compose up")
     os.makedirs(STATE, exist_ok=True)
     # Boot a copy, so the real image is never locked or written
-    shutil.copyfile(IMAGE, DISK)
+    shutil.copyfile(image, DISK)
     for path in (SERIAL, MARK):
         if os.path.exists(path):
             os.remove(path)
@@ -564,6 +565,7 @@ def main():
     s.add_argument("--gdb", action="store_true", help="wait for a debugger before the BIOS runs")
     s.add_argument("--rtc", help="start the clock at this time, e.g. 2026-10-20T10:05:00")
     s.add_argument("--mem", type=int, default=32, help="memory in MB, like make qemu's -m 32m")
+    s.add_argument("--image", help="boot a copy of this image instead of RetrOS-32-debug.img, e.g. the C harness's")
     s.add_argument("--disk-bus", default="ide", choices=["ide", "virtio"],
                    help="virtio: the BIOS boots from the disk, but the kernel's IDE driver doesn't see it, as on a machine booted from USB")
     sub.add_parser("stop")

@@ -1,0 +1,9 @@
+# The results tests/c/run.py expects, one line per case and variant: its name, then "pass" or "fail:" and why.
+# run.py flags every result that differs. When a change fixes or breaks a case on purpose, update its line here in
+# the same commit, so the next run starts from the new state.
+files.gcc pass
+files.tcc pass
+memory.gcc pass
+memory.tcc pass
+strings.gcc pass
+strings.tcc pass

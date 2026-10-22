@@ -63,6 +63,11 @@ rootfs/lib/tcc/
 libc/bin/
 rootfs/usr/
 
+# The C harness's build and results
+tests/c/out/
+
+__pycache__/
+
 RetrOS-32-debug.img
 
 rootfs/symbols.map

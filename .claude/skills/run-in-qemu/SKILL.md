@@ -29,7 +29,7 @@ $Q stop
 ```
 
 `$Q --help` lists every command.
-- **`start` options:** `--res 640|800|1024|text` picks the resolution. `--rtc 2026-10-20T10:05:00` starts the clock at a given time, e.g. to test the taskbar clock at a two-digit hour. `--mem 16` sets the memory in MB; the default is 32, like `make qemu`. `--disk-bus virtio` boots with no disk the kernel can see: the BIOS boots from a virtio disk, which the kernel's IDE driver doesn't find, as on a machine booted from USB. `start` then waits for a shell that never comes, so run it in the background and drive the login window and the "No disk attached" prompt yourself.
+- **`start` options:** `--res 640|800|1024|text` picks the resolution. `--rtc 2026-10-20T10:05:00` starts the clock at a given time, e.g. to test the taskbar clock at a two-digit hour. `--image IMG` boots a copy of another image instead, e.g. the C harness's `tests/c/out/test.img` (the `test-c` skill). `--mem 16` sets the memory in MB; the default is 32, like `make qemu`. `--disk-bus virtio` boots with no disk the kernel can see: the BIOS boots from a virtio disk, which the kernel's IDE driver doesn't find, as on a machine booted from USB. `start` then waits for a shell that never comes, so run it in the background and drive the login window and the "No disk attached" prompt yourself.
 - **`type TEXT`** types text; `\n` is Enter.
 - **`key NAME...`** presses keys by QEMU's names: `ret`, `tab`, `esc`, `f10`, `backspace`, `shift-a`, `ctrl-c`.
 - **`windows`** lists the windows front to back, with each one's position, size and owner, and where to click to bring it to the front. It presses F12, which makes the window server log the list.
@@ -46,6 +46,7 @@ $Q stop
   - **`focus`** lists the windows (F12), then clicks a part of NAME's title bar that no window in front covers, and checks the log for `Pushing window <name> to front`. That takes about half a second.
   - If the title bar is covered everywhere, `focus` falls back to Alt+Tab, which sends the front window to the back. It presses Alt+Tab until the window order repeats, then stops with NAME in front. That takes a couple of seconds.
   - **F12 and the shell's `windows` command** list the windows. F12 is handled by the window server, so it works whatever has focus. Its lines look like `wm_log_windows(): 1 "Clock" x=450 y=50 w=126 h=156 pid=6`.
+- **A shell command is done** when the log says `exec_cmd(): Finished <command>`. For `exec` without `-d`, that's when the program has exited.
 - **Terminal output is in the serial log,** one line at a time, as `term[<writer>]: <text>`. That includes the shell's echo of each command after its prompt (`term[shell]: kernel:/> exec ...`, with the shell's current directory), kernel commands' output, and apps' `printf`. So `$Q wait "term\[shell\]: .*File too large"` checks a command's result without a screenshot.
   - A line is logged when it ends with a newline, so a prompt without one waits for the next newline.
   - Lines over 127 characters are split across log lines.
