@@ -24,9 +24,10 @@ all: $(EXPECTED) $(OUT)/test.img
 # Keep the Linux builds, which make would otherwise delete as intermediate files
 .SECONDARY: $(LINUX)
 
+# 64-bit time_t and off_t, as musl has them on 32-bit x86
 $(OUT)/linux/%: cases/%.c $(HEADERS)
 	@mkdir -p $(dir $@)
-	@gcc -m32 -O2 -w -o $@ $< -lm
+	@gcc -m32 -O2 -w -D_TIME_BITS=64 -D_FILE_OFFSET_BITS=64 -o $@ $< -lm
 
 # Run in an empty directory, as the program runs in /t on RetrOS. stderr goes with stdout, as on RetrOS's terminal.
 $(OUT)/expected/%.out: $(OUT)/linux/%
