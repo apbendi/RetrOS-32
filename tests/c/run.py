@@ -144,6 +144,10 @@ def main():
         cases = [c for c in cases if any(fnmatch.fnmatch(c, g) for g in args.cases)]
 
     expected = read_expected()
+    diffs = os.path.join(OUT, "diff")
+    if os.path.isdir(diffs):
+        for name in os.listdir(diffs):
+            os.remove(os.path.join(diffs, name))
     retros = RetrOS()
     results, changed = {}, 0
     try:

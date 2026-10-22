@@ -20,6 +20,8 @@
 
 struct __retros_fd {
 	int open;
+	/* The flags it was opened with, for fcntl(F_GETFL) */
+	int flags;
 	int is_directory;
 	time_t written;
 };

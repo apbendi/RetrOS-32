@@ -1,4 +1,5 @@
 /* POSIX file and process calls, on RetrOS's system calls (fd.h for descriptors 0 to 2) */
+#include <features.h>
 #include <unistd.h>
 #include <errno.h>
 #include <limits.h>
@@ -65,6 +66,9 @@ off_t lseek(int fd, off_t offset, int whence)
 	}
 	return __retros_ret(__retros_syscall(SYSCALL_SEEK, fd, (int)offset, whence));
 }
+
+/* musl's stdio calls it by this name */
+weak_alias(lseek, __lseek);
 
 int isatty(int fd)
 {
