@@ -158,6 +158,8 @@ int exec_cmd(char* str)
     dbgprintf("Executing %s\n", argv[0]);
     /* execute command */
 	ptr(argc, argv);
+	/* For whoever reads the log: exec has waited for its program, so this is when the program is done */
+	dbgprintf("Finished %s\n", argv[0]);
 
 	gfx_commit();
 
