@@ -441,16 +441,22 @@ static int __terminal_reset(struct terminal* term)
 	return 0;
 }
 
+/* Moves a graphics terminal to the next line, scrolling when the window is full */
+static void __terminal_newline_graphics(struct terminal* term)
+{
+	if((term->screen->inner_height/8) -1 == term->lines){
+		__terminal_scroll(term);
+	} else {
+		term->lines++;
+	}
+}
+
 static int __terminal_putchar_graphics(struct terminal* term, char c)
 {
 	if(term == NULL) return -1;
 
 	if(c == '\n'){
-		if((term->screen->inner_height/8) -1 == term->lines){
-			__terminal_scroll(term);
-		} else {
-			term->lines++;
-		}
+		__terminal_newline_graphics(term);
 
 		/* should be a flush syscall */
 		if(term->screen != NULL && term->screen != $process->current->gfx_window){
@@ -468,6 +474,39 @@ static int __terminal_putchar_graphics(struct terminal* term, char c)
 	}
 
 	return 1;
+}
+
+/**
+ * Writes text to the calling thread's terminal: the system call programs print with. putchar redraws another
+ * thread's graphics terminal at every newline, so this stores all of the text first and redraws once.
+ * Without a terminal, the text is dropped, as terminal_putchar does.
+ * @return size, or a negative error code
+ */
+int terminal_write(const char* data, int size)
+{
+	if(data == NULL || size < 0) return -ERROR_INVALID_ARGUMENTS;
+	if($process->current == NULL || $process->current->term == NULL) return size;
+
+	struct terminal* term = $process->current->term;
+	if(term->ops->putchar != __terminal_putchar_graphics || term->screen == NULL){
+		for (int i = 0; i < size; i++){
+			term->ops->putchar(term, data[i]);
+		}
+		return size;
+	}
+
+	for (int i = 0; i < size; i++){
+		if(data[i] == '\n') __terminal_newline_graphics(term);
+		if(__terminal_store_char(term, data[i]) < 0) break;
+	}
+
+	/* As putchar does: another thread's terminal is redrawn now, and a thread's own when it commits */
+	if(term->screen != $process->current->gfx_window){
+		term->ops->commit(term);
+	} else {
+		gfx_commit();
+	}
+	return size;
 }
 
 static int __terminal_putchar_textmode(struct terminal* term, char c)

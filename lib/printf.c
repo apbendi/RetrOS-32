@@ -13,19 +13,19 @@ extern "C" {
 #endif
 
 #include <args.h>
+#include <syscall_helper.h>
 #include <lib/syscall.h>
 #include <libc.h>
 
 /**
- * Writes the given string to the terminal with terminal_putchar
+ * Writes the given string to the terminal in one system call (terminal_write)
  * @param char* data to print to screen
  * @param int size of data
  * @return void
  */
 void print_write(const char* data, int size)
 {
-	for (int i = 0; i < size; i++)
-		print_put(data[i]);
+	invoke_syscall(SYSCALL_TERM_WRITE, (int)data, size, 0);
 }
 
 /**

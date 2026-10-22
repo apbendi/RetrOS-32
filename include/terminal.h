@@ -80,7 +80,7 @@ int terminal_destroy(struct terminal* term);
 int scan(ubyte_t* data, int size);
 
 void twrite(const char* data);
-void terminal_write(const char* data, int size);
+int terminal_write(const char* data, int size);
 void terminal_putchar(char c);
 
 
