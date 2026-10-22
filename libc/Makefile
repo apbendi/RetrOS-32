@@ -47,20 +47,20 @@ MUSL_SRCS := \
 		__year_to_secs.c asctime.c asctime_r.c ctime.c ctime_r.c difftime.c gmtime.c gmtime_r.c localtime.c \
 		localtime_r.c mktime.c strftime.c timegm.c) \
 	$(addprefix $(MUSL)/src/mman/,mmap.c munmap.c) \
-	$(addprefix $(MUSL)/src/exit/,exit.c atexit.c) \
+	$(addprefix $(MUSL)/src/exit/,exit.c atexit.c assert.c) \
 	$(addprefix $(MUSL)/src/errno/,__errno_location.c strerror.c) \
 	$(MUSL)/src/env/__environ.c \
 	$(MUSL)/src/internal/libc.c \
 	$(MUSL)/src/internal/syscall_ret.c \
 	$(addprefix $(MUSL)/src/locale/,__lctrans.c c_locale.c langinfo.c) \
-	$(addprefix $(MUSL)/src/math/,__fpclassifyl.c __signbitl.c frexpl.c scalbn.c scalbnl.c ldexpl.c copysignl.c \
-		fabsl.c fmodl.c) \
+	$(wildcard $(MUSL)/src/math/*.c) \
+	$(filter-out $(MUSL)/src/fenv/fenv.c,$(wildcard $(MUSL)/src/fenv/*.c)) \
 	$(MUSL)/src/thread/__lock.c
 
 RETROS_SRCS := $(wildcard src/*.c)
 
-# musl's assembly: setjmp and longjmp
-MUSL_ASM := $(MUSL)/src/setjmp/i386/setjmp.s $(MUSL)/src/setjmp/i386/longjmp.s
+# musl's assembly: setjmp and longjmp, and the floating-point environment, which replaces the generic fenv.c
+MUSL_ASM := $(MUSL)/src/setjmp/i386/setjmp.s $(MUSL)/src/setjmp/i386/longjmp.s $(MUSL)/src/fenv/i386/fenv.s
 
 MUSL_OBJS := $(patsubst $(MUSL)/src/%.c,$(OBJ)/musl/%.o,$(MUSL_SRCS)) $(patsubst $(MUSL)/src/%.s,$(OBJ)/musl/%.o,$(MUSL_ASM))
 RETROS_OBJS := $(patsubst src/%.c,$(OBJ)/retros/%.o,$(RETROS_SRCS))
@@ -107,7 +107,8 @@ $(BUILD_DIR)/libc.a: $(MUSL_OBJS) $(RETROS_OBJS)
 
 -include $(RETROS_OBJS:.o=.d)
 
-# What RetrOS's disk gets in /usr/include and /usr/lib, laid out as musl's install-headers lays it out
+# What RetrOS's disk gets in /usr/include and /usr/lib, laid out as musl's install-headers lays it out. As with musl,
+# libm.a and the other usual libraries are empty, since libc.a has it all, so -lm and the like still link.
 install: $(BUILD_DIR)/libc.a $(CRT_OBJS)
 	$(call make_dir,$(USR_INCLUDE)/bits)
 	$(call make_dir,$(USR_LIB))
@@ -117,6 +118,7 @@ install: $(BUILD_DIR)/libc.a $(CRT_OBJS)
 	$(QUIET)cp -p $(MUSL)/arch/i386/bits/*.h $(USR_INCLUDE)/bits/
 	$(QUIET)cp -p $(GEN)/bits/alltypes.h $(GEN)/bits/syscall.h $(USR_INCLUDE)/bits/
 	$(QUIET)cp -p $(BUILD_DIR)/libc.a $(CRT_OBJS) $(USR_LIB)/
+	$(QUIET)for l in m pthread rt dl util crypt; do $(AR) rcs $(USR_LIB)/lib$$l.a; done
 
 clean:
 	$(QUIET)$(RM_RF) $(BUILD_DIR) $(USR_INCLUDE) $(USR_LIB)
