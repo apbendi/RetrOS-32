@@ -471,8 +471,6 @@ error_t pcb_create_process(char* program, int argc, char** argv, pcb_flag_t flag
 {
 	AUTHORIZED_GUARD(CTRL_PROC_CREATE | SYSTEM_FULL_ACCESS | ADMIN_FULL_ACCESS);
 
-	#define MAX_PROGRAM_SIZE 128*1024
-
 	char* buf;
 	int ret, size;
 	struct pcb* pcb;
@@ -489,8 +487,8 @@ error_t pcb_create_process(char* program, int argc, char** argv, pcb_flag_t flag
 		fs_close(fd);
 		return -ERROR_FILE_NOT_FOUND;
 	}
-	if(size > MAX_PROGRAM_SIZE){
-		warningf("%s is %d bytes, more than a program can be (%d)\n", program, size, MAX_PROGRAM_SIZE);
+	if(size > PROGRAM_MAX_SIZE){
+		warningf("%s is %d bytes, more than a program can be (%d)\n", program, size, PROGRAM_MAX_SIZE);
 		fs_close(fd);
 		return -ERROR_FILE_TOO_LARGE;
 	}

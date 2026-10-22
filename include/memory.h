@@ -31,6 +31,9 @@ extern int kernel_size;
 #define VMEM_HEAP           0xE0000000
 #define VMEM_DATA           0x1000000
 
+/* The biggest program file pcb_create_process loads. It's mapped at VMEM_DATA through one page table, which covers 4 MB. */
+#define PROGRAM_MAX_SIZE    MB(2)
+
 #define SUPERVISOR          0
 #define PRESENT             1
 #define READ_WRITE          2
