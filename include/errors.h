@@ -1,8 +1,9 @@
 #ifndef EDD28A84_235C_41BD_B175_C5224DEECC55
 #define EDD28A84_235C_41BD_B175_C5224DEECC55
 
-/* For the macros below, which only the kernel's C uses. Apps include this for the codes and their messages. */
-#ifndef __cplusplus
+/* For the macros below, which only the kernel's C uses. Apps include this for the codes and their messages, and the
+ * standard C library (libc/) defines ERRORS_CODES_ONLY to get just the codes, next to standard headers. */
+#if !defined(__cplusplus) && !defined(ERRORS_CODES_ONLY)
 #include <serial.h>
 #include <kutils.h>
 #endif
