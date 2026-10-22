@@ -17,6 +17,7 @@
  *   fstool IMAGE new PATH                create an empty file, as the shell's "new file" does
  *   fstool IMAGE rm|mkdir|rmdir PATH     fs_unlink, fs_mkdir and fs_rmdir, which the syscalls of the same names use
  *   fstool IMAGE mv OLD NEW              fs_rename
+ *   fstool IMAGE same-entry PATH OTHER   fs_same_entry: "same" or "different"
  *   fstool IMAGE stat PATH               fs_stat: "D NAME" or "F NAME SIZE"
  *   fstool IMAGE dir PATH                the same as ls
  *   fstool IMAGE pwd                     the current directory, from fs_getcwd
@@ -69,6 +70,7 @@ int fs_mkdir(const char* path);
 int fs_unlink(const char* path);
 int fs_rmdir(const char* path);
 int fs_rename(const char* path, const char* new_path);
+int fs_same_entry(const char* path, const char* other);
 int fs_chdir(const char* path);
 int fs_getcwd(char* buf, int size);
 
@@ -97,7 +99,8 @@ static int usage(void)
 {
     fprintf(stderr, "usage: fstool IMAGE format [RESERVED] | tree | ls PATH | cat PATH [CHUNK] | write PATH |\n"
                     "       writes PATH CHUNK | pwrite PATH OFFSET | append PATH | truncate PATH | new PATH |\n"
-                    "       rm PATH | mkdir PATH | rmdir PATH | mv OLD NEW | stat PATH | dir PATH\n");
+                    "       rm PATH | mkdir PATH | rmdir PATH | mv OLD NEW | same-entry PATH OTHER |\n"
+                    "       stat PATH | dir PATH\n");
     return 2;
 }
 
@@ -296,6 +299,10 @@ int main(int argc, char* argv[])
     } else if(strcmp(op, "mv") == 0 && argc > 4){
         int ret = fs_rename(arg, argv[4]);
         status = ret != 0 ? failed("fs_rename", ret) : 0;
+    } else if(strcmp(op, "same-entry") == 0 && argc > 4){
+        int ret = fs_same_entry(arg, argv[4]);
+        status = ret < 0 ? failed("fs_same_entry", ret) : 0;
+        if(ret >= 0) printf("%s\n", ret == 1 ? "same" : "different");
     } else if(strcmp(op, "stat") == 0){
         struct fs_dirent entry;
         int ret = fs_stat(arg, &entry);

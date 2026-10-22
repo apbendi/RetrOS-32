@@ -229,8 +229,8 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - `FS_FILE_FLAG_TRUNCATE` empties a file as it's opened, and `FS_FILE_FLAG_APPEND` writes at its end.
   - A write can't start past the end of the file. Each write is synced to the disk as it's made. A short write means the disk is full.
 - **Directories** are opened read-only and listed with `fs_readdir`, which gives each entry's long name, size, attributes and last write time (`struct fs_dirent`), and leaves out `.` and `..`. Reading a directory like a file fails with `ERROR_IS_DIRECTORY`, and opening one for writing is refused (#86).
-- **Names** are case-insensitive. A long name has an 8.3 alias that FatFs makes up; `fs_stat` and `fs_readdir` report the long name as stored.
-- **Moving:** `fs_rename` also moves between directories. It refuses an existing destination, and a directory moved inside itself, which FatFs would do, losing the directory.
+- **Names** are case-insensitive, and keep the case they were made with. A long name has an 8.3 alias that FatFs makes up; `fs_stat` and `fs_readdir` report the long name as stored. `fs_same_entry` tells whether two paths are one file or directory, however each spells it, by where it is on the disk.
+- **Moving:** `fs_rename` also moves between directories. It refuses an existing destination, and a directory moved inside itself, which FatFs would do, losing the directory. Renaming to the same name in another case works, which is how `mv docs Docs` changes only the case.
 - **The current directory** is per process, kept in `fs.c` by PID. A new process or kernel thread starts in its creator's, and a thread shares its process's. Each shell window is a kernel thread with its own.
 
 **In the shell:** `ls` (`list`), `cd`, `pwd`, `mkdir`, `rm`, `rmdir`, `mv`, `find`, `view`, `file` and `new file`, in `kernel/cmds.c`. Quote names with spaces. The prompt shows the current directory, `kernel:/my projects>`, and the history echoes each command after it.

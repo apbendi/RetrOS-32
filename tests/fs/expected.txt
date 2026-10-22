@@ -50,9 +50,11 @@ ops.rename-into-directory pass
 ops.rename-onto-existing pass
 ops.rename-into-itself pass
 ops.rename-directory pass
+ops.rename-case pass
 ops.remove-directory pass
 ops.rmdir-not-empty pass
 ops.mkdir-exists pass
 ops.readdir-long-names pass
+ops.same-entry pass
 paths.relative pass
 paths.chdir-refused pass

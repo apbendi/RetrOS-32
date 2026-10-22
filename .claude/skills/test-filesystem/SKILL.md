@@ -39,7 +39,7 @@ Each line of output is a case's name, then `pass`, or `fail:` and the checks tha
 | `lock` | RetrOS released a lock it didn't hold. It's kept apart because the old FAT16 code did it for every new cluster (#38) |
 | `op` | a RetrOS operation failed, or succeeded when it should have failed |
 | `mount` | RetrOS didn't mount the image |
-| `path`, `setup`, `ref` | case-specific checks. `ref` means mtools itself failed, which is a harness problem |
+| `path`, `names`, `entry`, `setup`, `ref` | case-specific checks. `ref` means mtools itself failed, which is a harness problem |
 
 - **Changed results:** `<- was ...` marks a result that differs from `tests/fs/expected.txt`, and the run exits non-zero. `-v` isn't needed to see why: changed results always print their details.
 - **What a failing case leaves:** `tests/fs/out/CASE/` has:
