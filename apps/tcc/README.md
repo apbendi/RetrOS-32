@@ -14,9 +14,18 @@ Only the i386 compiler: `tcc.c` with `ONE_SOURCE`, which includes the shared sou
 
 ## RetrOS's changes
 
-The files in `tinycc/` are upstream's, unmodified, except for the patches listed here. RetrOS's own build files and settings live next to it in `apps/tcc/`.
+The files in `tinycc/` are upstream's, unmodified, except for the patches listed here. Each is marked with a `RetrOS` comment in the code. RetrOS's own build files and settings live next to it in `apps/tcc/`:
+- **`config.h`** takes the place of the one TCC's configure script writes: the i386 target, the RetrOS target OS, paths, and the default switches that make programs flat binaries at `0x1000000`.
+- **`Makefile`** builds the cross compiler and `libtcc1.a` (below).
 
-None yet.
+**Patches:**
+1. **A RetrOS target OS** (`tcc.h`, `tccpp.c`). With `TARGETOS_RetrOS`, TCC predefines `__retros__` instead of `__linux__`, `__linux`, `__unix__` and `__unix`. In `tcc.h`, it keeps TCC from defaulting to `TARGETOS_Linux`.
+2. **Code first** (`tccelf.c`, `sort_sections`). RetrOS starts a program at its first byte, but TCC puts read-only data before code. For RetrOS, executable sections sort first, so `crt1.o`'s `_start`, linked first, is at `0x1000000`.
+3. **`.bss` in flat binaries** (`tccelf.c`, `tcc_output_binary`). TCC leaves `SHT_NOBITS` sections out of a flat binary, and RetrOS's loader maps only what's in the file. For RetrOS, they're written as zeros, placed by address.
+
+## The cross compiler
+
+`make -C apps/tcc`, which the normal build runs, makes `apps/tcc/bin/i386-retros-tcc`, a compiler that runs in the Docker builder and makes RetrOS programs. It's built from the same sources and `config.h`, with its paths pointing into the repo's `rootfs/`, where the disk's files come from: TCC's headers and `libtcc1.a` go to `rootfs/lib/tcc`. `libtcc1.a`, TCC's runtime library (64-bit arithmetic and the like), is built with it from `tinycc/lib`, minus the Linux-only pieces.
 
 ## Upgrading
 

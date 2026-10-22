@@ -55,6 +55,10 @@ include/editor.h
 
 rootfs/bin/*
 
+# TinyCC: the cross compiler's build, and what it installs on the disk
+apps/tcc/bin/
+rootfs/lib/tcc/
+
 RetrOS-32-debug.img
 
 rootfs/symbols.map

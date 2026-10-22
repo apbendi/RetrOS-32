@@ -2303,6 +2303,10 @@ static int sort_sections(TCCState *s1, int *sec_order, struct dyn_inf *d)
                 k = 0x21;
         } else if (s->sh_flags & SHF_EXECINSTR) {
             k = 0x60;
+#if TARGETOS_RetrOS
+            /* RetrOS: a program starts at its first byte, so code comes first, crt1.o's _start leading */
+            k = 0x01;
+#endif
         /* RELRO sections --> */
         } else if (s->sh_flags & SHF_TLS) {
             if (s->sh_addralign > tls_align)
@@ -2795,10 +2799,30 @@ static int tcc_output_binary(TCCState *s1, FILE *f)
 {
     Section *s;
     int i, offset, size;
+#if TARGETOS_RetrOS
+    /* RetrOS: .bss and the other SHT_NOBITS sections are written as zeros, because RetrOS's program loader maps only
+       what's in the file. They come after every section with contents, and go where their addresses put them. */
+    addr_t base = 0;
+    int have_base = 0;
+#endif
 
     offset = 0;
     for(i=1;i<s1->nb_sections;i++) {
         s = s1->sections[i];
+#if TARGETOS_RetrOS
+        if ((s->sh_flags & SHF_ALLOC) && !have_base)
+            base = s->sh_addr - s->sh_offset, have_base = 1;
+        if (s->sh_type == SHT_NOBITS && (s->sh_flags & SHF_ALLOC)) {
+            while (offset < (int)(s->sh_addr - base)) {
+                fputc(0, f);
+                offset++;
+            }
+            for (size = 0; size < s->sh_size; size++)
+                fputc(0, f);
+            offset += s->sh_size;
+            continue;
+        }
+#endif
         if (s->sh_type != SHT_NOBITS &&
             (s->sh_flags & SHF_ALLOC)) {
             while (offset < s->sh_offset) {
