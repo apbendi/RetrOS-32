@@ -15,6 +15,7 @@
 #include <serial.h>
 #include <assert.h>
 #include <work.h>
+#include <terminal.h>
 
 #include <arch/gdt.h>
 #include <arch/tss.h>
@@ -380,6 +381,9 @@ void kernel_yield()
 
 void kernel_exit()
 {
+    /* A last line the program didn't end goes to the log under its name, before the next writer adds to it */
+    if($process->current != NULL) terminal_flush_serial($process->current->term);
+
     get_scheduler()->ops->exit(get_scheduler());
 
     UNREACHABLE();

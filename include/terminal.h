@@ -81,6 +81,7 @@ int scan(ubyte_t* data, int size);
 
 void twrite(const char* data);
 int terminal_write(const char* data, int size);
+void terminal_flush_serial(struct terminal* term);
 void terminal_putchar(char c);
 
 
