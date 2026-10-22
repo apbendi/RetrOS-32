@@ -31,6 +31,8 @@ extern int kernel_size;
 /* A process's or thread's stack: this many pages below VMEM_STACK, all allocated when it starts. 16 pages is 64 KB. */
 #define VMEM_STACK_PAGES    16
 #define VMEM_HEAP           0xE0000000
+/* A process's malloc heap: one page table at VMEM_HEAP */
+#define VMEM_HEAP_SIZE      MB(4)
 #define VMEM_DATA           0x1000000
 
 /* The biggest program file pcb_create_process loads. It's mapped at VMEM_DATA through one page table, which covers 4 MB. */
@@ -142,6 +144,8 @@ void free(void* ptr);
 
 /* Assembly helper functions */
 void load_page_directory();
+/* Drops one page's translation from the TLB (kernel/helpers.s) */
+void tlb_flush_addr(uint32_t addr);
 void enable_paging();
 
 /* Virtual memory API */

@@ -77,9 +77,15 @@ static inline void vmem_map(uint32_t* page_table, uint32_t vaddr, uint32_t paddr
 	page_table[TABLE_INDEX(vaddr)] = (paddr & ~PAGE_MASK) | (access == 0 ? vmem_default_permissions : vmem_user_permissions);
 }
 
+/**
+ * Removes a page's mapping, and its translation from the TLB. Without the flush, the CPU can keep reaching the old
+ * physical page through vaddr, even after new pages are mapped there, until the next context switch reloads CR3.
+ * Flushing an address another page directory uses is harmless.
+ */
 static inline void vmem_unmap(uint32_t* page_table, uint32_t vaddr)
 {
 	page_table[TABLE_INDEX(vaddr)] = 0;
+	tlb_flush_addr(vaddr);
 }
 
 static inline void vmem_add_table(uint32_t* directory, uint32_t vaddr, uint32_t* table, int access)
@@ -267,8 +273,8 @@ static int vmem_free_page_region(struct pcb* pcb, struct vmem_page_region* regio
 		void* paddr = (void*) (vmem_default->start + (bit * PAGE_SIZE));
 		vmem_default->ops->free(vmem_default, (void*) paddr);
 
-		/* Unmap the virtual page */
-		void* vaddr = (void*) (region->basevaddr + (i * PAGE_SIZE));
+		/* Unmap the virtual page. basevaddr is a uint32_t*, so it's cast before adding bytes to it. */
+		void* vaddr = (void*) ((uint32_t)region->basevaddr + (i * PAGE_SIZE));
 		dbgprintf("Unmapping 0x%x\n", vaddr);
 		uint32_t* heap_table = vmem_get_page_table(pcb, (uint32_t)vaddr);
 		if(heap_table != NULL){
@@ -426,6 +432,9 @@ void* vmem_stack_alloc(struct pcb* pcb, int _size)
 
 	int size = vmem_page_align_size(_size);
 	int num_pages = size / PAGE_SIZE;
+	if(size > VMEM_HEAP_SIZE){
+		return NULL;
+	}
 
 	struct allocation* allocation = create(struct allocation);
 	if(allocation == NULL){
@@ -466,9 +475,10 @@ void* vmem_stack_alloc(struct pcb* pcb, int _size)
 
 	/**
 	 * @brief Part 1.5: If first allocation is freed, allocate from start of heap.
+	 * Only when the new pages end before the first region still in use starts: mapping them over it would replace
+	 * its pages, and freeing either would unmap the other's.
 	 */
-	if((uint32_t)pcb->allocations->head->address > (uint32_t)VMEM_HEAP &&
-	   (uint32_t)pcb->allocations->head->address <= ((uint32_t)VMEM_HEAP + size)){
+	if((uint32_t)VMEM_HEAP + size <= (uint32_t)pcb->allocations->head->region->basevaddr){
 
 		/* TODO: Clean this up, redudent code */
 		struct vmem_page_region* physical = vmem_create_page_region(pcb, (void*)VMEM_HEAP, num_pages, USER);
@@ -569,12 +579,31 @@ void* vmem_stack_alloc(struct pcb* pcb, int _size)
 	}
 
 	/**
-	 * @brief Part 3: No spot found, allocate at end of heap.
-	 * At this point we have not found a spot inbetween existing allocations, so append at the end.
-	 * This means we need to allocate a new physical page allocation.
+	 * @brief Part 3: No spot found in an existing region, so new pages are needed.
+	 * They go in the first gap between two regions that's big enough, so freed address space is used again, or else
+	 * after the last region. The list stays in address order.
 	 * @note "iter" will point to the last element in the allocation list.
 	 */
-	struct vmem_page_region* physical = vmem_create_page_region(pcb, (void*)((byte_t*)iter->region->basevaddr + iter->region->size), num_pages, USER);
+	struct allocation* before = iter;
+	for (struct allocation* it = pcb->allocations->head; it->next != NULL; it = it->next){
+		if(it->region == it->next->region) continue;
+		uint32_t gap_start = (uint32_t)it->region->basevaddr + it->region->size;
+		uint32_t gap_end = (uint32_t)it->next->region->basevaddr;
+		if(gap_end - gap_start >= (uint32_t)size){
+			before = it;
+			break;
+		}
+	}
+
+	/* The heap is one page table: pages past it would wrap around onto the heap's first ones */
+	uint32_t base = (uint32_t)before->region->basevaddr + before->region->size;
+	if(base + size > (uint32_t)VMEM_HEAP + VMEM_HEAP_SIZE){
+		kfree(allocation);
+		warningf("Out of heap address space\n");
+		return NULL;
+	}
+
+	struct vmem_page_region* physical = vmem_create_page_region(pcb, (void*)base, num_pages, USER);
 	if(physical == NULL){
 		kfree(allocation);
 		warningf("Out of heap memory\n");
@@ -582,12 +611,12 @@ void* vmem_stack_alloc(struct pcb* pcb, int _size)
 	}
 	allocation->region = physical;
 
-	allocation->address = (uint32_t*)((uint32_t)(iter->region->basevaddr)+iter->region->size);
+	allocation->address = (uint32_t*)base;
 	vmem_page_region_alloc(allocation->region, _size);
-	allocation->next = NULL;
+	allocation->next = before->next;
 
 	pcb->used_memory += size;
-	iter->next = allocation;
+	before->next = allocation;
 	dbgprintf("[3.5] Allocated %d bytes of data to 0x%x\n", _size, allocation->address);
 	return (void*) allocation->address;
 }
@@ -600,7 +629,7 @@ void vmem_dump_heap(struct allocation* allocation)
 	while(iter != NULL){
 		if(region != iter->region){
 			region = iter->region;
-			dbgprintf(" ------- Region 0x%x -> 0x%x (%d/%d) %d refs --------\n", region->basevaddr, region->basevaddr+region->size, region->used, region->size, region->refs);
+			dbgprintf(" ------- Region 0x%x -> 0x%x (%d/%d) %d refs --------\n", region->basevaddr, (uint32_t)region->basevaddr+region->size, region->used, region->size, region->refs);
 		}
 		dbgprintf("     0x%x --- size %d\n", iter->address, iter->used);
 		iter = iter->next;
