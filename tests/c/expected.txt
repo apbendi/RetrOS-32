@@ -5,9 +5,15 @@ files.gcc pass
 files.tcc pass
 memory.gcc pass
 memory.tcc pass
+numbers.gcc pass
+numbers.tcc pass
 printf.gcc pass
 printf.tcc pass
+sort_jump.gcc pass
+sort_jump.tcc pass
 stdio_files.gcc pass
 stdio_files.tcc pass
 strings.gcc pass
 strings.tcc pass
+time_env.gcc pass
+time_env.tcc pass

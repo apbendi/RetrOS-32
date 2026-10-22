@@ -1,4 +1,5 @@
 /* stat(), fstat(), lstat() and mkdir(), on RetrOS's stat and mkdir system calls */
+#include <features.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <string.h>
@@ -47,7 +48,8 @@ int lstat(const char* restrict path, struct stat* restrict st)
 	return stat(path, st);
 }
 
-int fstat(int fd, struct stat* st)
+/* Defined as __fstat, which musl's own code calls, as musl does it: the headers rename fstat to __fstat_time64 */
+int __fstat(int fd, struct stat* st)
 {
 	if(fd >= FD_STDIN && fd <= FD_STDERR){
 		memset(st, 0, sizeof(*st));
@@ -73,6 +75,8 @@ int fstat(int fd, struct stat* st)
 	st->st_ino = 0x80000000u | fd;
 	return 0;
 }
+
+weak_alias(__fstat, fstat);
 
 int mkdir(const char* path, mode_t mode)
 {

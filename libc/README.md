@@ -30,7 +30,9 @@ The tree is otherwise unmodified. RetrOS's own code goes next to it, in `libc/`.
 - **`crt/`:** `crt1.s`, where every program starts. RetrOS starts a program at its first byte, with `argc` in `%ebx` and `argv` in `%ecx`, and its threads there too, with the thread's function in `%edx`. `_start` is in a section of its own, `.text.retros_entry`, which TCC and `retros.ld` put first. `crti.s` and `crtn.s` are empty: constructors run from `.init_array`.
 - **`src/`:**
   - `start.c`: the thread structure musl needs, the empty environment, constructors, then `main` and `exit`;
-  - `unistd.c`, `fcntl.c`, `stat.c`, `time.c`, `uio.c`, `rename.c`: POSIX calls on RetrOS's system calls, with RetrOS's error codes mapped to `errno` (`retros.c`). `rename` replaces an existing file, as POSIX says, which RetrOS doesn't do itself;
+  - `unistd.c`, `fcntl.c`, `stat.c`, `uio.c`, `rename.c`: POSIX calls on RetrOS's system calls, with RetrOS's error codes mapped to `errno` (`retros.c`). `rename` replaces an existing file, as POSIX says, which RetrOS doesn't do itself;
+  - `time.c`: `time`, `gettimeofday` and `clock_gettime`, from RetrOS's clock, which holds local time in whole seconds; `sleep`, `usleep` and `nanosleep`, on its sleep call. `clock()` returns -1: RetrOS doesn't count a program's processor time;
+  - `system.c`: `sysconf`, `realpath` (no links to follow), and stand-ins: `mprotect` does nothing, since RetrOS can't protect memory, and the `exec` functions fail;
   - `linux.c`: the Linux system calls musl's own code makes, like stdio's `writev`, `open` and `ioctl`, done with those functions;
   - `malloc.c`: `malloc` and the rest, dividing large blocks from the kernel's `malloc` system call;
   - `abort.c`, and `libgcc.c` for two 64-bit division helpers TCC's `libtcc1.a` lacks.
@@ -41,7 +43,9 @@ The tree is otherwise unmodified. RetrOS's own code goes next to it, in `libc/`.
 
 **Descriptors 0 to 2** aren't RetrOS file descriptors, which start at 3. `stdout` and `stderr` write to the terminal in one system call each; `stdin` is always at its end, since programs can't read the terminal yet (#113). The terminal counts as a tty, so `stdout` is line-buffered.
 
-**stdio** is all of musl's, except `popen` and `pclose` (RetrOS can't start a process that way), the temporary files (`tmpfile`, `tmpnam`, `tempnam`), and, until the number scanners come, the `scanf` family. `freopen` with a new path fails with `ENOSYS`, because RetrOS can't duplicate a descriptor.
+**stdio** is all of musl's, `scanf` included, except `popen` and `pclose` (RetrOS can't start a process that way) and the temporary files (`tmpfile`, `tmpnam`, `tempnam`).
+
+**Time:** RetrOS has no time zones, and musl's `localtime` falls back to UTC without a `TZ`, so it gives RetrOS's local time back unchanged. `freopen` with a new path fails with `ENOSYS`, because RetrOS can't duplicate a descriptor.
 
 **Not yet:** `dup`, thread safety (a program's threads share `malloc`, `errno` and the rest without locks), environment variables, exit codes (RetrOS doesn't keep them), and `fork`, signals and the like.
 

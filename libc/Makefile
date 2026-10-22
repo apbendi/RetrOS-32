@@ -30,9 +30,8 @@ LIBC_INCLUDES := -I arch -I $(MUSL)/arch/i386 -I $(MUSL)/arch/generic -I $(OBJ)/
 RETROS_CFLAGS := -idirafter $(ROOT)/include -DERRORS_CODES_ONLY -Wall -Wextra -Wno-unused-parameter -Wno-unused-value
 
 # stdio without what RetrOS can't do: popen and pclose (no processes to start), and temporary files (no random names
-# yet). The scanf family comes with the number scanners it uses.
-STDIO_LEFT_OUT := popen.c pclose.c tempnam.c tmpfile.c tmpnam.c \
-	fscanf.c scanf.c sscanf.c vfscanf.c vscanf.c vsscanf.c fwscanf.c swscanf.c vfwscanf.c vswscanf.c vwscanf.c wscanf.c
+# yet)
+STDIO_LEFT_OUT := popen.c pclose.c tempnam.c tmpfile.c tmpnam.c
 
 # The parts of musl that are built
 MUSL_SRCS := \
@@ -41,19 +40,29 @@ MUSL_SRCS := \
 	$(wildcard $(MUSL)/src/string/*.c) \
 	$(wildcard $(MUSL)/src/ctype/*.c) \
 	$(addprefix $(MUSL)/src/stdlib/,abs.c atoi.c atol.c atoll.c bsearch.c div.c imaxabs.c imaxdiv.c labs.c ldiv.c \
-		llabs.c lldiv.c) \
+		llabs.c lldiv.c atof.c strtod.c strtol.c wcstod.c wcstol.c qsort.c qsort_nr.c ecvt.c fcvt.c gcvt.c) \
+	$(addprefix $(MUSL)/src/internal/,shgetc.c intscan.c floatscan.c) \
+	$(addprefix $(MUSL)/src/env/,getenv.c setenv.c unsetenv.c putenv.c clearenv.c secure_getenv.c) \
+	$(addprefix $(MUSL)/src/time/,__map_file.c __month_to_secs.c __secs_to_tm.c __tm_to_secs.c __tz.c __utc.c \
+		__year_to_secs.c asctime.c asctime_r.c ctime.c ctime_r.c difftime.c gmtime.c gmtime_r.c localtime.c \
+		localtime_r.c mktime.c strftime.c timegm.c) \
+	$(addprefix $(MUSL)/src/mman/,mmap.c munmap.c) \
 	$(addprefix $(MUSL)/src/exit/,exit.c atexit.c) \
 	$(addprefix $(MUSL)/src/errno/,__errno_location.c strerror.c) \
 	$(MUSL)/src/env/__environ.c \
 	$(MUSL)/src/internal/libc.c \
 	$(MUSL)/src/internal/syscall_ret.c \
-	$(addprefix $(MUSL)/src/locale/,__lctrans.c c_locale.c) \
-	$(addprefix $(MUSL)/src/math/,__fpclassifyl.c __signbitl.c frexpl.c scalbn.c) \
+	$(addprefix $(MUSL)/src/locale/,__lctrans.c c_locale.c langinfo.c) \
+	$(addprefix $(MUSL)/src/math/,__fpclassifyl.c __signbitl.c frexpl.c scalbn.c scalbnl.c ldexpl.c copysignl.c \
+		fabsl.c fmodl.c) \
 	$(MUSL)/src/thread/__lock.c
 
 RETROS_SRCS := $(wildcard src/*.c)
 
-MUSL_OBJS := $(patsubst $(MUSL)/src/%.c,$(OBJ)/musl/%.o,$(MUSL_SRCS))
+# musl's assembly: setjmp and longjmp
+MUSL_ASM := $(MUSL)/src/setjmp/i386/setjmp.s $(MUSL)/src/setjmp/i386/longjmp.s
+
+MUSL_OBJS := $(patsubst $(MUSL)/src/%.c,$(OBJ)/musl/%.o,$(MUSL_SRCS)) $(patsubst $(MUSL)/src/%.s,$(OBJ)/musl/%.o,$(MUSL_ASM))
 RETROS_OBJS := $(patsubst src/%.c,$(OBJ)/retros/%.o,$(RETROS_SRCS))
 CRT_OBJS := $(BUILD_DIR)/crt1.o $(BUILD_DIR)/crti.o $(BUILD_DIR)/crtn.o
 GENH := $(GEN)/bits/alltypes.h $(GEN)/bits/syscall.h $(OBJ)/internal/version.h
@@ -78,6 +87,10 @@ $(OBJ)/internal/version.h: $(MUSL)/VERSION
 $(OBJ)/musl/%.o: $(MUSL)/src/%.c $(GENH)
 	$(call make_dir,$(dir $@))
 	$(QUIET)$(CC) $(LIBC_CFLAGS) $(LIBC_INCLUDES) -c $< -o $@
+
+$(OBJ)/musl/%.o: $(MUSL)/src/%.s
+	$(call make_dir,$(dir $@))
+	$(QUIET)$(CC) -m32 -c $< -o $@
 
 $(OBJ)/retros/%.o: src/%.c $(GENH)
 	$(call make_dir,$(dir $@))
