@@ -624,8 +624,9 @@ void vmem_init_process_thread(struct pcb* parent, struct pcb* thread)
 	 * TODO: How to handle heap? Share? need synchronization?
 	 */
 	
-	/* inheret directory */
+	/* inheret directory. Pages come from the allocator as they were last used, so tables start cleared. */
 	uint32_t* thread_directory = vmem_default->ops->alloc(vmem_default);
+	memset(thread_directory, 0, PAGE_SIZE);
 	for (int i = 0; i < 1024; i++){
 		/* copy over pages, this will include heap and data */
 		if(parent->page_dir[i] != 0) thread_directory[i] = parent->page_dir[i];
@@ -633,6 +634,7 @@ void vmem_init_process_thread(struct pcb* parent, struct pcb* thread)
 
 	/* Allocate table for stack */
 	uint32_t* thread_stack_table = vmem_default->ops->alloc(vmem_default);
+	memset(thread_stack_table, 0, PAGE_SIZE);
 	
 	/* create 8kb stack, 2 4kb pages */
 	uint32_t* thread_stack_page = vmem_default->ops->alloc(vmem_default);
@@ -682,6 +684,11 @@ int vmem_init_process(struct pcb* pcb, byte_t* data, int size)
 	if(process_directory == NULL || process_data_table == NULL || process_stack_table == NULL || process_heap_table == NULL){
 		goto out_of_memory;
 	}
+	/* Pages come from the allocator as they were last used. A table that isn't cleared maps whatever its page held. */
+	memset(process_directory, 0, PAGE_SIZE);
+	memset(process_data_table, 0, PAGE_SIZE);
+	memset(process_stack_table, 0, PAGE_SIZE);
+	memset(process_heap_table, 0, PAGE_SIZE);
 
 	dbgprintf("[INIT PROCESS] Directory: 0x%x\n", process_directory);
 	dbgprintf("[INIT PROCESS] Data: 	 0x%x\n", process_data_table);
@@ -706,10 +713,11 @@ int vmem_init_process(struct pcb* pcb, byte_t* data, int size)
 		size -= PAGE_SIZE;
 		i++;
 	}
-	/* fill in rest. */
+	/* fill in rest, with zeros after the program's end */
 	process_data_page = vmem_default->ops->alloc(vmem_default);
 	if(process_data_page == NULL) goto out_of_memory;
 	allocated_pages++;
+	memset(process_data_page, 0, PAGE_SIZE);
 	memcpy(process_data_page, &data[i*PAGE_SIZE], size);
 	vmem_map(process_data_table, VMEM_DATA+(i*PAGE_SIZE), (uint32_t) process_data_page, USER);
 	data_pages++;
@@ -882,7 +890,9 @@ void vmem_cleanup_process(struct pcb* pcb)
  */
 void vmem_init_kernel()
 {	
+	/* Memory isn't cleared at boot on real hardware, so every table starts cleared */
 	kernel_page_dir = vmem_manager->ops->alloc(vmem_manager);
+	memset(kernel_page_dir, 0, PAGE_SIZE);
 
 	/* identity map physical memory so kernel heap allocations stay accessible */
 	struct memory_map* map = memory_map_get();
@@ -892,12 +902,14 @@ void vmem_init_kernel()
 	}
 
 	uint32_t* kernel_page_table = vmem_manager->ops->alloc(vmem_manager);
+	memset(kernel_page_table, 0, PAGE_SIZE);
 	for (uint32_t addr = 0; addr < 0x400000 && addr < phys_map_end; addr += PAGE_SIZE){
 		vmem_map(kernel_page_table, addr, addr, SUPERVISOR);
 	}
 
 	int start = VMEM_HEAP;
-	uint32_t* kernel_heap_memory_table = vmem_manager->ops->alloc(vmem_manager);;
+	uint32_t* kernel_heap_memory_table = vmem_manager->ops->alloc(vmem_manager);
+	memset(kernel_heap_memory_table, 0, PAGE_SIZE);
 	vmem_add_table(kernel_page_dir, start, kernel_heap_memory_table, SUPERVISOR);
 
 	/* identity map the remainder of physical memory beyond the first 4MB */
@@ -907,6 +919,7 @@ void vmem_init_kernel()
 		if (kernel_page_table_memory == NULL){
 			PANIC();
 		}
+		memset(kernel_page_table_memory, 0, PAGE_SIZE);
 
 		uint32_t chunk = MIN(phys_map_end - mapped, 0x400000);
 		for (uint32_t offset = 0; offset < chunk; offset += PAGE_SIZE){
