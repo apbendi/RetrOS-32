@@ -10,9 +10,13 @@ The C harness: runs C programs on RetrOS and compares their output with the same
 3. Compares the two, and compares the results with expected.txt, like tests/fs.
 
 It also runs TinyCC's own tests (apps/tcc/tinycc/tests/tests2), as "tests2.NAME": built with the cross compiler as
-tests2.conf says, run from /t/2, and compared with each test's .expect, which has the compiler's messages first.
+tests2.conf says, run from /t/tests2, and compared with each test's .expect, which has the compiler's messages first.
 
-Usage: tests/c/run.py [-v] [--no-build] [CASE-GLOB ...]
+With --native, everything is also compiled on RetrOS itself, by /bin/tcc.o: each case to a file and run (variant
+"native") and with tcc -run (variant "run"), and each of TinyCC's tests as its Makefile does it, with -run or to a
+file ("tests2.NAME.native").
+
+Usage: tests/c/run.py [-v] [--no-build] [--native] [CASE-GLOB ...]
 """
 import argparse, fnmatch, os, re, shutil, subprocess, sys, time
 
@@ -23,6 +27,9 @@ sys.path.insert(0, os.path.join(ROOT, ".claude", "skills", "run-in-qemu"))
 import qctl  # noqa: E402
 
 VARIANTS = ["gcc", "tcc"]
+# Compiled on RetrOS, with --native
+NATIVE_VARIANTS = ["native", "run"]
+TCC = "/bin/tcc.o"
 TIMEOUT = 60
 # The longest piece of a line RetrOS's terminal copies to the log at once (TERMINAL_SERIAL_LINE_SIZE - 1)
 LOG_LINE = 127
@@ -71,6 +78,8 @@ class RetrOS:
     def __init__(self):
         self.running = False
         self.sessions = 0
+        # Where the shell should be, after a restart too
+        self.cwd = "/t"
 
     def start(self):
         if qctl.qemu_pid():
@@ -78,12 +87,20 @@ class RetrOS:
         args = argparse.Namespace(res="1024", gdb=False, rtc=None, mem=32, disk_bus="ide",
                                   image=os.path.join(OUT, "test.img"))
         qctl.start(args)
-        self.command("cd /t")
         self.running = True
+        self.command(f"cd {self.cwd}")
 
     def stop(self):
         if qctl.qemu_pid():
             qctl.stop(None)
+        # QEMU is this process's child, through qctl: until it's reaped, it lingers, and qctl thinks it's running
+        for _ in range(50):
+            try:
+                if os.waitpid(-1, os.WNOHANG) == (0, 0) and not qctl.qemu_pid():
+                    break
+            except ChildProcessError:
+                break
+            time.sleep(0.1)
         self.running = False
         # Keep each session's log: a restart replaces qctl's
         if os.path.exists(qctl.SERIAL):
@@ -92,7 +109,9 @@ class RetrOS:
 
     def command(self, line, timeout=TIMEOUT):
         """Types a shell command and waits for it to finish. Returns the log lines since, and whether it finished."""
-        if not self.running and line != "cd /t":
+        if line.startswith("cd "):
+            self.cwd = line[3:]
+        if not self.running:
             self.start()
         qctl.set_mark()
         since = qctl.get_mark()
@@ -111,11 +130,24 @@ def run_case(retros, case, variant, verbose):
     expected_path = os.path.join(OUT, "expected", case + ".out")
     expected = log_lines(open(expected_path, encoding="latin-1").read())
 
-    program = f"/t/{case}-{variant}"
-    lines, finished = retros.command(f"exec {program}")
-    got = program_output(lines, program)
-
     problems = []
+    lines = []
+    if variant == "native":
+        # Compiled on RetrOS first. -w: Linux's output has no compiler warnings to compare with.
+        compiled, finished = retros.command(f"exec {TCC} -w /t/{case}.c -o /t/{case}-native")
+        lines += compiled
+        if not finished:
+            problems.append(f"didn't compile within {TIMEOUT} s")
+    if variant == "run":
+        program = TCC
+        command = f"exec {TCC} -w -run /t/{case}.c"
+    else:
+        program = f"/t/{case}-{variant}"
+        command = f"exec {program}"
+    ran, finished = retros.command(command)
+    lines += ran
+    got = program_output(ran, program)
+
     if not finished:
         problems.append(f"didn't finish within {TIMEOUT} s")
     crashed = crash(lines)
@@ -128,8 +160,9 @@ def run_case(retros, case, variant, verbose):
 
 
 def read_tests2_conf():
-    """tests2.conf's skips (name: reason) and arguments (name: the rest of the line, typed as it is)"""
-    skips, args = {}, {}
+    """tests2.conf's settings: skips (name: reason), arguments, flags and extra files (name: the rest of the line, as
+    it is), and the names to compile to a file rather than with -run"""
+    skips, args, flags, files, norun = {}, {}, {}, {}, set()
     for line in open(os.path.join(HERE, "tests2.conf")):
         parts = line.split(None, 2)
         if len(parts) < 2 or line.startswith("#"):
@@ -139,7 +172,13 @@ def read_tests2_conf():
             skips[parts[1]] = rest
         elif parts[0] == "args":
             args[parts[1]] = rest
-    return skips, args
+        elif parts[0] == "flags":
+            flags[parts[1]] = rest
+        elif parts[0] == "files":
+            files[parts[1]] = rest
+        elif parts[0] == "norun":
+            norun.add(parts[1])
+    return {"skip": skips, "args": args, "flags": flags, "files": files, "norun": norun}
 
 
 def squeeze(lines):
@@ -156,10 +195,10 @@ def run_tests2(retros, name, args, verbose):
 
     problems = []
     if os.path.exists(built):
-        program = f"/t/2/{name}"
+        program = f"/t/tests2/{name}"
         lines, finished = retros.command(f"exec {program} {args}".rstrip())
-        # The tests' Makefile takes their directory out of what they print, and theirs is /t/2 here
-        got += squeeze(l.replace("/t/2/", "") for l in program_output(lines, program))
+        # The tests' Makefile takes their directory out of what they print, and theirs is /t/tests2 here
+        got += squeeze(l.replace("/t/tests2/", "") for l in program_output(lines, program))
         if not finished:
             problems.append(f"didn't finish within {TIMEOUT} s")
         crashed = crash(lines)
@@ -168,6 +207,42 @@ def run_tests2(retros, name, args, verbose):
     if got != expected:
         problems.append("output")
         write_diff(f"tests2.{name}", expected, got, verbose)
+    return "pass" if not problems else "fail: " + "; ".join(problems)
+
+
+def run_tests2_native(retros, name, conf, verbose):
+    """One of TinyCC's tests, compiled on RetrOS by /bin/tcc.o as their Makefile does it: with -run, or to a file and
+    run, for the tests it doesn't run with -run. In /t/tests2, so messages name the file alone."""
+    built = os.path.join(OUT, "tests2", name)
+    expected = squeeze(log_lines(open(built + ".expect", encoding="latin-1").read()))
+    flags = " ".join(x for x in (conf["flags"].get(name, ""), conf["files"].get(name, "")) if x)
+    args = conf["args"].get(name, "")
+
+    problems, lines = [], []
+    if name in conf["norun"]:
+        compiled, finished = retros.command(f"exec {TCC} {flags} {name}.c -o {name}-native".replace("  ", " "))
+        lines += compiled
+        got = squeeze(program_output(compiled, TCC))
+        if not finished:
+            problems.append(f"didn't compile within {TIMEOUT} s")
+        program = f"/t/tests2/{name}-native"
+        ran, finished = retros.command(f"exec {program} {args}".rstrip())
+        got += squeeze(program_output(ran, program))
+    else:
+        program = TCC
+        ran, finished = retros.command(f"exec {TCC} {flags} -run {name}.c {args}".replace("  ", " ").rstrip())
+        got = squeeze(program_output(ran, program))
+    lines += ran
+    got = [l.replace("/t/tests2/", "") for l in got]
+
+    if not finished:
+        problems.append(f"didn't finish within {TIMEOUT} s")
+    crashed = crash(lines)
+    if crashed:
+        problems.append("crashed: " + crashed.strip())
+    if got != expected:
+        problems.append("output")
+        write_diff(f"tests2.{name}.native", expected, got, verbose)
     return "pass" if not problems else "fail: " + "; ".join(problems)
 
 
@@ -197,6 +272,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("-v", action="store_true", help="print each failure's output difference")
     p.add_argument("--no-build", action="store_true", help="skip the builder: use out/ as it is")
+    p.add_argument("--native", action="store_true", help="also compile everything on RetrOS, with /bin/tcc.o")
     p.add_argument("cases", nargs="*", help="globs of case names, e.g. 'str*' (default: all)")
     args = p.parse_args()
 
@@ -210,7 +286,8 @@ def main():
         return not args.cases or any(fnmatch.fnmatch(name, g) for g in args.cases)
 
     cases = [c for c in sorted(f[:-2] for f in os.listdir(os.path.join(HERE, "cases")) if f.endswith(".c")) if wanted(c)]
-    skips, tests2_args = read_tests2_conf()
+    conf = read_tests2_conf()
+    skips = conf["skip"]
     tests2_dir = os.path.join(ROOT, "apps", "tcc", "tinycc", "tests", "tests2")
     tests2 = sorted(f[:-2] for f in os.listdir(tests2_dir) if re.match(r"^[0-9]{2,3}_.*\.c$", f))
     tests2 = [t for t in tests2 if wanted("tests2." + t)]
@@ -235,14 +312,20 @@ def main():
             changed += was != result
             print(f"{name:<36} {result}{mark}", flush=True)
 
+        variants = VARIANTS + (NATIVE_VARIANTS if args.native else [])
         for case in cases:
-            for variant in VARIANTS:
+            for variant in variants:
                 record(f"{case}.{variant}", run_case(retros, case, variant, args.v))
         for test in tests2:
             if test in skips:
                 record(f"tests2.{test}", "skip: " + skips[test])
             else:
-                record(f"tests2.{test}", run_tests2(retros, test, tests2_args.get(test, ""), args.v))
+                record(f"tests2.{test}", run_tests2(retros, test, conf["args"].get(test, ""), args.v))
+        if args.native:
+            retros.command("cd /t/tests2")
+            for test in tests2:
+                if test not in skips:
+                    record(f"tests2.{test}.native", run_tests2_native(retros, test, conf, args.v))
     finally:
         retros.stop()
 
