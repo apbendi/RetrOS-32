@@ -389,14 +389,14 @@ int fs_size(int fd){
 /* Takes fd out of a table of descriptors, and closes its file */
 static int __fs_close(struct file** files, int fd)
 {
-    if(fd < FS_FIRST_FD || fd >= FS_MAX_PROCESS_FILES) return -2;
+    if(fd < FS_FIRST_FD || fd >= FS_MAX_PROCESS_FILES) return -ERROR_INVALID_ARGUMENTS;
 
     acquire(&fs_files_lock);
     struct file* file = files[fd];
     files[fd] = NULL;
     release(&fs_files_lock);
 
-    if(file == NULL) return -2;
+    if(file == NULL) return -ERROR_INVALID_ARGUMENTS;
 
     fs_current->ops->close(fs_current, file);
     fs_free_file(file);
@@ -407,7 +407,7 @@ int fs_close(int fd)
 {
     /* check if a filesystem is available */
     if(fs_current == NULL){
-        return -1;
+        return -ERROR_NO_FILESYSTEM;
     }
 
     return __fs_close(__fs_files_of($process->current), fd);
@@ -475,13 +475,13 @@ int fs_seek(int fd, int offset, fs_seek_flag_t flag)
 {
     /* check if a filesystem is available */
     if(fs_current == NULL){
-        return -1;
+        return -ERROR_NO_FILESYSTEM;
     }
 
     /* check if the file is open */
     struct file* file = __fs_file(fd);
     if(file == NULL){
-        return -2;
+        return -ERROR_INVALID_ARGUMENTS;
     }
 
     int position;

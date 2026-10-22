@@ -88,7 +88,9 @@ net_objects:
 fs_objects:
 	$(MAKE) -C fs
 
+# The standard C library comes first: TCC's cross compiler, in apps/, links programs against it
 apps:
+	$(MAKE) -C libc
 	$(MAKE) -C apps
 
 img: tools compile apps symbols create_fs sync
@@ -109,6 +111,7 @@ clean:
 	$(MAKE) -C net clean
 	$(MAKE) -C fs clean
 	$(MAKE) -C apps clean
+	$(MAKE) -C libc clean
 	$(MAKE) -C tests clean
 	$(QUIET)$(RM_F) $(BUILD_DIR)/*.o $(BUILD_DIR)/*.d $(BUILD_DIR)/bootblock $(BUILD_DIR)/kernelout $(BUILD_DIR)/symbols $(BUILD_DIR)/build
 	$(QUIET)$(RM_F) .depend filesystem.image filesystem.test

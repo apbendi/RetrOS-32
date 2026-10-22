@@ -59,6 +59,10 @@ rootfs/bin/*
 apps/tcc/bin/
 rootfs/lib/tcc/
 
+# The standard C library's build, and what it installs on the disk
+libc/bin/
+rootfs/usr/
+
 RetrOS-32-debug.img
 
 rootfs/symbols.map

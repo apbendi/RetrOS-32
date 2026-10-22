@@ -40,22 +40,8 @@
 #include <stdint.h>
 #include <rtc.h>
 
-/* From include/fs/fs.h, which can't be included here: it brings in the kernel's libc declarations */
-#define FS_FILE_FLAG_READ (1 << 0)
-#define FS_FILE_FLAG_WRITE (1 << 1)
-#define FS_FILE_FLAG_CREATE (1 << 3)
-#define FS_FILE_FLAG_TRUNCATE (1 << 4)
-#define FS_FILE_FLAG_APPEND (1 << 5)
-#define FS_SEEK_START 0
-
-#define FS_ATTR_DIRECTORY 0x10
-#define FS_NAME_MAX 255
-struct fs_dirent {
-    char name[FS_NAME_MAX + 1];
-    unsigned int size;
-    unsigned char attributes;
-    struct time written;
-};
+/* fs_types.h, not fs.h: fs.h brings in the kernel's libc declarations */
+#include <fs/fs_types.h>
 
 int fs_mount(void);
 int fs_format(const char* label, int reserved);
