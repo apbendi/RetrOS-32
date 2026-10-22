@@ -138,6 +138,14 @@ static void __terminal_copy_to_serial(struct terminal* term, char c)
 	term->serial_line_length = 0;
 }
 
+/* Copies a line the terminal hasn't finished to the serial log, as when a program exits without ending its last line.
+ * Otherwise it would reach the log only with whatever's written next, under that writer's name. */
+void terminal_flush_serial(struct terminal* term)
+{
+	if(term == NULL || term->serial_line_length == 0) return;
+	__terminal_copy_to_serial(term, '\n');
+}
+
 static int __terminal_store_char(struct terminal* term, char c)
 {
 	if(term == NULL){
