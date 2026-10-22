@@ -1571,10 +1571,19 @@ static TCCSyms tcc_syms[] = {
     { NULL, NULL },
 };
 
+#if TARGETOS_RetrOS
+/* RetrOS: every symbol of the C library, generated from libc.a (apps/tcc/Makefile), so a tcc -run program uses TCC's
+   own C library, already set up, rather than a second copy that nothing sets up */
+extern TCCSyms __retros_tcc_syms[];
+#endif
+
 ST_FUNC void *dlsym(void *handle, const char *symbol)
 {
     TCCSyms *p;
     p = tcc_syms;
+#if TARGETOS_RetrOS
+    p = __retros_tcc_syms;
+#endif
     while (p->str != NULL) {
         if (!strcmp(p->str, symbol))
             return p->ptr;

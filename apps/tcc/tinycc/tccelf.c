@@ -1861,6 +1861,10 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
 #endif
         if (lpthread)
             tcc_add_library(s1, "pthread");
+#if TARGETOS_RetrOS
+        /* RetrOS: a tcc -run program uses TCC's own C library, through dlsym (tccrun.c), not a copy of its own */
+        if (s1->output_type != TCC_OUTPUT_MEMORY)
+#endif
         tcc_add_library(s1, "c");
 #ifdef TCC_LIBGCC
         if (!s1->static_link) {
@@ -1875,6 +1879,9 @@ ST_FUNC void tcc_add_runtime(TCCState *s1)
 #endif
         if (TCC_LIBTCC1[0]) {
             tcc_add_support(s1, TCC_LIBTCC1);
+#if TARGETOS_RetrOS
+            if (s1->output_type != TCC_OUTPUT_MEMORY)
+#endif
             tcc_add_library(s1, "c");
         }
 #ifndef TCC_TARGET_MACHO
