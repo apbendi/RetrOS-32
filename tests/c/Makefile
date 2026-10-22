@@ -4,7 +4,9 @@
 # - out/linux/NAME, built with gcc and glibc for Linux, and out/expected/NAME.out, what it prints there;
 # - out/retros/NAME-gcc, built with gcc on RetrOS's C library (libc/program.mk);
 # - out/retros/NAME-tcc, built with TCC's cross compiler (apps/tcc).
-# out/test.img is a copy of RetrOS-32-debug.img with the RetrOS programs and the sources in /t.
+# TinyCC's own tests are built by tests2.sh into out/tests2 (see tests2.conf).
+# out/test.img is a copy of RetrOS-32-debug.img with the RetrOS programs and the sources in /t, and TinyCC's tests in
+# /t/2.
 
 ROOT := $(abspath ../..)
 include $(ROOT)/libc/program.mk
@@ -18,7 +20,7 @@ LINUX := $(CASES:%=$(OUT)/linux/%)
 EXPECTED := $(CASES:%=$(OUT)/expected/%.out)
 RETROS := $(CASES:%=$(OUT)/retros/%-gcc) $(CASES:%=$(OUT)/retros/%-tcc)
 
-.PHONY: all clean
+.PHONY: all clean tests2
 all: $(EXPECTED) $(OUT)/test.img
 
 # Keep the Linux builds, which make would otherwise delete as intermediate files
@@ -43,10 +45,15 @@ $(OUT)/retros/%-tcc: cases/%.c $(HEADERS) $(TCC) $(STDC_USR)/lib/libc.a
 	@mkdir -p $(dir $@)
 	@$(TCC) -w -o $@ $<
 
-$(OUT)/test.img: $(ROOT)/RetrOS-32-debug.img $(RETROS) $(wildcard cases/*)
+# Quick to redo, and it depends on the cross compiler, the C library and tests2.conf, so it always runs
+tests2:
+	@sh tests2.sh
+
+$(OUT)/test.img: $(ROOT)/RetrOS-32-debug.img $(RETROS) $(wildcard cases/*) tests2
 	@cp $(ROOT)/RetrOS-32-debug.img $@.tmp
-	@mmd -i $@.tmp ::/t
+	@mmd -i $@.tmp ::/t ::/t/2
 	@mcopy -i $@.tmp $(RETROS) $(wildcard cases/*) ::/t/
+	@cd $(OUT)/tests2 && mcopy -i ../../$@.tmp $$(ls | grep -v '\.compile$$\|\.expect$$') ::/t/2/
 	@mv $@.tmp $@
 	@echo "[c harness] built $(words $(CASES)) programs into $@"
 

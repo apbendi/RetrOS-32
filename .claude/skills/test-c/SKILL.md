@@ -10,6 +10,10 @@ description: Use when changing RetrOS-32's standard C library (libc/), TinyCC (a
   - for Linux, with gcc and glibc in the Docker builder, where it runs to give the expected output;
   - for RetrOS with gcc on RetrOS's C library (variant `gcc`);
   - for RetrOS with TCC's cross compiler (variant `tcc`).
+- **TinyCC's own tests** (`apps/tcc/tinycc/tests/tests2`, 143 programs) run too, as `tests2.NAME`.
+  - `tests2.sh` builds them with the cross compiler, as `tests2.conf` says: skips with reasons, flags, extra files and arguments.
+  - Each is compared with its `.expect` file, which has the compiler's messages first, then the program's output. As in TCC's own Makefile, runs of spaces count as one, and the test directory (`/t/2/` here) is taken out of the output.
+  - A skipped test shows as `skip:` and its reason, and counts as expected.
 - **The RetrOS programs run in QEMU,** through the `run-in-qemu` skill's `qctl.py`, so the human's OK to boot QEMU covers this too. A run takes a few seconds per program, plus a build.
 
 ## Run it
@@ -24,7 +28,7 @@ tests/c/run.py -v --no-build   # skip the build, and print each failure's differ
   - `tests/c/Makefile` builds `out/linux/`, `out/expected/` and `out/retros/`.
   - It puts the RetrOS programs and the case sources into `/t` on a copy of the image, `out/test.img`.
 - **Then on the host:** `qctl.py` boots `out/test.img` (`qctl.py start --image ...`). For each program, it types `exec /t/NAME-VARIANT` in `/t` and waits for the kernel's `exec_cmd(): Finished exec` log line. It then takes the program's `term[/t/NAME-VARIANT]:` lines from the serial log.
-- **A hang or a panic** restarts QEMU, and the run carries on.
+- **A hang or a panic** restarts QEMU, and the run carries on. Each QEMU session's serial log is kept, as `out/serial-1.log` and so on.
 
 ## Reading the results
 
@@ -44,7 +48,7 @@ Each line is a case and variant, e.g. `memory.tcc`, then `pass`, or `fail:` and 
 
 A case is `tests/c/cases/NAME.c`, a program that prints what it finds, the same on Linux and RetrOS.
 - **Print what you check, not just "ok":** values, sizes, return codes, `errno` by name. A difference then shows what went wrong.
-- **End every line with a newline.** RetrOS's log only has whole lines, and splits lines over 127 characters (`run.py` allows for that).
+- **Lines:** RetrOS's log has a line at its newline, splits lines over 127 characters, and gets an unfinished last line when the program exits. `run.py` allows for all three.
 - **Stay deterministic:** no addresses, times, process IDs or the current directory's name. It runs in an empty directory on Linux, and in `/t` on RetrOS.
 - **Stay within RetrOS's limits:**
   - a process has at most 4 MB of heap, from about 3.5 MB of pages all processes share;

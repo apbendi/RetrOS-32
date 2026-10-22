@@ -25,7 +25,9 @@ The files in `tinycc/` are upstream's, unmodified, except for the patches listed
 
 ## The cross compiler
 
-`make -C apps/tcc`, which the normal build runs, makes `apps/tcc/bin/i386-retros-tcc`, a compiler that runs in the Docker builder and makes RetrOS programs. It's built from the same sources and `config.h`, with its paths pointing into the repo's `rootfs/`, where the disk's files come from: TCC's headers and `libtcc1.a` go to `rootfs/lib/tcc`. `libtcc1.a`, TCC's runtime library (64-bit arithmetic and the like), is built with it from `tinycc/lib`, minus the Linux-only pieces.
+`make -C apps/tcc`, which the normal build runs, makes `apps/tcc/bin/i386-retros-tcc`, a compiler that runs in the Docker builder and makes RetrOS programs. By default they're linked against RetrOS's C library (`libc/`), with its headers, as the compiler on RetrOS will link them: `crt1.o`, `libc.a` and `libtcc1.a`. It's built from the same sources and `config.h`, with its paths pointing into the repo's `rootfs/`, where the disk's files come from: TCC's headers and `libtcc1.a` go to `rootfs/lib/tcc`. `libtcc1.a`, TCC's runtime library (64-bit arithmetic and the like), is built with it from `tinycc/lib`, minus the Linux-only pieces.
+
+**Testing:** the C harness (`tests/c`, the `test-c` skill) runs the harness's own programs and TCC's tests built with it on RetrOS.
 
 ## Upgrading
 
