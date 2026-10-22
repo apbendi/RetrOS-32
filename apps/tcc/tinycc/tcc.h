@@ -224,7 +224,7 @@ extern long double strtold (const char *__nptr, char **__endptr);
     || defined TARGETOS_NetBSD \
     || defined TARGETOS_FreeBSD_kernel
 # define TARGETOS_BSD 1
-#elif !(defined TCC_TARGET_PE || defined TCC_TARGET_MACHO)
+#elif !(defined TCC_TARGET_PE || defined TCC_TARGET_MACHO || defined TARGETOS_RetrOS) /* RetrOS */
 # define TARGETOS_Linux 1 /* for tccdefs_.h */
 #endif
 

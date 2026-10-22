@@ -28,6 +28,7 @@ programs: $(UTILS)
 		$(MAKE) -C $$dir; \
 	done
 	$(MAKE) -f Makefile.retros -C C-Compiler
+	$(MAKE) -C tcc
 	@echo "[apps] built all user programs."
 
 staticlibs: $(UTILS)
@@ -56,5 +57,6 @@ clean:
 		$(MAKE) -C $$dir clean; \
 	done
 	$(MAKE) -f Makefile.retros -C C-Compiler clean
+	$(MAKE) -C tcc clean
 	$(QUIET)$(RM_RF) $(BUILD_DIR)
 	$(QUIET)$(RM_F) libcore.a libnet.a libgraphic.a libzlib.a libhttp.a
