@@ -5,5 +5,9 @@ files.gcc pass
 files.tcc pass
 memory.gcc pass
 memory.tcc pass
+printf.gcc pass
+printf.tcc pass
+stdio_files.gcc pass
+stdio_files.tcc pass
 strings.gcc pass
 strings.tcc pass

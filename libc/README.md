@@ -30,17 +30,20 @@ The tree is otherwise unmodified. RetrOS's own code goes next to it, in `libc/`.
 - **`crt/`:** `crt1.s`, where every program starts. RetrOS starts a program at its first byte, with `argc` in `%ebx` and `argv` in `%ecx`, and its threads there too, with the thread's function in `%edx`. `_start` is in a section of its own, `.text.retros_entry`, which TCC and `retros.ld` put first. `crti.s` and `crtn.s` are empty: constructors run from `.init_array`.
 - **`src/`:**
   - `start.c`: the thread structure musl needs, the empty environment, constructors, then `main` and `exit`;
-  - `unistd.c`, `fcntl.c`, `stat.c`, `time.c`: POSIX calls on RetrOS's system calls, with RetrOS's error codes mapped to `errno` (`retros.c`);
+  - `unistd.c`, `fcntl.c`, `stat.c`, `time.c`, `uio.c`, `rename.c`: POSIX calls on RetrOS's system calls, with RetrOS's error codes mapped to `errno` (`retros.c`). `rename` replaces an existing file, as POSIX says, which RetrOS doesn't do itself;
+  - `linux.c`: the Linux system calls musl's own code makes, like stdio's `writev`, `open` and `ioctl`, done with those functions;
   - `malloc.c`: `malloc` and the rest, dividing large blocks from the kernel's `malloc` system call;
   - `abort.c`, and `libgcc.c` for two 64-bit division helpers TCC's `libtcc1.a` lacks.
 - **`arch/`:** two of musl's i386 headers, replaced by coming first in the include path:
   - `pthread_arch.h`: musl finds the current thread through `%gs`, which RetrOS doesn't set up, so it's one static structure;
-  - `syscall_arch.h`: any Linux system call musl tries returns `ENOSYS`.
+  - `syscall_arch.h`: musl's Linux system calls go to `src/linux.c`, and any it doesn't do returns `ENOSYS`.
 - **The kernel's headers** give system call numbers, error codes and file flags: `syscall_helper.h`, `errors.h` (with `ERRORS_CODES_ONLY`) and `fs/fs_types.h`.
 
-**Descriptors 0 to 2** aren't RetrOS file descriptors, which start at 3. `stdout` and `stderr` write to the terminal in one system call each; `stdin` is always at its end, since programs can't read the terminal yet (#113).
+**Descriptors 0 to 2** aren't RetrOS file descriptors, which start at 3. `stdout` and `stderr` write to the terminal in one system call each; `stdin` is always at its end, since programs can't read the terminal yet (#113). The terminal counts as a tty, so `stdout` is line-buffered.
 
-**Not yet:** thread safety (a program's threads share `malloc`, `errno` and the rest without locks), environment variables, exit codes (RetrOS doesn't keep them), and `fork`, signals and the like.
+**stdio** is all of musl's, except `popen` and `pclose` (RetrOS can't start a process that way), the temporary files (`tmpfile`, `tmpnam`, `tempnam`), and, until the number scanners come, the `scanf` family. `freopen` with a new path fails with `ENOSYS`, because RetrOS can't duplicate a descriptor.
+
+**Not yet:** `dup`, thread safety (a program's threads share `malloc`, `errno` and the rest without locks), environment variables, exit codes (RetrOS doesn't keep them), and `fork`, signals and the like.
 
 ## Building programs
 

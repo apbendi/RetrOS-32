@@ -29,8 +29,15 @@ LIBC_INCLUDES := -I arch -I $(MUSL)/arch/i386 -I $(MUSL)/arch/generic -I $(OBJ)/
 # (-Wno-unused-value: musl's internal headers trip it with arch/syscall_arch.h's constant results)
 RETROS_CFLAGS := -idirafter $(ROOT)/include -DERRORS_CODES_ONLY -Wall -Wextra -Wno-unused-parameter -Wno-unused-value
 
+# stdio without what RetrOS can't do: popen and pclose (no processes to start), and temporary files (no random names
+# yet). The scanf family comes with the number scanners it uses.
+STDIO_LEFT_OUT := popen.c pclose.c tempnam.c tmpfile.c tmpnam.c \
+	fscanf.c scanf.c sscanf.c vfscanf.c vscanf.c vsscanf.c fwscanf.c swscanf.c vfwscanf.c vswscanf.c vwscanf.c wscanf.c
+
 # The parts of musl that are built
 MUSL_SRCS := \
+	$(filter-out $(addprefix $(MUSL)/src/stdio/,$(STDIO_LEFT_OUT)),$(wildcard $(MUSL)/src/stdio/*.c)) \
+	$(wildcard $(MUSL)/src/multibyte/*.c) \
 	$(wildcard $(MUSL)/src/string/*.c) \
 	$(wildcard $(MUSL)/src/ctype/*.c) \
 	$(addprefix $(MUSL)/src/stdlib/,abs.c atoi.c atol.c atoll.c bsearch.c div.c imaxabs.c imaxdiv.c labs.c ldiv.c \
@@ -40,7 +47,8 @@ MUSL_SRCS := \
 	$(MUSL)/src/env/__environ.c \
 	$(MUSL)/src/internal/libc.c \
 	$(MUSL)/src/internal/syscall_ret.c \
-	$(MUSL)/src/locale/__lctrans.c \
+	$(addprefix $(MUSL)/src/locale/,__lctrans.c c_locale.c) \
+	$(addprefix $(MUSL)/src/math/,__fpclassifyl.c __signbitl.c frexpl.c scalbn.c) \
 	$(MUSL)/src/thread/__lock.c
 
 RETROS_SRCS := $(wildcard src/*.c)

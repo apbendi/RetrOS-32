@@ -42,6 +42,7 @@ int open(const char* path, int flags, ...)
 	if(kept != 0){
 		/* A new file didn't exist a moment ago, so its time is now */
 		kept->open = 1;
+		kept->flags = flags & (O_ACCMODE | O_APPEND);
 		kept->is_directory = exists && (entry.attributes & FS_ATTR_DIRECTORY);
 		kept->written = exists ? __retros_time(&entry.written) : time(0);
 	}
