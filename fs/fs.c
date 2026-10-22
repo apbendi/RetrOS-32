@@ -184,6 +184,15 @@ static int __fs_checked_rename(struct filesystem* fs, const char* path, const ch
     return fs_backend->ops->rename(fs_backend, normal, new_normal);
 }
 
+static int __fs_checked_same(struct filesystem* fs, const char* path, const char* other)
+{
+    char normal[FS_PATH_MAX];
+    char other_normal[FS_PATH_MAX];
+    if(path == NULL || other == NULL) return -ERROR_INVALID_ARGUMENTS;
+    if(fs_path_normalize(path, normal) < 0 || fs_path_normalize(other, other_normal) < 0) return -ERROR_INVALID_ARGUMENTS;
+    return fs_backend->ops->same(fs_backend, normal, other_normal);
+}
+
 static int __fs_checked_stat(struct filesystem* fs, const char* path, struct fs_dirent* out)
 {
     char normal[FS_PATH_MAX];
@@ -205,6 +214,7 @@ static struct filesystem_ops fs_checked_ops = {
     .mkdir = __fs_checked_mkdir,
     .rmdir = __fs_checked_rmdir,
     .rename = __fs_checked_rename,
+    .same = __fs_checked_same,
     .stat = __fs_checked_stat,
     .readdir = __fs_checked_readdir
 };
@@ -540,6 +550,16 @@ int fs_rename(const char* path, const char* new_path)
 {
     if(fs_current == NULL) return -ERROR_NO_FILESYSTEM;
     return fs_current->ops->rename(fs_current, path, new_path);
+}
+
+/**
+ * Whether two paths name the same file or directory, though one may spell it in another case, or by its 8.3 name.
+ * @return 1 or 0, or a negative error code if either doesn't exist
+ */
+int fs_same_entry(const char* path, const char* other)
+{
+    if(fs_current == NULL) return -ERROR_NO_FILESYSTEM;
+    return fs_current->ops->same(fs_current, path, other);
 }
 
 /* Changes the current process's current directory to path, which must be a directory */

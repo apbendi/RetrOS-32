@@ -266,7 +266,8 @@ EXPORT_KSYMBOL(rmdir);
 
 /**
  * Renames or moves a file or directory. A destination that's an existing directory gets the source moved into it,
- * under the same name, as on Unix. An existing file isn't replaced.
+ * under the same name, as on Unix, unless it's the source itself in another case: mv docs Docs renames it. An
+ * existing file isn't replaced.
  */
 static int mv(int argc, char* argv[])
 {
@@ -280,23 +281,23 @@ static int mv(int argc, char* argv[])
     char into[FS_PATH_MAX];
 
     struct fs_dirent entry;
-    if(fs_stat(to, &entry) == 0 && (entry.attributes & FS_ATTR_DIRECTORY)){
-        /* The source's last name, ignoring any slashes after it */
-        int end = strlen(from);
-        while(end > 1 && from[end-1] == '/') end--;
-        int start = end;
-        while(start > 0 && from[start-1] != '/') start--;
+    if(fs_stat(to, &entry) == 0 && (entry.attributes & FS_ATTR_DIRECTORY) && fs_same_entry(from, to) != 1){
+        /* Into the directory, under the source's name as it's stored, whatever case it was typed in */
+        int ret = fs_stat(from, &entry);
+        if(ret < 0){
+            __fs_cmd_error("mv", from, ret);
+            return -1;
+        }
 
         int to_len = strlen(to);
-        int name_len = end - start;
+        int name_len = strlen(entry.name);
         if(to_len + 1 + name_len + 1 > FS_PATH_MAX){
             __fs_cmd_error("mv", to, -ERROR_INVALID_ARGUMENTS);
             return -1;
         }
         memcpy(into, to, to_len);
         into[to_len] = '/';
-        memcpy(into + to_len + 1, from + start, name_len);
-        into[to_len + 1 + name_len] = 0;
+        memcpy(into + to_len + 1, entry.name, name_len + 1);
         to = into;
     }
 

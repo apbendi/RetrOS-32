@@ -455,6 +455,19 @@ ops_rename_directory() {
 }
 add ops.rename-directory "RetrOS moves a directory, with a file in it, into another" ops_rename_directory
 
+ops_rename_case() {
+    begin fresh || return
+    seed mmd ::/DOCS
+    seed mcopy "$(data 100 a)" ::/DOCS/A.TXT
+    ready
+    rfs mv /DOCS /Docs
+    rfs mv /docs/A.TXT /docs/a.Txt
+    check
+    [ "$("$FSTOOL" "$R" stat /docs 2>/dev/null)" = "D Docs" ] || fail names "/DOCS wasn't renamed Docs"
+    [ "$("$FSTOOL" "$R" stat /docs/a.txt 2>/dev/null)" = "F a.Txt 100" ] || fail names "/DOCS/A.TXT wasn't renamed a.Txt"
+}
+add ops.rename-case "RetrOS changes only the case of a directory's or a file's name" ops_rename_case
+
 ops_remove_directory() {
     begin fresh || return
     seed mmd ::/SUB
@@ -499,6 +512,33 @@ ops_readdir() {
     [ "$("$FSTOOL" "$R" stat /SUB/INNER 2>/dev/null)" = "D INNER" ] || fail names "stat /SUB/INNER didn't report a directory"
 }
 add ops.readdir-long-names "RetrOS lists a directory with its long names, and stats files by them, ignoring case" ops_readdir
+
+# same_entry same|different PATH OTHER: checks what fs_same_entry says about two paths on R
+same_entry() {
+    local got
+    got=$("$FSTOOL" "$R" same-entry "$2" "$3" 2>"$CDIR/err")
+    [ "$got" = "$1" ] || fail entry "$2 and $3: fs_same_entry said ${got:-nothing}, not $1"
+}
+
+ops_same_entry() {
+    begin fresh || return
+    seed mmd ::/SUB
+    MTOOLS_NO_VFAT=0 seed mmd "::/SUB/My Docs"
+    MTOOLS_NO_VFAT=0 seed mcopy "$(data 300 notes)" "::/SUB/My Notes.txt"
+    seed mcopy "$(data 0 one)" ::/SUB/E1.TXT
+    seed mcopy "$(data 0 two)" ::/SUB/E2.TXT
+    ready
+    same_entry same "/SUB/My Notes.txt" "/sub/my notes.TXT"
+    same_entry same "/SUB/My Notes.txt" /SUB/MYNOTE~1.TXT
+    same_entry same "/SUB/My Docs" "/sub/../SUB/mydocs~1"
+    same_entry same / /SUB/..
+    same_entry different /SUB/E1.TXT /SUB/E2.TXT
+    same_entry different /SUB "/SUB/My Docs"
+    same_entry different "/SUB/My Notes.txt" "/SUB/My Docs"
+    refused same-entry /SUB/NONE.TXT /SUB/E1.TXT
+    check
+}
+add ops.same-entry "RetrOS tells whether two paths are one file or directory, however they spell it" ops_same_entry
 
 # --- The current directory ------------------------------------------------------------------------------------
 

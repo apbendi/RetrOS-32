@@ -292,6 +292,56 @@ static int fatfs_rename(struct filesystem* fs, const char* path, const char* new
     return __fatfs_error(f_rename(path, new_path));
 }
 
+/* Where a file or directory is on the disk, which no two share */
+struct fatfs_place {
+    int is_directory;
+    /* A directory's first cluster, 0 for the root. A file's won't do: an empty file has none. */
+    DWORD cluster;
+    /* A file's directory entry: its sector, and its offset in that sector */
+    LBA_t sector;
+    UINT offset;
+};
+
+/* Finds where path's file or directory is. @return 0, or a negative error code */
+static int __fatfs_locate(const char* path, struct fatfs_place* place)
+{
+    memset(place, 0, sizeof(*place));
+
+    DIR dir;
+    if(f_opendir(&dir, path) == FR_OK){
+        place->is_directory = 1;
+        place->cluster = dir.obj.sclust;
+        f_closedir(&dir);
+        return ERROR_OK;
+    }
+
+    FIL* file = kalloc_try(sizeof(FIL));
+    if(file == NULL) return -ERROR_ALLOC;
+
+    FRESULT res = f_open(file, path, FA_READ);
+    if(res == FR_OK){
+        place->sector = file->dir_sect;
+        place->offset = file->dir_ptr - file->obj.fs->win;
+        f_close(file);
+    }
+    kfree(file);
+    return __fatfs_error(res);
+}
+
+/* Whether path and other name the same file or directory, compared by where it is, so any spelling of a name works */
+static int fatfs_same(struct filesystem* fs, const char* path, const char* other)
+{
+    FS_VALIDATE(fs);
+
+    struct fatfs_place a, b;
+    int ret = __fatfs_locate(path, &a);
+    if(ret < 0) return ret;
+    ret = __fatfs_locate(other, &b);
+    if(ret < 0) return ret;
+
+    return a.is_directory == b.is_directory && a.cluster == b.cluster && a.sector == b.sector && a.offset == b.offset;
+}
+
 static void __fatfs_dirent(const FILINFO* info, struct fs_dirent* out)
 {
     memset(out, 0, sizeof(*out));
@@ -389,6 +439,7 @@ static struct filesystem_ops fatfs_ops = {
     .mkdir = fatfs_mkdir,
     .rmdir = fatfs_rmdir,
     .rename = fatfs_rename,
+    .same = fatfs_same,
     .stat = fatfs_stat,
     .readdir = fatfs_readdir
 };
