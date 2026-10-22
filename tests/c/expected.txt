@@ -17,3 +17,144 @@ strings.gcc pass
 strings.tcc pass
 time_env.gcc pass
 time_env.tcc pass
+tests2.00_assignment pass
+tests2.01_comment pass
+tests2.02_printf pass
+tests2.03_struct pass
+tests2.04_for pass
+tests2.05_array pass
+tests2.06_case pass
+tests2.07_function pass
+tests2.08_while pass
+tests2.09_do_while pass
+tests2.100_c99array-decls pass
+tests2.101_cleanup skip: needs about 256 KB of stack, and RetrOS gives a program 64 KB (#115)
+tests2.102_alignas pass
+tests2.103_implicit_memmove pass
+tests2.104_inline pass
+tests2.105_local_extern pass
+tests2.106_versym skip: needs threads
+tests2.107_stack_safe pass
+tests2.108_constructor pass
+tests2.109_float_struct_calling pass
+tests2.10_pointer pass
+tests2.110_average pass
+tests2.111_conversion pass
+tests2.112_backtrace skip: needs backtraces, which RetrOS's TCC is built without
+tests2.113_btdll skip: needs backtraces and shared libraries
+tests2.114_bound_signal skip: needs bounds checking, signals and fork
+tests2.115_bound_setjmp skip: needs bounds checking, which RetrOS's TCC is built without
+tests2.116_bound_setjmp2 skip: needs bounds checking, which RetrOS's TCC is built without
+tests2.117_builtins skip: needs bounds checking, which RetrOS's TCC is built without
+tests2.118_switch pass
+tests2.119_random_stuff skip: needs over 512 KB of stack for a 256 KB struct passed by value, and RetrOS gives 64 KB (#115)
+tests2.11_precedence pass
+tests2.120_alias pass
+tests2.121_struct_return pass
+tests2.122_vla_reuse pass
+tests2.123_vla_bug pass
+tests2.124_atomic_counter skip: needs threads
+tests2.125_atomic_misc skip: -dt runs code snippets with tcc -run, which a cross compiler can't
+tests2.126_bound_global skip: needs bounds checking, which RetrOS's TCC is built without
+tests2.127_asm_goto pass
+tests2.128_run_atexit skip: -dt runs code snippets with tcc -run, which a cross compiler can't
+tests2.129_scopes pass
+tests2.12_hashdefine pass
+tests2.130_large_argument pass
+tests2.131_return_struct_in_reg pass
+tests2.132_bound_test skip: needs bounds checking, which RetrOS's TCC is built without
+tests2.133_old_func pass
+tests2.134_double_to_signed pass
+tests2.135_func_arg_struct_compare pass
+tests2.136_atomic_gcc_style pass
+tests2.137_funcall_struct_args pass
+tests2.138_arm64_encoding skip: ARM64 only
+tests2.139_arm64_errors skip: ARM64 only
+tests2.13_integer_literals pass
+tests2.140_arm64_extasm skip: ARM64 only
+tests2.141_riscv_asm skip: RISC-V only
+tests2.142_int_conversion pass
+tests2.143_void_expr pass
+tests2.144_tls skip: needs threads and thread-local storage
+tests2.145_winarm64_interlocked skip: Windows on ARM64 only
+tests2.146_tls_extern skip: needs thread-local storage and the system linker
+tests2.148_linker_symbols skip: needs shared libraries
+tests2.149_parameter_qualifier_errors pass
+tests2.149_parameter_qualifiers pass
+tests2.14_if pass
+tests2.150_return_qualifiers pass
+tests2.151_atomic_header pass
+tests2.15_recursion pass
+tests2.16_nesting pass
+tests2.17_enum pass
+tests2.18_include pass
+tests2.19_pointer_arithmetic pass
+tests2.20_pointer_comparison pass
+tests2.21_char_array pass
+tests2.22_floating_point pass
+tests2.23_type_coercion pass
+tests2.24_math_library pass
+tests2.25_quicksort pass
+tests2.26_character_constants pass
+tests2.27_sizeof pass
+tests2.28_strings pass
+tests2.29_array_address pass
+tests2.30_hanoi pass
+tests2.31_args pass
+tests2.32_led pass
+tests2.33_ternary_op pass
+tests2.34_array_assignment skip: array assignment isn't standard C (skipped upstream too)
+tests2.35_sizeof pass
+tests2.36_array_initialisers pass
+tests2.37_sprintf pass
+tests2.38_multiple_array_index pass
+tests2.39_typedef pass
+tests2.40_stdio pass
+tests2.41_hashif pass
+tests2.42_function_pointer pass
+tests2.43_void_param pass
+tests2.44_scoped_declarations pass
+tests2.45_empty_for pass
+tests2.46_grep pass
+tests2.47_switch_return pass
+tests2.48_nested_break pass
+tests2.49_bracket_evaluation pass
+tests2.50_logical_second_arg pass
+tests2.51_static pass
+tests2.52_unnamed_enum pass
+tests2.54_goto pass
+tests2.55_lshift_type pass
+tests2.60_errors_and_warnings skip: -dt runs code snippets with tcc -run, which a cross compiler can't
+tests2.61_integers pass
+tests2.64_macro_nesting pass
+tests2.67_macro_concat pass
+tests2.70_floating_point_literals pass
+tests2.71_macro_empty_arg pass
+tests2.72_long_long_constant pass
+tests2.73_arm64 pass
+tests2.75_array_in_struct_init pass
+tests2.76_dollars_in_identifiers pass
+tests2.77_push_pop_macro pass
+tests2.78_vla_label pass
+tests2.79_vla_continue pass
+tests2.80_flexarray pass
+tests2.81_types pass
+tests2.82_attribs_position pass
+tests2.83_utf8_in_identifiers pass
+tests2.84_hex-float pass
+tests2.85_asm-outside-function pass
+tests2.86_memory-model pass
+tests2.87_dead_code pass
+tests2.88_codeopt pass
+tests2.89_nocode_wanted pass
+tests2.90_struct-init pass
+tests2.91_ptr_longlong_arith32 pass
+tests2.92_enum_bitfield pass
+tests2.93_integer_promotion pass
+tests2.94_generic pass
+tests2.95_bitfields skip: expects Windows' bitfield layout on 32-bit x86 (skipped upstream too)
+tests2.95_bitfields_ms skip: expects Microsoft's compiler's bitfield layout
+tests2.96_nodata_wanted skip: -dt runs code snippets with tcc -run, which a cross compiler can't
+tests2.97_utf8_string_literal pass
+tests2.98_al_ax_extend pass
+tests2.99_fastcall pass

@@ -2,7 +2,6 @@
  * Output helpers for the C harness's programs (tests/c), which print what they find so the harness can compare the
  * output on RetrOS with the same program's on Linux. They write with write(), so they don't depend on stdio.
  *
- * Every line must end with a newline: RetrOS's log only has whole lines.
  */
 #include <string.h>
 #include <unistd.h>
