@@ -45,6 +45,8 @@ The tree is otherwise unmodified. RetrOS's own code goes next to it, in `libc/`.
 
 **stdio** is all of musl's, `scanf` included, except `popen` and `pclose` (RetrOS can't start a process that way) and the temporary files (`tmpfile`, `tmpnam`, `tempnam`).
 
+**Math:** all of musl's `libm`, built into `libc.a`, with its i386 floating-point environment. As with musl, `libm.a`, `libpthread.a`, `librt.a`, `libdl.a`, `libutil.a` and `libcrypt.a` are installed empty, so `-lm` and the like still link.
+
 **Time:** RetrOS has no time zones, and musl's `localtime` falls back to UTC without a `TZ`, so it gives RetrOS's local time back unchanged. `freopen` with a new path fails with `ENOSYS`, because RetrOS can't duplicate a descriptor.
 
 **Not yet:** `dup`, thread safety (a program's threads share `malloc`, `errno` and the rest without locks), environment variables, exit codes (RetrOS doesn't keep them), and `fork`, signals and the like.
