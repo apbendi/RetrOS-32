@@ -608,13 +608,44 @@ void vmem_dump_heap(struct allocation* allocation)
 	dbgprintf(" -------     &End     --------\n");
 }
 
+/* Frees and unmaps the stack pages mapped in a stack table. @return how many it freed */
+static int __vmem_free_stack(uint32_t* table)
+{
+	int freed = 0;
+	for (int i = 0; i < VMEM_STACK_PAGES; i++){
+		uint32_t vaddr = VMEM_STACK - i*PAGE_SIZE;
+		uint32_t entry = table[TABLE_INDEX(vaddr)];
+		if(entry == 0) continue;
+
+		vmem_default->ops->free(vmem_default, (void*)(entry & ~PAGE_MASK));
+		vmem_unmap(table, vaddr);
+		freed++;
+	}
+	return freed;
+}
+
+/* Maps VMEM_STACK_PAGES cleared pages below VMEM_STACK into a cleared stack table. @return 0, or -ERROR_ALLOC after freeing what it mapped */
+static int __vmem_map_stack(uint32_t* table)
+{
+	for (int i = 0; i < VMEM_STACK_PAGES; i++){
+		uint32_t* page = vmem_default->ops->alloc(vmem_default);
+		if(page == NULL){
+			__vmem_free_stack(table);
+			return -ERROR_ALLOC;
+		}
+		memset(page, 0, PAGE_SIZE);
+		vmem_map(table, VMEM_STACK - i*PAGE_SIZE, (uint32_t) page, USER);
+	}
+	return ERROR_OK;
+}
+
 /**
  * @brief Initializes the virtual memory module.
  * The vmem_init() function is responsible for initializing the virtual memory module.
  * @param parent A pointer to the process control block (PCB) of the parent process.
  * @param thread A pointer to the process control block (PCB) of the thread.
  */
-void vmem_init_process_thread(struct pcb* parent, struct pcb* thread)
+int vmem_init_process_thread(struct pcb* parent, struct pcb* thread)
 {
 	/**
 	 * @brief Create the virtual memory for the thread.
@@ -623,35 +654,35 @@ void vmem_init_process_thread(struct pcb* parent, struct pcb* thread)
 	 * @see https://github.com/joexbayer/RetrOS-32/issues/73
 	 * TODO: How to handle heap? Share? need synchronization?
 	 */
-	
-	/* inheret directory. Pages come from the allocator as they were last used, so tables start cleared. */
 	uint32_t* thread_directory = vmem_default->ops->alloc(vmem_default);
+	uint32_t* thread_stack_table = vmem_default->ops->alloc(vmem_default);
+	if(thread_directory == NULL || thread_stack_table == NULL){
+		vmem_default->ops->free(vmem_default, thread_directory);
+		vmem_default->ops->free(vmem_default, thread_stack_table);
+		return -ERROR_ALLOC;
+	}
+
+	/* inheret directory. Pages come from the allocator as they were last used, so tables start cleared. */
 	memset(thread_directory, 0, PAGE_SIZE);
+	memset(thread_stack_table, 0, PAGE_SIZE);
 	for (int i = 0; i < 1024; i++){
 		/* copy over pages, this will include heap and data */
 		if(parent->page_dir[i] != 0) thread_directory[i] = parent->page_dir[i];
 	}
 
-	/* Allocate table for stack */
-	uint32_t* thread_stack_table = vmem_default->ops->alloc(vmem_default);
-	memset(thread_stack_table, 0, PAGE_SIZE);
-	
-	/* create 8kb stack, 2 4kb pages */
-	uint32_t* thread_stack_page = vmem_default->ops->alloc(vmem_default);
-	memset(thread_stack_page, 0, PAGE_SIZE);
-	vmem_map(thread_stack_table, VMEM_STACK, (uint32_t) thread_stack_page, USER);
-
-	uint32_t* thread_stack_page2 = vmem_default->ops->alloc(vmem_default);
-	memset(thread_stack_page2, 0, PAGE_SIZE);
-	vmem_map(thread_stack_table, VMEM_STACK-PAGE_SIZE, (uint32_t) thread_stack_page2, USER);
-
-	/* Insert and replace stack in directory. */
+	/* The thread's own stack, replacing its parent's in the directory */
+	if(__vmem_map_stack(thread_stack_table) < 0){
+		vmem_default->ops->free(vmem_default, thread_directory);
+		vmem_default->ops->free(vmem_default, thread_stack_table);
+		return -ERROR_ALLOC;
+	}
 	vmem_add_table(thread_directory, VMEM_STACK, thread_stack_table, USER);
 
 	thread->page_dir = (uint32_t*)thread_directory;
 	thread->allocations = parent->allocations;
 
 	dbgprintf("[INIT THREAD] Thread paging setup done.\n");
+	return ERROR_OK;
 }
 
 /**
@@ -669,8 +700,8 @@ int vmem_init_process(struct pcb* pcb, byte_t* data, int size)
 	/* Pages mapped into the data table, for freeing them on failure */
 	int data_pages = 0;
 	uint32_t* process_data_page;
-	uint32_t* process_stack_page = NULL;
-	uint32_t* process_stack_page2 = NULL;
+	/* Whether the stack is mapped, for freeing it on failure */
+	int stack_mapped = 0;
 
 	/* Allocate directory and tables for data and stack */
 	uint32_t* process_directory = vmem_default->ops->alloc(vmem_default);
@@ -723,22 +754,10 @@ int vmem_init_process(struct pcb* pcb, byte_t* data, int size)
 	data_pages++;
 	dbgprintf("[INIT PROCESS] Finished mapping data.\n");
 
-	/* Map the process stack 8Kb to a page */
-	process_stack_page = vmem_default->ops->alloc(vmem_default);
-	if(process_stack_page == NULL) goto out_of_memory;
-	allocated_pages++;
-	memset(process_stack_page, 0, PAGE_SIZE);
-	dbgprintf("[INIT PROCESS] Finished allocating 1/2 stack page.\n");
-	vmem_map(process_stack_table, VMEM_STACK, (uint32_t) process_stack_page, USER);
-	dbgprintf("[INIT PROCESS] Finished mapping 1/2 stack page.\n");
-
-	process_stack_page2 = vmem_default->ops->alloc(vmem_default);
-	if(process_stack_page2 == NULL) goto out_of_memory;
-	allocated_pages++;
-	dbgprintf("[INIT PROCESS] Finished allocating 2/2 stack page.\n");
-	memset(process_stack_page2, 0, PAGE_SIZE);
-	dbgprintf("[INIT PROCESS] Finished clearing 2/2 stack page.\n");
-	vmem_map(process_stack_table, VMEM_STACK-PAGE_SIZE, (uint32_t) process_stack_page2, USER);
+	/* Map the process's stack */
+	if(__vmem_map_stack(process_stack_table) < 0) goto out_of_memory;
+	stack_mapped = 1;
+	allocated_pages += VMEM_STACK_PAGES;
 	dbgprintf("[INIT PROCESS] Finished mapping stack.\n");
 
 	/* Insert page and data tables in directory. */
@@ -762,8 +781,7 @@ out_of_memory:
 	for (int j = 0; j < data_pages; j++){
 		vmem_default->ops->free(vmem_default, (void*)(process_data_table[TABLE_INDEX((VMEM_DATA+(j*PAGE_SIZE)))] & ~PAGE_MASK));
 	}
-	vmem_default->ops->free(vmem_default, process_stack_page);
-	vmem_default->ops->free(vmem_default, process_stack_page2);
+	if(stack_mapped) __vmem_free_stack(process_stack_table);
 	vmem_default->ops->free(vmem_default, process_heap_table);
 	vmem_default->ops->free(vmem_default, process_stack_table);
 	vmem_default->ops->free(vmem_default, process_data_table);
@@ -787,13 +805,9 @@ void vmem_cleanup_process_thead(struct pcb* thread)
 	 * 
 	 */
 
-	uint32_t stack_table = (uint32_t)thread->page_dir[DIRECTORY_INDEX(VMEM_STACK)] & ~PAGE_MASK;
-	uint32_t stack_page = (uint32_t)((uint32_t*)(thread->page_dir[DIRECTORY_INDEX(VMEM_STACK)] & ~PAGE_MASK))[TABLE_INDEX(VMEM_STACK)]& ~PAGE_MASK;
-	uint32_t stack_page2 = (uint32_t)((uint32_t*)(thread->page_dir[DIRECTORY_INDEX((VMEM_STACK-PAGE_SIZE))] & ~PAGE_MASK))[TABLE_INDEX((VMEM_STACK-PAGE_SIZE))]& ~PAGE_MASK;
-
-	vmem_default->ops->free(vmem_default, (void*) stack_page);
-	vmem_default->ops->free(vmem_default, (void*) stack_page2);
-	vmem_default->ops->free(vmem_default, (void*) stack_table);
+	uint32_t* stack_table = vmem_get_page_table(thread, VMEM_STACK);
+	__vmem_free_stack(stack_table);
+	vmem_default->ops->free(vmem_default, stack_table);
 
 	vmem_default->ops->free(vmem_default, (void*) thread->page_dir);
 
@@ -851,15 +865,9 @@ void vmem_cleanup_process(struct pcb* pcb)
 	/**
 	 * Free all stack pages
 	 */
-	uint32_t stack_table = (uint32_t)pcb->page_dir[DIRECTORY_INDEX(VMEM_STACK)] & ~PAGE_MASK;
-	uint32_t stack_page = (uint32_t)((uint32_t*)(pcb->page_dir[DIRECTORY_INDEX(VMEM_STACK)] & ~PAGE_MASK))[TABLE_INDEX(VMEM_STACK)]& ~PAGE_MASK;
-	uint32_t stack_page2 = (uint32_t)((uint32_t*)(pcb->page_dir[DIRECTORY_INDEX((VMEM_STACK-PAGE_SIZE))] & ~PAGE_MASK))[TABLE_INDEX((VMEM_STACK-PAGE_SIZE))]& ~PAGE_MASK;
-
-	vmem_default->ops->free(vmem_default, (void*) stack_page);
-	freed_pages++;
-	vmem_default->ops->free(vmem_default, (void*) stack_page2);
-	freed_pages++;
-	vmem_default->ops->free(vmem_default, (void*) stack_table);
+	uint32_t* stack_table = vmem_get_page_table(pcb, VMEM_STACK);
+	freed_pages += __vmem_free_stack(stack_table);
+	vmem_default->ops->free(vmem_default, stack_table);
 	freed_pages++;
 
 	dbgprintf("[Memory] Cleaning up stack from pcb [DONE].\n");

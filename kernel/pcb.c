@@ -459,7 +459,11 @@ error_t pcb_create_thread(struct pcb* parent, void (*entry)(), void* arg, byte_t
 	memcpy(pcb->name, parent->name, strlen(parent->name)+1);
 
 	/* inheret parents virtual memory */
-	vmem_init_process_thread(parent, pcb);
+	ret = vmem_init_process_thread(parent, pcb);
+	if(ret < 0){
+		__pcb_discard(pcb);
+		return ret;
+	}
 
 	get_scheduler()->ops->add(get_scheduler(), pcb);
 
