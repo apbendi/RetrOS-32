@@ -346,6 +346,7 @@ These directories come from other projects and keep their own licenses:
 |---|---|---|
 | `apps/C-Compiler` | [joexbayer/C-Compiler](https://github.com/joexbayer/C-Compiler), the compiler installed as `/bin/cc.o` | GNU GPL version 2 (`apps/C-Compiler/LICENSE`) |
 | `fs/fatfs` | [FatFs](https://elm-chan.org/fsw/ff/), the FAT file system code | FatFs license, BSD-style (`fs/fatfs/LICENSE.txt`) |
+| `apps/tcc/tinycc` | [TinyCC](https://bellard.org/tcc/) (TCC), the C compiler being ported to RetrOS (#116) | GNU LGPL version 2.1 (`apps/tcc/tinycc/COPYING`); its runtime library is GPL with a linking exception |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
