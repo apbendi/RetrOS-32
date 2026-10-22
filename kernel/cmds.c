@@ -265,6 +265,36 @@ static int rmdir(int argc, char* argv[])
 EXPORT_KSYMBOL(rmdir);
 
 /**
+ * Where mv or cp puts from when told to put it at to. That's to itself, unless to is an existing directory other
+ * than from: then it's inside to, under from's name as it's stored, whatever case it was typed in. Other paths are
+ * built in into, which holds FS_PATH_MAX bytes. Reports its own errors.
+ * @return the path, or NULL
+ */
+static const char* __destination(const char* cmd, const char* from, const char* to, char* into)
+{
+    struct fs_dirent entry;
+    if(fs_stat(to, &entry) < 0 || !(entry.attributes & FS_ATTR_DIRECTORY) || fs_same_entry(from, to) == 1) return to;
+
+    int ret = fs_stat(from, &entry);
+    if(ret < 0){
+        __fs_cmd_error(cmd, from, ret);
+        return NULL;
+    }
+
+    int to_len = strlen(to);
+    int sep = to_len > 0 && to[to_len-1] != '/';
+    int name_len = strlen(entry.name);
+    if(to_len + sep + name_len + 1 > FS_PATH_MAX){
+        __fs_cmd_error(cmd, to, -ERROR_INVALID_ARGUMENTS);
+        return NULL;
+    }
+    memcpy(into, to, to_len);
+    if(sep) into[to_len] = '/';
+    memcpy(into + to_len + sep, entry.name, name_len + 1);
+    return into;
+}
+
+/**
  * Renames or moves a file or directory. A destination that's an existing directory gets the source moved into it,
  * under the same name, as on Unix, unless it's the source itself in another case: mv docs Docs renames it. An
  * existing file isn't replaced.
@@ -277,29 +307,9 @@ static int mv(int argc, char* argv[])
     }
 
     const char* from = argv[1];
-    const char* to = argv[2];
     char into[FS_PATH_MAX];
-
-    struct fs_dirent entry;
-    if(fs_stat(to, &entry) == 0 && (entry.attributes & FS_ATTR_DIRECTORY) && fs_same_entry(from, to) != 1){
-        /* Into the directory, under the source's name as it's stored, whatever case it was typed in */
-        int ret = fs_stat(from, &entry);
-        if(ret < 0){
-            __fs_cmd_error("mv", from, ret);
-            return -1;
-        }
-
-        int to_len = strlen(to);
-        int name_len = strlen(entry.name);
-        if(to_len + 1 + name_len + 1 > FS_PATH_MAX){
-            __fs_cmd_error("mv", to, -ERROR_INVALID_ARGUMENTS);
-            return -1;
-        }
-        memcpy(into, to, to_len);
-        into[to_len] = '/';
-        memcpy(into + to_len + 1, entry.name, name_len + 1);
-        to = into;
-    }
+    const char* to = __destination("mv", from, argv[2], into);
+    if(to == NULL) return -1;
 
     int ret = fs_rename(from, to);
     if(ret < 0){
@@ -309,6 +319,90 @@ static int mv(int argc, char* argv[])
     return 0;
 }
 EXPORT_KSYMBOL(mv);
+
+/* How much cp reads and writes at a time. Each write is synced to the disk, so fewer, larger ones are faster. */
+#define CP_CHUNK (16*1024)
+
+/**
+ * Copies a file. A destination that's an existing directory gets a copy under the same name, as with mv. An existing
+ * file is replaced.
+ */
+static int cp(int argc, char* argv[])
+{
+    if(argc != 3){
+        twritef("Usage: cp <from> <to>\n");
+        return -1;
+    }
+
+    const char* from = argv[1];
+    struct fs_dirent entry;
+    int ret = fs_stat(from, &entry);
+    if(ret < 0){
+        __fs_cmd_error("cp", from, ret);
+        return -1;
+    }
+    if(entry.attributes & FS_ATTR_DIRECTORY){
+        __fs_cmd_error("cp", from, -ERROR_IS_DIRECTORY);
+        return -1;
+    }
+
+    char into[FS_PATH_MAX];
+    const char* to = __destination("cp", from, argv[2], into);
+    if(to == NULL) return -1;
+
+    /* Opening the source as the destination would empty it before it's read. The check also sees through another
+     * case or an 8.3 alias. */
+    if(fs_same_entry(from, to) == 1){
+        twritef("cp: %s and %s are the same file.\n", from, to);
+        return -1;
+    }
+
+    char* buf = kalloc_try(CP_CHUNK);
+    if(buf == NULL){
+        __fs_cmd_error("cp", from, -ERROR_ALLOC);
+        return -1;
+    }
+
+    int in = fs_open(from, FS_FILE_FLAG_READ);
+    if(in < 0){
+        __fs_cmd_error("cp", from, in);
+        kfree(buf);
+        return -1;
+    }
+
+    int out = fs_open(to, FS_FILE_FLAG_WRITE | FS_FILE_FLAG_CREATE | FS_FILE_FLAG_TRUNCATE);
+    if(out < 0){
+        __fs_cmd_error("cp", to, out);
+        fs_close(in);
+        kfree(buf);
+        return -1;
+    }
+
+    int failed = 0;
+    while(1){
+        int n = fs_read(in, buf, CP_CHUNK);
+        if(n < 0){
+            __fs_cmd_error("cp", from, n);
+            failed = -1;
+            break;
+        }
+        if(n == 0) break;
+
+        /* A short write means the disk is full */
+        int written = fs_write(out, buf, n);
+        if(written < n){
+            __fs_cmd_error("cp", to, written < 0 ? written : -ERROR_NO_SPACE);
+            failed = -1;
+            break;
+        }
+    }
+
+    fs_close(out);
+    fs_close(in);
+    kfree(buf);
+    return failed;
+}
+EXPORT_KSYMBOL(cp);
 
 /* prints content of compressed file */
 static int lzcat(int argc, char* argv[]){
@@ -418,7 +512,7 @@ static int help(int argc, char* argv[])
     twritef("  ls, list        ps           help\n");
     twritef("  cd, pwd         tree         reset\n");
     twritef("  mkdir, rmdir    kill         about\n");
-    twritef("  rm, mv          exec         xxd\n");
+    twritef("  rm, mv, cp      exec         xxd\n");
     twritef("  new, view       fdisk        bg\n");
     twritef("  file            meminfo      sh\n");
     twritef("Network:          conf         echo\n");

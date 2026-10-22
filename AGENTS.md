@@ -233,7 +233,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - **Moving:** `fs_rename` also moves between directories. It refuses an existing destination, and a directory moved inside itself, which FatFs would do, losing the directory. Renaming to the same name in another case works, which is how `mv docs Docs` changes only the case.
 - **The current directory** is per process, kept in `fs.c` by PID. A new process or kernel thread starts in its creator's, and a thread shares its process's. Each shell window is a kernel thread with its own.
 
-**In the shell:** `ls` (`list`), `cd`, `pwd`, `mkdir`, `rm`, `rmdir`, `mv`, `find`, `view`, `file` and `new file`, in `kernel/cmds.c`. Quote names with spaces. The prompt shows the current directory, `kernel:/my projects>`, and the history echoes each command after it.
+**In the shell:** `ls` (`list`), `cd`, `pwd`, `mkdir`, `rm`, `rmdir`, `mv`, `cp`, `find`, `view`, `file` and `new file`, in `kernel/cmds.c`. `mv` and `cp` put the source inside a destination that's a directory, as on Unix; `cp` copies files, not directories. Quote names with spaces. The prompt shows the current directory, `kernel:/my projects>`, and the history echoes each command after it.
 
 **In apps:** `open`, `read`, `write`, `seek`, `fclose`, `stat`, `readdir`, `mkdir`, `unlink`, `rmdir`, `rename`, `chdir` and `getcwd` in `lib/syscall.c`. Finder and the tree view (`apps/utils/TreeView.hpp`) list with `readdir`.
 
