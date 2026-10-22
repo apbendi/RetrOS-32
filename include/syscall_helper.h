@@ -59,7 +59,10 @@ enum {
     SYSCALL_RMDIR,
     SYSCALL_RENAME,
     SYSCALL_CHDIR,
-    SYSCALL_GETCWD
+    SYSCALL_GETCWD,
+
+    /* Text to the terminal, as one call (terminal.h) */
+    SYSCALL_TERM_WRITE
 };
 
 #endif /* __SYSCALL_HELPER_H */
