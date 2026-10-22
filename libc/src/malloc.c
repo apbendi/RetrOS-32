@@ -6,8 +6,9 @@
  * divided here.
  *
  * Every block starts with a 16-byte header holding its size and the size of the block before it, so a freed block
- * merges with free neighbours on both sides. Free blocks are kept in one list, searched first fit. A request too big
- * for an arena gets a kernel allocation of its own, returned to the kernel when it's freed.
+ * merges with free neighbours on both sides. Free blocks are kept in one list, searched first fit. An arena that's
+ * entirely free again goes back to the kernel, except the last one. A request too big for an arena gets a kernel
+ * allocation of its own, returned to the kernel when it's freed.
  *
  * Not thread-safe: a program's threads share it without a lock.
  */
@@ -40,6 +41,7 @@ struct block {
 #define MIN_BLOCK 32
 
 static struct block* free_list;
+static int arenas;
 
 static size_t __size(const struct block* b)
 {
@@ -97,7 +99,8 @@ static size_t __need(size_t n)
 
 /**
  * Adds an arena with room for a block of at least need bytes. It's laid out as a used header at the start, one free
- * block, and a used header of size 0 at the end, so merging never runs off either end.
+ * block, and a used header of size 0 at the end, so merging never runs off either end. The start's header is the only
+ * block of size HEADER, and keeps the kernel's pointer, for giving the arena back.
  */
 static int __grow(size_t need)
 {
@@ -111,7 +114,7 @@ static int __grow(size_t need)
 	struct block* start = (struct block*)(((uintptr_t)raw + ALIGN - 1) & ~(uintptr_t)(ALIGN - 1));
 	size_t usable = (size - ((char*)start - raw)) & ~(size_t)(ALIGN - 1);
 
-	start->prev_size = 0;
+	start->prev_size = (size_t)raw;
 	start->size = HEADER | USED;
 
 	struct block* b = __next(start);
@@ -123,6 +126,7 @@ static int __grow(size_t need)
 	end->size = 0 | USED;
 
 	__push(b);
+	arenas++;
 	return 0;
 }
 
@@ -204,6 +208,14 @@ void free(void* p)
 		__unlink(prev);
 		prev->size += __size(b);
 		b = prev;
+	}
+
+	/* The whole arena is free: between its start's header and its end's */
+	struct block* start = (struct block*)((char*)b - b->prev_size);
+	if(start->size == (HEADER | USED) && __next(b)->size == USED && arenas > 1){
+		arenas--;
+		__kernel_free((void*)start->prev_size);
+		return;
 	}
 
 	__next(b)->prev_size = __size(b);

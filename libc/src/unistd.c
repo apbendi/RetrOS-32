@@ -7,6 +7,15 @@
 #include <sys/stat.h>
 #include "fd.h"
 
+/* Whether fd isn't a file this program has open. RetrOS calls that invalid arguments, but POSIX says EBADF. */
+static int __bad_fd(int fd)
+{
+	struct __retros_fd* kept = __retros_fd(fd);
+	if(kept != 0 && kept->open) return 0;
+	errno = EBADF;
+	return 1;
+}
+
 ssize_t read(int fd, void* buf, size_t count)
 {
 	if(fd == FD_STDIN) return 0;
@@ -14,6 +23,7 @@ ssize_t read(int fd, void* buf, size_t count)
 		errno = EBADF;
 		return -1;
 	}
+	if(__bad_fd(fd)) return -1;
 	return __retros_ret(__retros_syscall(SYSCALL_READ, fd, (int)buf, (int)count));
 }
 
@@ -26,12 +36,14 @@ ssize_t write(int fd, const void* buf, size_t count)
 		errno = EBADF;
 		return -1;
 	}
+	if(__bad_fd(fd)) return -1;
 	return __retros_ret(__retros_syscall(SYSCALL_WRITE, fd, (int)buf, (int)count));
 }
 
 int close(int fd)
 {
 	if(fd >= FD_STDIN && fd <= FD_STDERR) return 0;
+	if(__bad_fd(fd)) return -1;
 
 	int ret = __retros_ret(__retros_syscall(SYSCALL_CLOSE, fd, 0, 0));
 	struct __retros_fd* kept = __retros_fd(fd);
@@ -45,6 +57,7 @@ off_t lseek(int fd, off_t offset, int whence)
 		errno = ESPIPE;
 		return -1;
 	}
+	if(__bad_fd(fd)) return -1;
 	/* RetrOS's offsets are ints, and SEEK_SET, SEEK_CUR and SEEK_END are its FS_SEEK_START, _CUR and _END */
 	if(offset > INT_MAX || offset < INT_MIN){
 		errno = EOVERFLOW;
@@ -56,7 +69,7 @@ off_t lseek(int fd, off_t offset, int whence)
 int isatty(int fd)
 {
 	if(fd >= FD_STDIN && fd <= FD_STDERR) return 1;
-	errno = ENOTTY;
+	errno = __bad_fd(fd) ? EBADF : ENOTTY;
 	return 0;
 }
 
