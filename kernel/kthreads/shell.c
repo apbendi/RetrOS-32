@@ -46,7 +46,8 @@
 
 #define SHELL_HEIGHT 225 /* 275 */
 #define SHELL_WIDTH 400 /* 300 */
-#define SHELL_MAX_SIZE SHELL_WIDTH/2
+/* The longest command line, with its terminating 0: room for a command and two paths (#107) */
+#define SHELL_LINE_MAX (2*FS_PATH_MAX + 64)
 
 void __kthread_entry shell(int argc, char* argv[]);
 
@@ -58,10 +59,10 @@ static const char backspace = '\b';
  * so commands that run on the thread, like reset, can find it (#42).
  */
 struct shell {
-	char buffer[SHELL_MAX_SIZE];
-	uint8_t length;
+	char buffer[SHELL_LINE_MAX];
+	int length;
 	/* The last command run, which Up brings back */
-	char previous[SHELL_MAX_SIZE];
+	char previous[SHELL_LINE_MAX];
 	/* "kernel:<current directory>> " */
 	char prompt[FS_PATH_MAX + 16];
 	/* Set by the exit command: the shell exits once the line has run */
@@ -134,7 +135,7 @@ static void reset_shell(struct shell* sh)
 	memcpy(sh->prompt + 7, cwd, cwd_len);
 	memcpy(sh->prompt + 7 + cwd_len, "> ", 3);
 
-	memset(sh->buffer, 0, SHELL_MAX_SIZE);
+	memset(sh->buffer, 0, SHELL_LINE_MAX);
 	sh->length = 0;
 	__shell_show_line(sh);
 }
@@ -630,7 +631,7 @@ static void shell_put(struct shell* sh, unsigned char c)
 		return;
 
 	/* Room for the terminating 0 */
-	if(sh->length == SHELL_MAX_SIZE - 1)
+	if(sh->length == SHELL_LINE_MAX - 1)
 		return;
 
 	sh->buffer[sh->length] = uc;
