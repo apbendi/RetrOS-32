@@ -210,6 +210,21 @@ struct terminal_ops terminal_ops = {
 	.getchar = __terminal_getchar_graphics,
 };
 
+/* text-mode terminal ops. Each table is shared by every terminal of its kind, so nothing writes to them */
+struct terminal_ops terminal_ops_textmode = {
+	.write = __terminal_write,
+	.writef = __terminal_writef,
+	.putchar = __terminal_putchar_textmode,
+	.commit = __terminal_commit_textmode,
+	.attach = __terminal_attach,
+	.detach = __terminal_detach,
+	.reset = __terminal_reset,
+	.set = __terminal_set_ops,
+	.scan = __terminal_scan_textmode,
+	.scanf = __terminal_scanf,
+	.getchar = __terminal_getchar_textmode,
+};
+
 /**
  * Creates a new terminal.
  * Attaches terminal ops to the terminal.
@@ -227,7 +242,7 @@ struct terminal* terminal_create(terminal_flags_t flags)
 	}
 	term->textbuffer_size = TERMINAL_TEXTBUFFER_INITIAL_CAPACITY;
 
-	term->ops = &terminal_ops;
+	term->ops = HAS_FLAG(flags, TERMINAL_TEXT_MODE) ? &terminal_ops_textmode : &terminal_ops;
 
 	term->head = 0;
 	term->tail = 0;
@@ -249,11 +264,6 @@ struct terminal* terminal_create(terminal_flags_t flags)
 	}
 
 	if(HAS_FLAG(flags, TERMINAL_TEXT_MODE)){
-		term->ops->putchar = __terminal_putchar_textmode;
-		term->ops->commit = __terminal_commit_textmode;
-		term->ops->scan = __terminal_scan_textmode;
-		term->ops->getchar = __terminal_getchar_textmode;
-
 		term->bg_color = VGA_COLOR_BLUE;
 		term->text_color = VGA_COLOR_WHITE;
 	}
