@@ -47,8 +47,11 @@ $Q stop
   - If the title bar is covered everywhere, `focus` falls back to Alt+Tab, which sends the front window to the back. It presses Alt+Tab until the window order repeats, then stops with NAME in front. That takes a couple of seconds.
   - **F12 and the shell's `windows` command** list the windows. F12 is handled by the window server, so it works whatever has focus. Its lines look like `wm_log_windows(): 1 "Clock" x=450 y=50 w=126 h=156 pid=6`.
 - **A shell command is done** when the log says `exec_cmd(): Finished <command>`. For `exec` without `-d`, that's when the program has exited.
+- **Keys typed while a command runs wait** in the shell window's event queue, which holds 10 and drops the oldest. So wait for `Finished` before typing more than a few keys ahead.
+- **A program that reads `stdin`,** started with `exec` without `-d`, takes what you `type`, a line at a time. `key ctrl-d` on an empty line ends its input.
 - **Terminal output is in the serial log,** one line at a time, as `term[<writer>]: <text>`. That includes the shell's echo of each command after its prompt (`term[shell]: kernel:/> exec ...`, with the shell's current directory), kernel commands' output, and apps' `printf`. So `$Q wait "term\[shell\]: .*File too large"` checks a command's result without a screenshot.
-  - A line is logged when it ends with a newline, so a prompt without one waits for the next newline.
+  - A line is logged when it ends with a newline, so a program's question without one waits for the next newline.
+  - The shell's own prompt and what's typed after it aren't logged until Enter. Ctrl+C at the prompt logs the line with `^C` after it.
   - Lines over 127 characters are split across log lines.
 - **Text mode has no windows,** so use `type` rather than `shell` or `focus` there. `text` prints its screen.
 - **`log` and `wait` start from your last action:** `type`, `key`, `shell`, `focus`, `click`, `move` or `drag`.
