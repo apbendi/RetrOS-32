@@ -16,7 +16,7 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
 
 | Path | What's there |
 |---|---|
-| `kernel/` | Kernel core: scheduler, PCBs, memory (`kmem.c`, `vmem.c`, `memory.c`), interrupts (`arch/`, `irs_entry.s`), syscalls, symbols (`ksyms.c`) |
+| `kernel/` | Kernel core: scheduler, PCBs, memory (`kmem.c`, `vmem.c`, `memory.c`), interrupts (`arch/`, `irs_entry.s`), syscalls, symbols (`ksyms.c`), the terminal (`terminal.c`) |
 | `kernel/kthreads/` | Kernel threads with windows: `shell`, `taskbar` (Start menu), `kclock`, `sysinf`, `about`, … |
 | `graphics/` | Window server (`windowserver.c`), window manager (`windowmanager.c`), windows (`window.c`), drawing (`gfxlib.c`), the gfx syscall (`api.c`) |
 | `drivers/` | VBE, keyboard, mouse, ATA, e1000, … |
@@ -225,6 +225,51 @@ Syscalls run with interrupts enabled, so they can be preempted.
 
 **Listing windows:** F12 logs the current workspace's windows to the serial log, front to back, with each one's rectangle, owner and flags (`wm_log_windows`). The shell's `windows` command prints the same list. Both copy the list under `wm->spinlock` with `wm_get_windows`, then print after releasing it.
 
+## Terminal
+
+**The pieces** (`kernel/terminal.c`, `include/terminal.h`, `kernel/kthreads/shell.c`):
+- **A terminal,** `struct terminal`, keeps the text written to it in `textbuffer` and draws it into its window, `screen`.
+  - **Writing:** kernel code writes with `twritef`, and programs with `SYSCALL_TERM_WRITE` (`terminal_write`).
+  - **The log:** each line written is also copied to the serial log, as `term[<writer>]: <text>`.
+- **The input line** is the line being edited after the text: the shell's prompt and command, or what a program reading a line has typed.
+  - **Showing it:** `terminal_set_input` shows it, continuing the text's last line, and `terminal_hide_input` takes it away.
+  - **Not part of the text:** it's never logged, and text written meanwhile goes before it.
+- **The GUI shell** is a kernel thread per Terminal window, `shell()`.
+  - **Its state:** a kalloc'd `struct shell`. Its PCB's `local` points to it, so commands running on its thread, like `reset` and `exit`, find it. `local_free` frees it however the thread exits.
+  - **A command line:** the prompt, `kernel:<directory>> `, and what's typed are the input line. Enter hides it, writes the same text into the output, runs the command with `exec_cmd`, and shows a new prompt after the output.
+  - **A program's unfinished last line** gets a newline before the prompt (`terminal_end_line`).
+  - **Keys:** backspace, Up and Down through the last 32 commands (`SHELL_HISTORY_MAX`), and Ctrl+C, which leaves the line in the output with `^C` after it. A line holds `SHELL_LINE_MAX`, 1,088 bytes.
+- **Text mode** (`textshell`) uses a terminal with the `terminal_ops_textmode` ops. It edits its line on its frame's bottom row, and shows no input line.
+
+**Layout:** a graphics terminal lays out its text and input line at the window's size when it draws. It wraps lines at the window's width, and shows as much of the end as fits.
+- **What's kept:** as many lines as a screen-sized window shows (`__terminal_max_lines`), and at most twice the characters it holds (`__terminal_max_chars`).
+- So a window made bigger shows earlier lines again. There's no scrollback beyond that.
+
+**Drawing only what changed** (#118): the terminal remembers what's on screen, in its `drawn_*` fields.
+- **A commit** clears the input line, draws the text added since, scrolling the window's pixels up when it reaches the bottom, and draws the input line after it.
+- **Full redraws:**
+  - the first draw, a resize and a color change;
+  - text taken away: `clear`, `reset`, or an overlong line cut short;
+  - an input line that ends higher than it did, once the text has scrolled.
+  - **After each command,** the shell asks for one with `terminal_invalidate`, since a command may draw into the window itself.
+- **Who draws:** whichever thread commits.
+  - **Other threads:** a thread writing to a terminal whose window isn't its own, like a program, draws at each newline it writes, or after each `terminal_write`.
+  - **The window's own thread,** like the shell, draws when it commits.
+
+**Threads:**
+- **Sharing:** threads, programs and kernel threads started from a shell share its terminal.
+  - **References:** each holds one, taken when its PCB is created (`terminal_get`) and released in `pcb_cleanup_routine` (`terminal_put`). The last frees the terminal.
+  - **Outliving the shell:** a program started with `exec -d` can. Cleanup first takes the closing window away from the terminal (`terminal_release_window`), so the program's text goes only to the log.
+- **The lock:** `terminal_lock` is held while the text or the input line changes, or the terminal draws.
+  - **Taking it again:** the thread holding it can, since the ops call each other.
+  - **Order:** take it before a window's `buffer_lock`, never after, and never inside `ENTER_CRITICAL`.
+
+**Reading** (#113): `SYSCALL_TERM_READ` (`terminal_read`) reads a line typed at the caller's terminal. The C library's `stdin` uses it.
+- **Who may read:** only the program its shell is waiting for. `exec` without `-d` makes it the terminal's `reader` before it can run. Any other caller gets end of input at once, since the shell is taking the keys.
+- **Editing:** the line is edited on the input line, after what the program printed, with the keys typed in the shell's window. Enter adds it to the text, so it's shown and logged as the program's.
+- **End of input:** Ctrl+D on an empty line; Ctrl+C, which throws the line away, since RetrOS has no signals; or the window closing.
+- **The kernel's own `scan`,** which `tcp` and the text shell's login use, reads the same way.
+
 ## File system
 
 **Layers** (`fs/`):
@@ -330,7 +375,7 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
   - Files `make img` copies in get the build container's clock, which is UTC. So they look a few hours off from files created in RetrOS, which use the host's local time.
 - **Timers and sleeping:** the timer runs at 1000 Hz, so `sleep(ms)` and ticks are milliseconds. PCB sleep deadlines are `uint32_t`; a 16-bit field used to overflow after ~65 s.
 - **The scheduler's queues:** the scheduler runs from the timer interrupt, with interrupts off, and uses the PCB queues. So each queue operation runs with interrupts off (`QUEUE_CRITICAL` in `kernel/pcb_queue.c`), not under a spinlock. Don't guard anything the scheduler uses with `spin_lock`: if the timer preempts a thread holding the lock, the scheduler waits for it on that thread's stack, yielding into itself until the kernel stack overflows.
-- **Printing from programs:** `SYSCALL_TERM_WRITE` (`terminal_write`) writes a buffer to the program's terminal in one call. A graphics terminal redraws only what's changed since it was last drawn: the text added, scrolling the window up when it reaches the bottom, and the line being typed after it (#118). A resize, `clear`, `reset`, a color change, and each shell command, which may have drawn into the window itself, redraw it all. A program's unfinished last line goes to the log when it exits.
+- **Printing from programs:** `SYSCALL_TERM_WRITE` (`terminal_write`) writes a buffer to the program's terminal in one call, and the terminal draws only what it adds ("Terminal"). A program's unfinished last line goes to the log when it exits.
 - **Fixed offsets:** `struct pcb` fields above the "DO NOT CHANGE ABOVE" marker are read by assembly at fixed offsets. The ISR stubs in `kernel/irs_entry.s` build exactly the frame described by `struct registers`.
 - **User stacks:** a process's stack, and each of its threads', is `VMEM_STACK_PAGES` pages below `VMEM_STACK`, 64 KB, all mapped when it starts. Exiting frees them. Growing on demand instead is #115.
   - **A double free:** `[VMEM] Double free or invalid free for page N` in the log means something freed a page twice. Every exit logged it until #12 was fixed, so now it points to a new bug.
