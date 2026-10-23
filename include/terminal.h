@@ -73,6 +73,20 @@ struct terminal {
     struct pcb* lock_owner;
     int lock_depth;
 
+    /* The line being typed, drawn after the text: see terminal_set_input. input_shown is false when there's none */
+    char* input;
+    int input_size;
+    int input_length;
+    bool_t input_shown;
+
+    /* Counts changes to the text, so a redraw can tell whether only the input line has changed since the last */
+    unsigned int text_version;
+    /* What the last full redraw drew: the text's version, the window's size, and the rows of its last line */
+    unsigned int drawn_version;
+    int drawn_width;
+    int drawn_height;
+    int drawn_last_rows;
+
     struct window* screen;
     struct terminal_ops* ops;
     color_t text_color;
@@ -85,6 +99,9 @@ void terminal_put(struct terminal* term);
 void terminal_lock(struct terminal* term);
 void terminal_unlock(struct terminal* term);
 void terminal_release_window(struct terminal* term, struct pcb* pcb);
+void terminal_set_input(struct terminal* term, const char* prompt, const char* text);
+void terminal_hide_input(struct terminal* term);
+void terminal_end_line(struct terminal* term);
 
 int scan(ubyte_t* data, int size);
 

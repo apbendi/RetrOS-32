@@ -46,8 +46,6 @@
 
 #define SHELL_HEIGHT 225 /* 275 */
 #define SHELL_WIDTH 400 /* 300 */
-/* The input line's row: the bottom of the calling shell's window */
-#define SHELL_POSITION (gfx_get_window_height()-8)
 #define SHELL_MAX_SIZE SHELL_WIDTH/2
 
 void __kthread_entry shell(int argc, char* argv[]);
@@ -55,20 +53,17 @@ void __kthread_entry shell(int argc, char* argv[]);
 static const char newline = '\n';
 static const char backspace = '\b';
 
-/* The most of the current directory the GUI shell's prompt shows, so a deep directory leaves room to type */
-#define SHELL_PROMPT_DIR_MAX 20
-
 /**
  * A GUI shell's state. Each Terminal window runs its own shell thread with its own, which the thread's PCB points to,
  * so commands that run on the thread, like reset, can find it (#42).
  */
 struct shell {
-	uint8_t column;
 	char buffer[SHELL_MAX_SIZE];
 	uint8_t length;
 	/* The last command run, which Up brings back */
 	char previous[SHELL_MAX_SIZE];
-	char prompt[SHELL_PROMPT_DIR_MAX + 16];
+	/* "kernel:<current directory>> " */
+	char prompt[FS_PATH_MAX + 16];
 	/* Set by the exit command: the shell exits once the line has run */
 	bool_t exiting;
 };
@@ -90,12 +85,6 @@ static char* about_text = "\nRetrOS-32 - 32bit Operating System\n    " KERNEL_RE
 /*
  *	IMPLEMENTATIONS
  */
-static void shell_clear()
-{
-	//struct gfx_theme* theme = kernel_gfx_current_theme();
-	kernel_gfx_draw_rectangle($process->current->gfx_window, 0, SHELL_POSITION, gfx_get_window_width(), 8, $process->current->term->bg_color);
-}
-
 /**
  * Writes the current directory into out, which holds max+1 bytes. One longer than max keeps its end, after "...",
  * since that names the directory you're in.
@@ -122,24 +111,32 @@ static void __shell_echo(const char* line)
 	twritef("kernel:%s> %s\n", cwd, line);
 }
 
+/* Shows the prompt and the command typed so far on the terminal's input line, after the output */
+static void __shell_show_line(struct shell* sh)
+{
+	terminal_set_input($process->current->term, sh->prompt, sh->buffer);
+}
+
+/* Starts a new command line: a prompt after the output, with nothing typed */
 static void reset_shell(struct shell* sh)
 {
-	struct terminal* term = $process->current->term;
+	/* After a program's unfinished last line, the prompt starts a row of its own, as zsh's does */
+	terminal_end_line($process->current->term);
 
-	/* The prompt shows the current directory, which a command may have changed */
-	char dir[SHELL_PROMPT_DIR_MAX + 1];
-	__shell_cwd(dir, SHELL_PROMPT_DIR_MAX);
-	int dir_len = strlen(dir);
+	/**
+	 * The prompt shows the current directory, which a command may have changed. It's the same text __shell_echo leaves
+	 * in the output when the command runs, so Enter leaves the line on screen as it was.
+	 */
+	char cwd[FS_PATH_MAX];
+	if(fs_getcwd(cwd, sizeof(cwd)) < 0) memcpy(cwd, "/", 2);
+	int cwd_len = strlen(cwd);
 	memcpy(sh->prompt, "kernel:", 7);
-	memcpy(sh->prompt + 7, dir, dir_len);
-	memcpy(sh->prompt + 7 + dir_len, ">", 2);
+	memcpy(sh->prompt + 7, cwd, cwd_len);
+	memcpy(sh->prompt + 7 + cwd_len, "> ", 3);
 
-	shell_clear();
 	memset(sh->buffer, 0, SHELL_MAX_SIZE);
-	sh->column = strlen(sh->prompt)+1;
 	sh->length = 0;
-	kernel_gfx_draw_text($process->current->gfx_window, 0, SHELL_POSITION, sh->prompt, term->text_color);
-	sh->column += 1;
+	__shell_show_line(sh);
 }
 
 void ifconfig()
@@ -578,7 +575,6 @@ void reset(int argc, char* argv[])
 		return;
 	}
 
-	kernel_gfx_draw_rectangle($process->current->gfx_window, 0,0, gfx_get_window_width(), gfx_get_window_height(), $process->current->term->bg_color);
 	$process->current->term->ops->reset($process->current->term);
 	reset_shell(sh);
 }
@@ -594,7 +590,6 @@ EXPORT_KSYMBOL(reset);
 static void shell_put(struct shell* sh, unsigned char c)
 {
 	unsigned char uc = c;
-	struct terminal* term = $process->current->term;
 
 	if(uc == ARROW_UP){
 		/* Only the characters: replaying the terminating 0 would end the command there (#67) */
@@ -607,12 +602,14 @@ static void shell_put(struct shell* sh, unsigned char c)
 
 	if(uc == newline){
 		memcpy(sh->previous, sh->buffer, strlen(sh->buffer)+1);
+
+		/* The line moves from the input line into the output, so what the command prints goes after it */
+		terminal_hide_input($process->current->term);
 		__shell_echo(sh->buffer);
 		
 		/* exec_cmd reports its own errors, like an unknown command */
 		exec_cmd(sh->buffer);
 		
-		terminal_commit();
 		reset_shell(sh);
 		return;
 	}
@@ -621,12 +618,10 @@ static void shell_put(struct shell* sh, unsigned char c)
 	{
 		if(sh->length < 1)
 			return;
-		sh->column -= 1;
-		kernel_gfx_draw_rectangle($process->current->gfx_window, sh->column*8, SHELL_POSITION, 8, 8, term->bg_color);
-		gfx_commit();
 		/* Clear the deleted character, the last one, not the 0 after it (#66) */
 		sh->length--;
 		sh->buffer[sh->length] = 0;
+		__shell_show_line(sh);
 		return;
 	}
 
@@ -634,14 +629,13 @@ static void shell_put(struct shell* sh, unsigned char c)
 	if(uc < 32 || uc > 126)
 		return;
 
-	if(sh->column == SHELL_MAX_SIZE)
+	/* Room for the terminating 0 */
+	if(sh->length == SHELL_MAX_SIZE - 1)
 		return;
 
-	kernel_gfx_draw_char($process->current->gfx_window, sh->column*8, SHELL_POSITION, uc, term->text_color);
-	gfx_commit();
 	sh->buffer[sh->length] = uc;
 	sh->length++;
-	sh->column++;
+	__shell_show_line(sh);
 }
 
 #include <gfx/api.h>
@@ -705,8 +699,10 @@ void __kthread_entry shell(int argc, char* argv[])
 		case GFX_EVENT_KEYBOARD:
 			switch (event.data){
 			case CTRLC:
+				/* As in bash and zsh, the line stays in the output with ^C after it, and a new prompt starts below */
+				terminal_hide_input(term);
+				twritef("%s%s^C\n", sh->prompt, sh->buffer);
 				reset_shell(sh);
-				gfx_commit();
 				break;
 			default:
 				shell_put(sh, event.data);
@@ -719,9 +715,8 @@ void __kthread_entry shell(int argc, char* argv[])
 			}
 			break;
 		case GFX_EVENT_RESOLUTION:
-			/* The input line's row comes from the window's new size */
+			/* The text and the input line are laid out again at the new size */
 			terminal_commit();
-			reset_shell(sh);
 			break;
 		case GFX_EVENT_EXIT:
 			/* The terminal is freed when the last thread using it exits, which may be a program this shell started */
