@@ -79,13 +79,21 @@ struct terminal {
     int input_length;
     bool_t input_shown;
 
-    /* Counts changes to the text, so a redraw can tell whether only the input line has changed since the last */
-    unsigned int text_version;
-    /* What the last full redraw drew: the text's version, the window's size, and the rows of its last line */
-    unsigned int drawn_version;
+    /**
+     * What's on screen, so a redraw draws only what's changed since (#118). The text is drawn up to drawn_end in the
+     * text buffer, and what's written next goes at column drawn_x of row drawn_y. drawn_input_end is the last row used,
+     * by the input line after the text or by the text. drawn_scrolled is set once the text's start is above the window.
+     */
+    bool_t drawn_valid;
+    int drawn_end;
+    int drawn_x;
+    int drawn_y;
+    int drawn_input_end;
+    bool_t drawn_scrolled;
     int drawn_width;
     int drawn_height;
-    int drawn_last_rows;
+    color_t drawn_text_color;
+    color_t drawn_bg_color;
 
     struct window* screen;
     struct terminal_ops* ops;
@@ -102,6 +110,7 @@ void terminal_release_window(struct terminal* term, struct pcb* pcb);
 void terminal_set_input(struct terminal* term, const char* prompt, const char* text);
 void terminal_hide_input(struct terminal* term);
 void terminal_end_line(struct terminal* term);
+void terminal_invalidate(struct terminal* term);
 
 int scan(ubyte_t* data, int size);
 

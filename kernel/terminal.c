@@ -69,6 +69,8 @@ static void __terminal_remove_line(struct terminal* term)
 	int skip = __next_newline(term->textbuffer);
 	memmove(term->textbuffer, &term->textbuffer[skip], term->head-skip);
 	term->head -= skip;
+	/* What's drawn moves with the text */
+	term->drawn_end -= skip;
 }
 
 static void __terminal_scroll(struct terminal* term)
@@ -147,7 +149,6 @@ static int __terminal_buffer_char(struct terminal* term, char c)
 	}
 
 	term->textbuffer[term->head++] = c;
-	term->text_version++;
 	return 0;
 }
 
@@ -263,9 +264,6 @@ struct terminal* terminal_create(terminal_flags_t flags)
 		term->bg_color = VGA_COLOR_BLUE;
 		term->text_color = VGA_COLOR_WHITE;
 	}
-
-	/* Nothing's drawn yet, so the first redraw is a full one */
-	term->drawn_version = term->text_version - 1;
 
 	/* The creator's reference, in place of the one it held on the terminal it had */
 	term->refs = 1;
@@ -522,7 +520,7 @@ static int __terminal_reset(struct terminal* term)
 	term->head = 0;
 	term->tail = 0;
 	term->lines = 0;
-	term->text_version++;
+	term->drawn_valid = false;
 
 	memset(term->textbuffer, 0, term->textbuffer_size);
 	terminal_unlock(term);
@@ -576,6 +574,8 @@ static void __terminal_trim(struct terminal* term, char c)
 			}
 			memmove(term->textbuffer, term->textbuffer + drop, term->head - drop);
 			term->head -= drop;
+			/* The cut line wraps from a new start, so what's on screen moves */
+			term->drawn_valid = false;
 		}
 	}
 }
@@ -637,10 +637,9 @@ static int __terminal_last_rows(struct terminal* term, int columns)
  * Lays out a graphics terminal's text and input line from their end, wrapping lines at columns, so that the end fills
  * the last of rows rows. A finished line takes at least a row.
  * @param skip set to the rows of the first line to draw that are above the window
- * @param shown set to the rows drawn: rows, or fewer when everything fits
  * @return where in the text buffer to start drawing
  */
-static int __terminal_first_shown(struct terminal* term, int columns, int rows, int* skip, int* shown)
+static int __terminal_first_shown(struct terminal* term, int columns, int rows, int* skip)
 {
 	char* text = term->textbuffer;
 	int start = __terminal_last_line(term);
@@ -657,17 +656,14 @@ static int __terminal_first_shown(struct terminal* term, int columns, int rows, 
 	}
 
 	*skip = total > rows ? total - rows : 0;
-	*shown = total > rows ? rows : total;
 	return start;
 }
 
-/* Draws length characters of text from column *x of row *y, wrapping at columns, and moves *x and *y past them. Rows
- * above the window aren't drawn */
-static void __terminal_draw_text(struct terminal* term, struct window* screen, const char* text, int length, int columns, int* x, int* y)
+/* Moves *x and *y, a column and row, past length characters of text, wrapping at columns, as drawing them would */
+static void __terminal_advance(const char* text, int length, int columns, int* x, int* y)
 {
 	for (int i = 0; i < length; i++){
-		char c = text[i];
-		if(c == '\n'){
+		if(text[i] == '\n'){
 			*x = 0;
 			(*y)++;
 			continue;
@@ -677,11 +673,169 @@ static void __terminal_draw_text(struct terminal* term, struct window* screen, c
 			*x = 0;
 			(*y)++;
 		}
+		(*x)++;
+	}
+}
+
+/* Clears count rows of text from row, the first from column x on. Rows outside the window's rows are left alone */
+static void __terminal_clear_rows(struct terminal* term, struct window* screen, int x, int row, int count, int rows)
+{
+	for (int r = row; r < row + count; r++){
+		if(r < 0 || r >= rows) continue;
+
+		int left = r == row && x > 0 ? 1 + x*8 : 0;
+		if(left < screen->inner_width){
+			kernel_gfx_draw_rectangle(screen, left, 2 + r*8, screen->inner_width - left, 8, term->bg_color);
+		}
+	}
+}
+
+/* Moves the window's text up by count of its rows, and clears the rows that come free at the bottom */
+static void __terminal_scroll_window(struct terminal* term, struct window* screen, int rows, int count)
+{
+	term->drawn_scrolled = true;
+	term->drawn_y -= count;
+	if(count > rows) count = rows;
+
+	spin_lock(&screen->buffer_lock);
+	/* Only if the window still has the size the rows were counted at: the window server may have just resized it,
+	 * and then it sends an event that redraws it all */
+	if(2 + rows*8 <= screen->inner_height){
+		int bytes = screen->inner_width * (vbe_info->bpp/8);
+		for (int y = 2; y < 2 + (rows - count)*8; y++){
+			memcpy(screen->inner + y*screen->pitch, screen->inner + (y + count*8)*screen->pitch, bytes);
+		}
+	}
+	spin_unlock(&screen->buffer_lock);
+
+	__terminal_clear_rows(term, screen, 0, rows - count, count, rows);
+}
+
+/**
+ * Draws length characters of text from column *x of row *y, wrapping at columns, and moves *x and *y past them. Rows
+ * above the window aren't drawn. A row below the window's last, with a character on it or ended by a newline, even an
+ * empty one, scrolls the window up first.
+ */
+static void __terminal_draw_text(struct terminal* term, struct window* screen, const char* text, int length, int columns, int rows, int* x, int* y)
+{
+	for (int i = 0; i < length; i++){
+		char c = text[i];
+		if(c != '\n' && *x == columns){
+			*x = 0;
+			(*y)++;
+		}
+		if(*y >= rows){
+			__terminal_scroll_window(term, screen, rows, *y - rows + 1);
+			*y = rows - 1;
+		}
+
+		if(c == '\n'){
+			*x = 0;
+			(*y)++;
+			continue;
+		}
 		if(*y >= 0){
 			kernel_gfx_draw_char(screen, 1 + *x*8, 2 + *y*8, c, __terminal_syntax_color(term, c));
 		}
 		(*x)++;
 	}
+}
+
+/**
+ * The last row with anything on it, for text that ends at column x of row y. A row the text has only just moved to is
+ * empty, unless there's an input line, which takes a row even when it's empty: the row typing goes on.
+ */
+static int __terminal_last_used_row(struct terminal* term, int x, int y)
+{
+	return x == 0 && !term->input_shown ? y - 1 : y;
+}
+
+/* Draws the input line where the text ends, and notes the last row used */
+static void __terminal_draw_input(struct terminal* term, struct window* screen, int columns, int rows)
+{
+	int x = term->drawn_x;
+	int y = term->drawn_y;
+	if(term->input_shown){
+		if(y >= rows){
+			__terminal_scroll_window(term, screen, rows, y - rows + 1);
+			y = rows - 1;
+		}
+		__terminal_draw_text(term, screen, term->input, term->input_length, columns, rows, &x, &y);
+	}
+	term->drawn_input_end = __terminal_last_used_row(term, x, y);
+}
+
+/* Draws the whole window: as much of the end of the text as fits, and the input line after it */
+static void __terminal_draw_all(struct terminal* term, struct window* screen)
+{
+	/* Lay out the text and input line at the window's size now, so they fit however the window has changed */
+	int columns = __terminal_columns(screen);
+	int rows = __terminal_rows(screen);
+	int skip;
+	int start = __terminal_first_shown(term, columns, rows, &skip);
+
+	kernel_gfx_draw_rectangle(screen, 0, 0, screen->inner_width, screen->inner_height, term->bg_color);
+
+	/* Rows above the window, the first line's first skip rows, aren't drawn. The input line continues the text */
+	int x = 0, y = -skip;
+	__terminal_draw_text(term, screen, term->textbuffer + start, term->head - start, columns, rows, &x, &y);
+	term->drawn_end = term->head;
+	term->drawn_x = x;
+	term->drawn_y = y;
+	term->drawn_scrolled = start > 0 || skip > 0;
+	__terminal_draw_input(term, screen, columns, rows);
+
+	/* When the input line is longer than the window, the text's end is above it, and only a full draw will do */
+	term->drawn_valid = term->drawn_y >= 0;
+	term->drawn_width = screen->inner_width;
+	term->drawn_height = screen->inner_height;
+	term->drawn_text_color = term->text_color;
+	term->drawn_bg_color = term->bg_color;
+}
+
+/**
+ * Draws only what's changed since the window was last drawn: text added to the end, and the input line. The text added
+ * goes where the input line was, scrolling the window when it reaches the bottom, and the input line follows it. So a
+ * line written costs about the line, where a full draw costs the window (#118), and a key typed costs its row.
+ * @return -1, having drawn nothing, when only a full draw will do: nothing's drawn yet, the window's size or the
+ * colors changed, text was taken away rather than added, or the input line ends higher than it did once the text has
+ * scrolled, which moves everything down
+ */
+static int __terminal_draw_changes(struct terminal* term, struct window* screen)
+{
+	if(!term->drawn_valid || term->drawn_width != screen->inner_width || term->drawn_height != screen->inner_height
+		|| term->drawn_text_color != term->text_color || term->drawn_bg_color != term->bg_color){
+		return -1;
+	}
+	if(term->drawn_end < 0 || term->drawn_end > term->head){
+		return -1;
+	}
+
+	int columns = __terminal_columns(screen);
+	int rows = __terminal_rows(screen);
+
+	if(term->drawn_scrolled){
+		int x = term->drawn_x, y = term->drawn_y;
+		__terminal_advance(term->textbuffer + term->drawn_end, term->head - term->drawn_end, columns, &x, &y);
+		if(term->input_shown){
+			__terminal_advance(term->input, term->input_length, columns, &x, &y);
+		}
+		if(__terminal_last_used_row(term, x, y) < term->drawn_input_end){
+			return -1;
+		}
+	}
+
+	/* Take away the input line, add the text, and draw the input line after it */
+	__terminal_clear_rows(term, screen, term->drawn_x, term->drawn_y, term->drawn_input_end - term->drawn_y + 1, rows);
+
+	int x = term->drawn_x, y = term->drawn_y;
+	__terminal_draw_text(term, screen, term->textbuffer + term->drawn_end, term->head - term->drawn_end, columns, rows, &x, &y);
+	term->drawn_end = term->head;
+	term->drawn_x = x;
+	term->drawn_y = y;
+	__terminal_draw_input(term, screen, columns, rows);
+
+	return 0;
 }
 
 static int __terminal_putchar_graphics(struct terminal* term, char c)
@@ -849,60 +1003,13 @@ static int __terminal_commit_graphics(struct terminal* term)
 		return -1;
 	}
 
-	/* Lay out the text and input line at the window's size now, so they fit however the window has changed */
-	int columns = __terminal_columns(screen);
-	int rows = __terminal_rows(screen);
-	int skip, shown;
-	int start = __terminal_first_shown(term, columns, rows, &skip, &shown);
-
-	kernel_gfx_draw_rectangle(screen, 0, 0, screen->inner_width, screen->inner_height, term->bg_color);
-
-	/* Rows above the window, the first line's first skip rows, aren't drawn. The input line continues the text */
-	int x = 0, y = -skip;
-	__terminal_draw_text(term, screen, term->textbuffer + start, term->head - start, columns, &x, &y);
-	if(term->input_shown){
-		__terminal_draw_text(term, screen, term->input, term->input_length, columns, &x, &y);
+	if(__terminal_draw_changes(term, screen) < 0){
+		__terminal_draw_all(term, screen);
 	}
-
-	term->drawn_version = term->text_version;
-	term->drawn_width = screen->inner_width;
-	term->drawn_height = screen->inner_height;
-	term->drawn_last_rows = __terminal_last_rows(term, columns);
 	screen->changed = 1;
 	terminal_unlock(term);
 
 	return 0;
-}
-
-/**
- * Redraws a graphics terminal after a change to its input line alone. When the text, the window and the rows the last
- * line takes are as they were at the last full redraw, only the last line's rows change, so only they're drawn: a key
- * typed in a full window costs a row, not the window. Otherwise it's a full redraw.
- */
-static void __terminal_redraw_input(struct terminal* term)
-{
-	struct window* screen = term->screen;
-	if(screen == NULL) return;
-
-	int columns = __terminal_columns(screen);
-	int rows = __terminal_rows(screen);
-	int last_rows = __terminal_last_rows(term, columns);
-	if(term->drawn_version != term->text_version || term->drawn_width != screen->inner_width
-		|| term->drawn_height != screen->inner_height || term->drawn_last_rows != last_rows || last_rows > rows){
-		__terminal_commit_graphics(term);
-		return;
-	}
-
-	/* The last line is at the bottom of what's drawn */
-	int skip, shown;
-	__terminal_first_shown(term, columns, rows, &skip, &shown);
-	int x = 0, y = shown - last_rows;
-	kernel_gfx_draw_rectangle(screen, 0, 2 + y*8, screen->inner_width, last_rows*8, term->bg_color);
-
-	int line = __terminal_last_line(term);
-	__terminal_draw_text(term, screen, term->textbuffer + line, term->head - line, columns, &x, &y);
-	__terminal_draw_text(term, screen, term->input, term->input_length, columns, &x, &y);
-	screen->changed = 1;
 }
 
 /**
@@ -942,8 +1049,18 @@ void terminal_set_input(struct terminal* term, const char* prompt, const char* t
 	term->input_shown = true;
 
 	if(term->ops->commit == __terminal_commit_graphics){
-		__terminal_redraw_input(term);
+		__terminal_commit_graphics(term);
 	}
+	terminal_unlock(term);
+}
+
+/* Makes the terminal's next redraw a full one: after something else may have drawn into its window */
+void terminal_invalidate(struct terminal* term)
+{
+	if(term == NULL) return;
+
+	terminal_lock(term);
+	term->drawn_valid = false;
 	terminal_unlock(term);
 }
 
