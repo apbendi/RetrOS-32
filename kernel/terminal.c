@@ -33,30 +33,21 @@ int scan(ubyte_t* data, int size)
 	return $process->current->term->ops->scan($process->current->term, data, size);
 }
 
-void terminal_set_color(color_t color)
+/* The color a graphics terminal draws a character in: some characters are highlighted. It depends only on the
+ * terminal and the character, so text drawn in pieces looks the same as text drawn all at once */
+static color_t __terminal_syntax_color(struct terminal* term, unsigned char c)
 {
-	$process->current->term->text_color = color;
-}
-
-static void __terminal_syntax(unsigned char c)
-{
-	/* Set different colors for different syntax elements */
 	switch (c) {
 		case '>':
 		case '/':
 		case '\\':
-			/* Highlight preprocessor directives */
-			terminal_set_color(COLOR_VGA_MISC);
-			break;
+			return COLOR_VGA_MISC;
 		case '"':
 		case ':':
 		case '-':
-			/* Highlight string literals and character literals */
-			terminal_set_color(COLOR_VGA_GREEN);
-			break;
+			return COLOR_VGA_GREEN;
 		default:
-			terminal_set_color($process->current->term->org_text_color);
-			break;
+			return term->text_color;
 	}
 }
 
@@ -248,7 +239,6 @@ struct terminal* terminal_create(terminal_flags_t flags)
 	term->tail = 0;
 	term->lines = 0;
 	term->text_color =  0x1c;
-	term->org_text_color = term->text_color;
 	term->bg_color = COLOR_BLACK;
 	term->screen = NULL;
 
@@ -260,7 +250,6 @@ struct terminal* terminal_create(terminal_flags_t flags)
 	char* text_color = kernel_config_get_value("terminal", "text");
 	if(text_color != NULL){
 		term->text_color = htoi(text_color);
-		term->org_text_color = term->text_color;
 	}
 
 	if(HAS_FLAG(flags, TERMINAL_TEXT_MODE)){
@@ -627,8 +616,7 @@ static int __terminal_commit_graphics(struct terminal* term)
 			continue;
 		}
 
-		__terminal_syntax(term->textbuffer[i]);
-		kernel_gfx_draw_char(term->screen, 1 + x*8, 2+ y*8, term->textbuffer[i], term->text_color);
+		kernel_gfx_draw_char(term->screen, 1 + x*8, 2+ y*8, term->textbuffer[i], __terminal_syntax_color(term, term->textbuffer[i]));
 		x++;
 	}
 
