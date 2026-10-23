@@ -46,31 +46,51 @@
 
 #define SHELL_HEIGHT 225 /* 275 */
 #define SHELL_WIDTH 400 /* 300 */
-#define SHELL_POSITION shell_height-8
+/* The input line's row: the bottom of the calling shell's window */
+#define SHELL_POSITION (gfx_get_window_height()-8)
 #define SHELL_MAX_SIZE SHELL_WIDTH/2
 
 void __kthread_entry shell(int argc, char* argv[]);
-
-/* TODO: Move this into a shell struct */
-static uint16_t shell_width = SHELL_WIDTH;
-static uint16_t shell_height = SHELL_HEIGHT;
-static uint8_t shell_column = 0;
-static char previous_shell_buffer[SHELL_MAX_SIZE];
-static char shell_buffer[SHELL_MAX_SIZE];
-static uint8_t shell_buffer_length = 0;
 
 static const char newline = '\n';
 static const char backspace = '\b';
 
 /* The most of the current directory the GUI shell's prompt shows, so a deep directory leaves room to type */
 #define SHELL_PROMPT_DIR_MAX 20
-static char shell_prompt[SHELL_PROMPT_DIR_MAX + 16];
+
+/**
+ * A GUI shell's state. Each Terminal window runs its own shell thread with its own, which the thread's PCB points to,
+ * so commands that run on the thread, like reset, can find it (#42).
+ */
+struct shell {
+	uint8_t column;
+	char buffer[SHELL_MAX_SIZE];
+	uint8_t length;
+	/* The last command run, which Up brings back */
+	char previous[SHELL_MAX_SIZE];
+	char prompt[SHELL_PROMPT_DIR_MAX + 16];
+	/* Set by the exit command: the shell exits once the line has run */
+	bool_t exiting;
+};
+
+static void __shell_free(void* sh)
+{
+	kfree(sh);
+}
+
+/* The calling thread's shell, or NULL when it isn't a GUI shell, e.g. a program running a command with system */
+static struct shell* __shell_current()
+{
+	if($process->current->local_free != __shell_free) return NULL;
+	return (struct shell*) $process->current->local;
+}
+
 static char* about_text = "\nRetrOS-32 - 32bit Operating System\n    " KERNEL_RELEASE " " KERNEL_VERSION " - " KERNEL_DATE "\n";
 
 /*
  *	IMPLEMENTATIONS
  */
-void shell_clear()
+static void shell_clear()
 {
 	//struct gfx_theme* theme = kernel_gfx_current_theme();
 	kernel_gfx_draw_rectangle($process->current->gfx_window, 0, SHELL_POSITION, gfx_get_window_width(), 8, $process->current->term->bg_color);
@@ -102,7 +122,7 @@ static void __shell_echo(const char* line)
 	twritef("kernel:%s> %s\n", cwd, line);
 }
 
-void reset_shell()
+static void reset_shell(struct shell* sh)
 {
 	struct terminal* term = $process->current->term;
 
@@ -110,16 +130,16 @@ void reset_shell()
 	char dir[SHELL_PROMPT_DIR_MAX + 1];
 	__shell_cwd(dir, SHELL_PROMPT_DIR_MAX);
 	int dir_len = strlen(dir);
-	memcpy(shell_prompt, "kernel:", 7);
-	memcpy(shell_prompt + 7, dir, dir_len);
-	memcpy(shell_prompt + 7 + dir_len, ">", 2);
+	memcpy(sh->prompt, "kernel:", 7);
+	memcpy(sh->prompt + 7, dir, dir_len);
+	memcpy(sh->prompt + 7 + dir_len, ">", 2);
 
 	shell_clear();
-	memset(&shell_buffer, 0, SHELL_MAX_SIZE);
-	shell_column = strlen(shell_prompt)+1;
-	shell_buffer_length = 0;
-	kernel_gfx_draw_text($process->current->gfx_window, 0, SHELL_POSITION, shell_prompt, term->text_color);
-	shell_column += 1;
+	memset(sh->buffer, 0, SHELL_MAX_SIZE);
+	sh->column = strlen(sh->prompt)+1;
+	sh->length = 0;
+	kernel_gfx_draw_text($process->current->gfx_window, 0, SHELL_POSITION, sh->prompt, term->text_color);
+	sh->column += 1;
 }
 
 void ifconfig()
@@ -514,6 +534,13 @@ EXPORT_KSYMBOL(bg);
 void exit()
 {
 	twritef("Shell exited.\n");
+
+	/* A shell exits once the line has run. Exiting here would never return to exec_cmd, which frees the line's words */
+	struct shell* sh = __shell_current();
+	if(sh != NULL){
+		sh->exiting = true;
+		return;
+	}
 	kernel_exit();
 }
 EXPORT_KSYMBOL(exit);
@@ -544,9 +571,16 @@ EXPORT_KSYMBOL(socks);
 
 void reset(int argc, char* argv[])
 {
+	/* Only a shell has its own window to clear, and a line to start again */
+	struct shell* sh = __shell_current();
+	if(sh == NULL || $process->current->term == NULL){
+		twritef("reset: only works in a Terminal window\n");
+		return;
+	}
+
 	kernel_gfx_draw_rectangle($process->current->gfx_window, 0,0, gfx_get_window_width(), gfx_get_window_height(), $process->current->term->bg_color);
 	$process->current->term->ops->reset($process->current->term);
-	reset_shell();
+	reset_shell(sh);
 }
 EXPORT_KSYMBOL(reset);
 
@@ -557,42 +591,42 @@ EXPORT_KSYMBOL(reset);
  * 
  * @param c character to put to screen.
  */
-void shell_put(unsigned char c)
+static void shell_put(struct shell* sh, unsigned char c)
 {
 	unsigned char uc = c;
 	struct terminal* term = $process->current->term;
 
 	if(uc == ARROW_UP){
 		/* Only the characters: replaying the terminating 0 would end the command there (#67) */
-		int len = strlen(previous_shell_buffer);
+		int len = strlen(sh->previous);
 		for (int i = 0; i < len; i++){
-			shell_put(previous_shell_buffer[i]);
+			shell_put(sh, sh->previous[i]);
 		}
 		return;
 	}
 
 	if(uc == newline){
-		memcpy(previous_shell_buffer, shell_buffer, strlen(shell_buffer)+1);
-		__shell_echo(shell_buffer);
+		memcpy(sh->previous, sh->buffer, strlen(sh->buffer)+1);
+		__shell_echo(sh->buffer);
 		
 		/* exec_cmd reports its own errors, like an unknown command */
-		exec_cmd(shell_buffer);
+		exec_cmd(sh->buffer);
 		
 		terminal_commit();
-		reset_shell();
+		reset_shell(sh);
 		return;
 	}
 
 	if(uc == backspace)
 	{
-		if(shell_buffer_length < 1)
+		if(sh->length < 1)
 			return;
-		shell_column -= 1;
-		kernel_gfx_draw_rectangle($process->current->gfx_window, shell_column*8, SHELL_POSITION, 8, 8, term->bg_color);
+		sh->column -= 1;
+		kernel_gfx_draw_rectangle($process->current->gfx_window, sh->column*8, SHELL_POSITION, 8, 8, term->bg_color);
 		gfx_commit();
 		/* Clear the deleted character, the last one, not the 0 after it (#66) */
-		shell_buffer_length--;
-		shell_buffer[shell_buffer_length] = 0;
+		sh->length--;
+		sh->buffer[sh->length] = 0;
 		return;
 	}
 
@@ -600,14 +634,14 @@ void shell_put(unsigned char c)
 	if(uc < 32 || uc > 126)
 		return;
 
-	if(shell_column == SHELL_MAX_SIZE)
+	if(sh->column == SHELL_MAX_SIZE)
 		return;
 
-	kernel_gfx_draw_char($process->current->gfx_window, shell_column*8, SHELL_POSITION, uc, term->text_color);
+	kernel_gfx_draw_char($process->current->gfx_window, sh->column*8, SHELL_POSITION, uc, term->text_color);
 	gfx_commit();
-	shell_buffer[shell_buffer_length] = uc;
-	shell_buffer_length++;
-	shell_column++;
+	sh->buffer[sh->length] = uc;
+	sh->length++;
+	sh->column++;
 }
 
 #include <gfx/api.h>
@@ -641,6 +675,11 @@ void __kthread_entry shell(int argc, char* argv[])
 	struct terminal* term = terminal_create(TERMINAL_GRAPHICS_MODE);
 	term->ops->attach(term);
 
+	/* Freed when the thread exits: closing the window, the exit command, or being killed */
+	struct shell* sh = create(struct shell);
+	$process->current->local = sh;
+	$process->current->local_free = __shell_free;
+
 	kernel_gfx_draw_rectangle($process->current->gfx_window, 0,0, gfx_get_window_width(), gfx_get_window_height(), term->bg_color);
 	struct mem_info minfo;
     get_mem_info(&minfo);
@@ -654,7 +693,7 @@ void __kthread_entry shell(int argc, char* argv[])
 	twritef("Type 'help' for a list of commands\n");
 	terminal_commit();
 
-	reset_shell();
+	reset_shell(sh);
 
 	dbgprintf("shell: entering event loop\n");
 	while(1)
@@ -666,21 +705,23 @@ void __kthread_entry shell(int argc, char* argv[])
 		case GFX_EVENT_KEYBOARD:
 			switch (event.data){
 			case CTRLC:
-				reset_shell();
+				reset_shell(sh);
 				gfx_commit();
 				break;
 			default:
-				shell_put(event.data);
+				shell_put(sh, event.data);
 				c_test++;
 				gfx_commit();
+				if(sh->exiting){
+					kernel_exit();
+				}
 				break;
 			}
 			break;
 		case GFX_EVENT_RESOLUTION:
-			shell_height  = event.data2;
-			shell_width = event.data;
+			/* The input line's row comes from the window's new size */
 			terminal_commit();
-			reset_shell();
+			reset_shell(sh);
 			break;
 		case GFX_EVENT_EXIT:
 			/* The terminal is freed when the last thread using it exits, which may be a program this shell started */
