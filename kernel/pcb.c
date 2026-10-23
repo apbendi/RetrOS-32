@@ -377,9 +377,7 @@ int pcb_cleanup_routine(void* arg)
 	/* Its terminal stops drawing into its window, which goes now, and loses its reference. A program started from a
 	 * shell may still be writing to the shell's terminal (#55) */
 	if(pcb->term != NULL){
-		if(pcb->term->screen == pcb->gfx_window){
-			pcb->term->screen = NULL;
-		}
+		terminal_release_window(pcb->term, pcb);
 		terminal_put(pcb->term);
 		pcb->term = NULL;
 	}

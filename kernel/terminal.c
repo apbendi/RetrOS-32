@@ -127,8 +127,13 @@ static void __terminal_copy_to_serial(struct terminal* term, char c)
  * Otherwise it would reach the log only with whatever's written next, under that writer's name. */
 void terminal_flush_serial(struct terminal* term)
 {
-	if(term == NULL || term->serial_line_length == 0) return;
-	__terminal_copy_to_serial(term, '\n');
+	if(term == NULL) return;
+
+	terminal_lock(term);
+	if(term->serial_line_length > 0){
+		__terminal_copy_to_serial(term, '\n');
+	}
+	terminal_unlock(term);
 }
 
 static int __terminal_store_char(struct terminal* term, char c)
@@ -290,6 +295,56 @@ void terminal_put(struct terminal* term)
 	kfree(term);
 }
 
+/**
+ * Locks a terminal while its text changes or it's drawn. A shell's terminal is written by the shell's thread and by
+ * any program it started, which prints from its own thread, and storing a character can move the text buffer.
+ * The thread holding it can take it again, since the ops call each other (writef calls write, which calls putchar,
+ * which may commit). Taken before a window's buffer_lock, never after. Not inside ENTER_CRITICAL, since spin_lock
+ * waits by yielding.
+ */
+void terminal_lock(struct terminal* term)
+{
+	/* Only the holder sets the owner to itself, so this can't be another thread's lock */
+	if(term->lock_owner == $process->current){
+		term->lock_depth++;
+		return;
+	}
+
+	spin_lock(&term->lock);
+	term->lock_owner = $process->current;
+	term->lock_depth = 1;
+}
+
+void terminal_unlock(struct terminal* term)
+{
+	if(--term->lock_depth > 0) return;
+
+	term->lock_owner = NULL;
+	spin_unlock(&term->lock);
+}
+
+/**
+ * Called as pcb exits, before its window goes. The terminal stops drawing into the window, and if pcb was killed
+ * while it held the terminal's lock, the lock is released. Once this has the lock, no commit is drawing into the
+ * window.
+ */
+void terminal_release_window(struct terminal* term, struct pcb* pcb)
+{
+	if(term == NULL) return;
+
+	if(term->lock_owner == pcb){
+		term->lock_owner = NULL;
+		term->lock_depth = 0;
+		spin_unlock(&term->lock);
+	}
+
+	terminal_lock(term);
+	if(term->screen != NULL && term->screen == pcb->gfx_window){
+		term->screen = NULL;
+	}
+	terminal_unlock(term);
+}
+
 /* Terminal operations implementations */
 
 static int __terminal_set_ops(struct terminal* term, struct terminal_ops* ops)
@@ -366,17 +421,21 @@ static int __terminal_scan_textmode(struct terminal* term, ubyte_t* data, int si
 			data[i] = 0;
 			i--;
 			if(i < 0) i = 0;
+			terminal_lock(term);
 			term->head--;
 			term->textbuffer[term->head] = 0;
 			term->ops->commit(term);
+			terminal_unlock(term);
 			continue;
 		}
 
 		data[i] = c;
 		i++;
 
+		terminal_lock(term);
 		term->ops->putchar(term, c);
 		term->ops->commit(term);
+		terminal_unlock(term);
 	}
 
 	data[i] = '\0';
@@ -406,17 +465,21 @@ static int __terminal_scan_graphics(struct terminal* term, ubyte_t* data, int si
 						data[i] = 0;
 						i--;
 						if(i < 0) i = 0;
+						terminal_lock(term);
 						term->head--;
 						term->textbuffer[term->head] = 0;
 						term->ops->commit(term);
+						terminal_unlock(term);
 						break;
 					}
 
 					data[i] = c;
 					i++;
 
+					terminal_lock(term);
 					term->ops->putchar(term, c);
 					term->ops->commit(term);
+					terminal_unlock(term);
 				}
 				break;
 			}
@@ -443,11 +506,13 @@ static int __terminal_reset(struct terminal* term)
 {
 	if(term == NULL) return -1;
 
+	terminal_lock(term);
 	term->head = 0;
 	term->tail = 0;
 	term->lines = 0;
 
 	memset(term->textbuffer, 0, term->textbuffer_size);
+	terminal_unlock(term);
 
 	return 0;
 }
@@ -455,7 +520,6 @@ static int __terminal_reset(struct terminal* term)
 /* Moves a graphics terminal to the next line, scrolling when the window is full */
 static void __terminal_newline_graphics(struct terminal* term)
 {
-	/* Read once: the window's owner may close it meanwhile, which sets screen to NULL */
 	struct window* screen = term->screen;
 
 	/* Once its window has closed, the terminal's text only goes to the log, so it keeps no more lines than it had */
@@ -479,6 +543,7 @@ static int __terminal_putchar_graphics(struct terminal* term, char c)
 {
 	if(term == NULL) return -1;
 
+	terminal_lock(term);
 	if(c == '\n'){
 		__terminal_newline_graphics(term);
 
@@ -488,6 +553,7 @@ static int __terminal_putchar_graphics(struct terminal* term, char c)
 		}
 	}
 	if(__terminal_store_char(term, c) < 0){
+		terminal_unlock(term);
 		return -1;
 	}
 
@@ -496,6 +562,7 @@ static int __terminal_putchar_graphics(struct terminal* term, char c)
 	} else {
 		gfx_commit();
 	}
+	terminal_unlock(term);
 
 	return 1;
 }
@@ -512,10 +579,14 @@ int terminal_write(const char* data, int size)
 	if($process->current == NULL || $process->current->term == NULL) return size;
 
 	struct terminal* term = $process->current->term;
+
+	/* One write's text stays together, whoever else writes to the terminal */
+	terminal_lock(term);
 	if(term->ops->putchar != __terminal_putchar_graphics || term->screen == NULL){
 		for (int i = 0; i < size; i++){
 			term->ops->putchar(term, data[i]);
 		}
+		terminal_unlock(term);
 		return size;
 	}
 
@@ -530,6 +601,7 @@ int terminal_write(const char* data, int size)
 	} else {
 		gfx_commit();
 	}
+	terminal_unlock(term);
 	return size;
 }
 
@@ -537,6 +609,7 @@ static int __terminal_putchar_textmode(struct terminal* term, char c)
 {
 	if(term == NULL) return -1;
 
+	terminal_lock(term);
 	if(c == '\n'){
 		if(SCREEN_HEIGHT-2 <= term->lines){
 			__terminal_scroll(term);
@@ -545,11 +618,10 @@ static int __terminal_putchar_textmode(struct terminal* term, char c)
 		}
 	}
 
-	if(__terminal_store_char(term, c) < 0){
-		return -1;
-	}
+	int ret = __terminal_store_char(term, c);
+	terminal_unlock(term);
 
-	return 1;
+	return ret < 0 ? -1 : 1;
 }
 
 
@@ -557,9 +629,11 @@ static int __terminal_write(struct terminal* term, const char* data, int size)
 {
 	if(term == NULL) return -1;
 
+	terminal_lock(term);
 	for (int i = 0; i < size; i++){
 		term->ops->putchar(term, data[i]);
 	}
+	terminal_unlock(term);
 
 	return size;
 }
@@ -599,6 +673,7 @@ static int __terminal_commit_textmode(struct terminal* term)
 {
 	if(term == NULL) return -1;
 
+	terminal_lock(term);
 	/* Clear screen */
 	for (int i = 1; i < SCREEN_HEIGHT-1; i++){
 		for (int j = 1; j < SCREEN_WIDTH-2; j++){
@@ -617,6 +692,7 @@ static int __terminal_commit_textmode(struct terminal* term)
 		scrput(1+x, y, term->textbuffer[i], term->text_color | term->bg_color << 4);
 		x++;
 	}
+	terminal_unlock(term);
 
 	return 0;
 }
@@ -625,9 +701,12 @@ static int __terminal_commit_graphics(struct terminal* term)
 {
 	if(term == NULL) return -1;
 
-	/* Read once: the window's owner may close it meanwhile, which sets screen to NULL */
+	terminal_lock(term);
 	struct window* screen = term->screen;
-	if(screen == NULL) return -1;
+	if(screen == NULL){
+		terminal_unlock(term);
+		return -1;
+	}
 
 	/* Currently unsed */
 	//struct gfx_theme* theme = kernel_gfx_current_theme();
@@ -646,6 +725,7 @@ static int __terminal_commit_graphics(struct terminal* term)
 	}
 
 	screen->changed = 1;
+	terminal_unlock(term);
 
 	return 0;
 }
@@ -664,6 +744,8 @@ static int __terminal_writef(struct terminal* term, char* fmt, ...)
 
 	va_start(args, fmt);
 
+	/* One call's text stays together, whoever else writes to the terminal */
+	terminal_lock(term);
 	while (*fmt != '\0') {
 		switch (*fmt){
 			case '%':
@@ -747,6 +829,9 @@ static int __terminal_writef(struct terminal* term, char* fmt, ...)
 			}
         fmt++;
     }
+	terminal_unlock(term);
+
+	va_end(args);
 	written += x_offset;
 	return written;
 }
