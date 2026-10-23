@@ -50,6 +50,10 @@ struct terminal_ops {
     unsigned char (*getchar)(struct terminal* term);
 };
 
+/* A terminal's reader when there's none, and while its shell is starting a program that may become it */
+#define TERMINAL_NO_READER -1
+#define TERMINAL_READER_STARTING -2
+
 /* Longest line copied to the serial log in one piece; longer lines are split */
 #define TERMINAL_SERIAL_LINE_SIZE 128
 
@@ -72,6 +76,9 @@ struct terminal {
     spinlock_t lock;
     struct pcb* lock_owner;
     int lock_depth;
+
+    /* The program that may read lines typed at the terminal: see terminal_read */
+    int reader;
 
     /* The line being typed, drawn after the text: see terminal_set_input. input_shown is false when there's none */
     char* input;
@@ -116,6 +123,7 @@ int scan(ubyte_t* data, int size);
 
 void twrite(const char* data);
 int terminal_write(const char* data, int size);
+int terminal_read(char* data, int size);
 void terminal_flush_serial(struct terminal* term);
 void terminal_putchar(char c);
 

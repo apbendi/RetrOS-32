@@ -5,6 +5,7 @@
 #include <limits.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <sys/stat.h>
 #include "fd.h"
 
@@ -19,7 +20,11 @@ static int __bad_fd(int fd)
 
 ssize_t read(int fd, void* buf, size_t count)
 {
-	if(fd == FD_STDIN) return 0;
+	if(fd == FD_STDIN){
+		/* A line typed at the terminal. What's printed without a newline, like a question, shows first, as in glibc */
+		fflush(stdout);
+		return __retros_ret(__retros_syscall(SYSCALL_TERM_READ, (int)buf, (int)count, 0));
+	}
 	if(fd == FD_STDOUT || fd == FD_STDERR){
 		errno = EBADF;
 		return -1;

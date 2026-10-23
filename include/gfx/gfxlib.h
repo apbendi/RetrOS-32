@@ -16,6 +16,7 @@ enum GFX_LINE_ATTRIBUTES {
 
 int gfx_event_loop(struct gfx_event* event, gfx_event_flag_t flags);
 int gfx_push_event(struct window* w, struct gfx_event* e);
+int gfx_window_get_event(struct window* w, struct gfx_event* event);
 
 int gfx_put_icon32(unsigned char icon[], int x, int y);
 int gfx_put_icon16(unsigned char icon[], int x, int y);

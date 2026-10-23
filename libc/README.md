@@ -41,7 +41,7 @@ The tree is otherwise unmodified. RetrOS's own code goes next to it, in `libc/`.
   - `syscall_arch.h`: musl's Linux system calls go to `src/linux.c`, and any it doesn't do returns `ENOSYS`.
 - **The kernel's headers** give system call numbers, error codes and file flags: `syscall_helper.h`, `errors.h` (with `ERRORS_CODES_ONLY`) and `fs/fs_types.h`.
 
-**Descriptors 0 to 2** aren't RetrOS file descriptors, which start at 3. `stdout` and `stderr` write to the terminal in one system call each; `stdin` is always at its end, since programs can't read the terminal yet (#113). The terminal counts as a tty, so `stdout` is line-buffered.
+**Descriptors 0 to 2** aren't RetrOS file descriptors, which start at 3. `stdout` and `stderr` write to the terminal in one system call each. `stdin` reads a line typed at the terminal per system call, `SYSCALL_TERM_READ`, after flushing `stdout`, so a question printed without a newline shows first. Ctrl+D on an empty line, or Ctrl+C, is end of input. So is reading in a program its shell isn't waiting for, like one started with `exec -d`, since the shell is taking the keys. The terminal counts as a tty, so `stdout` is line-buffered.
 
 **stdio** is all of musl's, `scanf` included, except `popen` and `pclose` (RetrOS can't start a process that way) and the temporary files (`tmpfile`, `tmpnam`, `tempnam`).
 

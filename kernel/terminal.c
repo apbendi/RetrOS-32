@@ -22,6 +22,7 @@
 #include <memory.h>
 #include <serial.h>
 #include <vbe.h>
+#include <scheduler.h>
 
 #define MAX_FMT_STR_SIZE 50
 #define TERMINAL_TEXTBUFFER_INITIAL_CAPACITY 1024
@@ -249,6 +250,7 @@ struct terminal* terminal_create(terminal_flags_t flags)
 	term->text_color =  0x1c;
 	term->bg_color = COLOR_BLACK;
 	term->screen = NULL;
+	term->reader = TERMINAL_NO_READER;
 
 	char* bg_color = kernel_config_get_value("terminal", "background");
 	if(bg_color != NULL){
@@ -409,102 +411,145 @@ static unsigned char __terminal_getchar_textmode(struct terminal* term)
 }
 
 
+/**
+ * Reads a line typed at a terminal, as scan does for both modes: printable characters and backspace, ended by Enter.
+ * The line joins the terminal's text, so it's shown and logged as what the reader wrote.
+ * @return the line's length, with its '\n', followed by a 0 if there's room; 0 at end of input, Ctrl+D on an empty
+ * line; or -1 for Ctrl+C, which throws the line away
+ */
 static int __terminal_scan_textmode(struct terminal* term, ubyte_t* data, int size)
 {
-	if(term == NULL || data == NULL) return -1;
+	if(term == NULL || data == NULL || size < 1) return -1;
 
-	int i = 0;
-	ubyte_t c = 0;
-	while (i < size && c != '\n'){
-		c = scr_keyboard_get(1);
+	/* Text mode draws only the text, so what's typed goes into it as it's typed */
+	int length = 0;
+	while (1){
+		ubyte_t c = scr_keyboard_get(1);
 		if(c == 0) continue;
 
 		if(c == CTRLC){
 			return -1;
 		}
+		if(c == CTRLD){
+			if(length == 0) return 0;
+			continue;
+		}
 
-		if(c == '\n') {
-			break;
+		if(c == '\n'){
+			data[length++] = '\n';
+			if(length < size) data[length] = 0;
+			term->ops->putchar(term, '\n');
+			term->ops->commit(term);
+			return length;
 		}
 
 		if(c == '\b'){
-			data[i] = 0;
-			i--;
-			if(i < 0) i = 0;
+			if(length == 0) continue;
+			length--;
+
+			/* The last character typed is the text's last, and the log's */
 			terminal_lock(term);
 			term->head--;
-			term->textbuffer[term->head] = 0;
+			if(term->serial_line_length > 0) term->serial_line_length--;
 			term->ops->commit(term);
 			terminal_unlock(term);
 			continue;
 		}
 
-		data[i] = c;
-		i++;
+		/* Only printable ASCII, with room left for the newline */
+		if(c < 32 || c > 126 || length >= size - 1) continue;
+		data[length++] = c;
 
 		terminal_lock(term);
 		term->ops->putchar(term, c);
 		term->ops->commit(term);
 		terminal_unlock(term);
 	}
-
-	data[i] = '\0';
-
-	return i;
 }
 
+/* Ends a graphics terminal's read: the line being typed goes, and the window shows the text without it */
+static void __terminal_end_read(struct terminal* term)
+{
+	terminal_hide_input(term);
+	term->ops->commit(term);
+}
+
+/**
+ * Reads a line typed at a graphics terminal, as __terminal_scan_textmode does. What's typed is edited on the input line,
+ * after what the reader has written, and the keys come from the terminal's window: the reader's own, or for a program,
+ * which has none, its shell's. The shell is waiting for the program meanwhile, so it doesn't take them. Ctrl+D or
+ * closing the window is end of input; a window that's closing gets its event back, for its owner.
+ */
 static int __terminal_scan_graphics(struct terminal* term, ubyte_t* data, int size)
 {
-	if(term == NULL || data == NULL) return -1;
+	if(term == NULL || data == NULL || size < 1) return -1;
 
-	int i = 0;
-	ubyte_t c = 0;
-	while (i < size && c != '\n'){
+	int length = 0;
+	data[0] = 0;
+	terminal_set_input(term, NULL, (char*)data);
+
+	while (1){
+		struct window* screen = term->screen;
+		if(screen == NULL){
+			terminal_hide_input(term);
+			return 0;
+		}
+
+		/* The window isn't the reader's, so its events don't wake the reader: it looks every 10 ms */
 		struct gfx_event event;
-		gfx_event_loop(&event, GFX_EVENT_BLOCKING);
+		if(gfx_window_get_event(screen, &event) < 0){
+			kernel_sleep(10);
+			continue;
+		}
 
 		switch (event.event){
-		case GFX_EVENT_KEYBOARD:
-			switch (event.data){
-			case CTRLC:
-				return -1;
-			default:{
-					c = event.data;
-
-					if(c == '\b'){
-						data[i] = 0;
-						i--;
-						if(i < 0) i = 0;
-						terminal_lock(term);
-						term->head--;
-						term->textbuffer[term->head] = 0;
-						term->ops->commit(term);
-						terminal_unlock(term);
-						break;
-					}
-
-					data[i] = c;
-					i++;
-
-					terminal_lock(term);
-					term->ops->putchar(term, c);
-					term->ops->commit(term);
-					terminal_unlock(term);
+		case GFX_EVENT_KEYBOARD:{
+				unsigned char c = event.data;
+				if(c == CTRLC){
+					__terminal_end_read(term);
+					return -1;
 				}
-				break;
+				if(c == CTRLD){
+					if(length > 0) break;
+					__terminal_end_read(term);
+					return 0;
+				}
+
+				if(c == '\n'){
+					data[length++] = '\n';
+					if(length < size) data[length] = 0;
+
+					terminal_hide_input(term);
+					term->ops->write(term, (const char*)data, length);
+					term->ops->commit(term);
+					return length;
+				}
+
+				if(c == '\b'){
+					if(length == 0) break;
+					data[--length] = 0;
+					terminal_set_input(term, NULL, (char*)data);
+					break;
+				}
+
+				/* Only printable ASCII, with room left for the newline */
+				if(c < 32 || c > 126 || length >= size - 1) break;
+				data[length++] = c;
+				data[length] = 0;
+				terminal_set_input(term, NULL, (char*)data);
 			}
 			break;
+		case GFX_EVENT_RESOLUTION:
+			term->ops->commit(term);
+			break;
 		case GFX_EVENT_EXIT:
-			kernel_exit();
-			return -1;
+			gfx_push_event(screen, &event);
+			__terminal_end_read(term);
+			return 0;
 		default:
 			break;
 		}
 	}
-
-	data[i] = '\0';
-
-	return i;
 }
 
 static int __terminal_scanf(struct terminal* term, char* fmt, ...)
@@ -898,6 +943,30 @@ int terminal_write(const char* data, int size)
 	}
 	terminal_unlock(term);
 	return size;
+}
+
+/**
+ * Reads a line typed at the calling program's terminal: the system call behind its standard input.
+ * @return the line's length, ending in '\n' unless size was too small; 0 at end of input; or a negative error code.
+ * End of input is Ctrl+D on an empty line, Ctrl+C, which throws the line away, since RetrOS has no signals, and the
+ * window closing. A program its shell isn't waiting for, like one started with exec -d, always gets it: the shell
+ * is taking the keys.
+ */
+int terminal_read(char* data, int size)
+{
+	if(data == NULL || size < 0) return -ERROR_INVALID_ARGUMENTS;
+	if(size == 0 || $process->current == NULL || $process->current->term == NULL) return 0;
+
+	struct terminal* term = $process->current->term;
+
+	/* While the shell is starting a program, which may be this one, the reader isn't known yet */
+	while(term->reader == TERMINAL_READER_STARTING){
+		kernel_yield();
+	}
+	if(term->reader != $process->current->pid) return 0;
+
+	int ret = term->ops->scan(term, (ubyte_t*)data, size);
+	return ret < 0 ? 0 : ret;
 }
 
 static int __terminal_putchar_textmode(struct terminal* term, char c)

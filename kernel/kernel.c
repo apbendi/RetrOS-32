@@ -194,6 +194,7 @@ void kernel(uint32_t magic)
 #pragma GCC diagnostic ignored "-Wcast-function-type"
 	add_system_call(SYSCALL_PRTPUT, (syscall_t)&terminal_putchar);
 	add_system_call(SYSCALL_TERM_WRITE, (syscall_t)&terminal_write);
+	add_system_call(SYSCALL_TERM_READ, (syscall_t)&terminal_read);
 	
 	add_system_call(SYSCALL_EXIT, (syscall_t)&kernel_exit);
 	add_system_call(SYSCALL_SLEEP, (syscall_t)&kernel_sleep);

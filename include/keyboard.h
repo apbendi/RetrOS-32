@@ -31,6 +31,7 @@
 #define TAB 9
 
 #define CTRLC 227
+#define CTRLD 228
 #define CTRLE 229
 
 void init_keyboard();

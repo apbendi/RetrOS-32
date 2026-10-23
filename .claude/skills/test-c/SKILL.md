@@ -58,7 +58,7 @@ A case is `tests/c/cases/NAME.c`, a program that prints what it finds, the same 
 - **Stay deterministic:** no addresses, times, process IDs or the current directory's name. It runs in an empty directory on Linux, and in `/t` on RetrOS.
 - **Stay within RetrOS's limits:**
   - a process has at most 4 MB of heap, from about 3.5 MB of pages all processes share;
-  - `stdin` is at its end (#113);
+  - `stdin` reads the terminal, so a case that reads it would wait for typing;
   - there are no exit codes, signals or `fork`.
 - **`harness.h`** prints with `write()`, for cases that shouldn't depend on stdio.
 - **Native mode:** the cases' sources are in `/t` too, for compiling on RetrOS itself.

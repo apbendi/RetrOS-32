@@ -448,9 +448,21 @@ void exec(int argc, char* argv[])
 		return;
 	}
 
+	/**
+	 * A program the shell waits for reads what's typed at the terminal, since the shell isn't reading it meanwhile. It
+	 * becomes the terminal's reader before it can run, so its first read doesn't find there's none.
+	 */
+	struct terminal* term = $process->current->term;
+	int reader = term != NULL ? term->reader : TERMINAL_NO_READER;
+	if(term != NULL && !kthread_as_deamon) term->reader = TERMINAL_READER_STARTING;
+
 	pid = pcb_create_process(argv[idx], argc-idx, &argv[idx], 0 /* PCB_FLAG_KERNEL */);
+	if(pid > 0 && !kthread_as_deamon){
+		if(term != NULL) term->reader = pid;
+		pcb_await(pid);
+	}
+	if(term != NULL) term->reader = reader;
 	if(pid > 0){
-		if(!kthread_as_deamon) pcb_await(pid);
 		return;
 	}
 
@@ -868,6 +880,15 @@ static int __textshell_reset_box()
 }
 
 
+/* Reads a line into name, without its newline: an empty name for end of input */
+static void __textshell_read_name(struct terminal* term, char* name, int size)
+{
+	int length = term->ops->scan(term, (ubyte_t *)name, size);
+	if(length < 0) length = 0;
+	if(length > 0 && name[length-1] == '\n') length--;
+	name[length] = 0;
+}
+
 static int textshell_login(struct terminal* term)
 {
 	struct usermanager* usrman = $services->usermanager;
@@ -890,15 +911,14 @@ static int textshell_login(struct terminal* term)
 	char password[32];
 
 	while(1){
+		/* scan ends the line on screen, and in what it reads, which the names don't include */
 		twritef("Username: ");
 		term->ops->commit(term);
-		term->ops->scan(term, (ubyte_t *)username, 32);
-		twritef("\n");
+		__textshell_read_name(term, username, 32);
 		
 		twritef("Password: ");
 		term->ops->commit(term);
-		term->ops->scan(term, (ubyte_t *)password, 32);
-		twritef("\n");
+		__textshell_read_name(term, password, 32);
 
 		struct user* user =  usrman->ops->authenticate(usrman, username, password);
 		if(user == NULL){
