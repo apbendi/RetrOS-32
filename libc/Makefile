@@ -87,18 +87,22 @@ $(OBJ)/internal/version.h: $(MUSL)/VERSION
 $(OBJ)/musl/%.o: $(MUSL)/src/%.c $(GENH)
 	$(call make_dir,$(dir $@))
 	$(QUIET)$(CC) $(LIBC_CFLAGS) $(LIBC_INCLUDES) -c $< -o $@
+	$(QUIET)echo "[libc] cc $<"
 
 $(OBJ)/musl/%.o: $(MUSL)/src/%.s
 	$(call make_dir,$(dir $@))
 	$(QUIET)$(CC) -m32 -c $< -o $@
+	$(QUIET)echo "[libc] as $<"
 
 $(OBJ)/retros/%.o: src/%.c $(GENH)
 	$(call make_dir,$(dir $@))
 	$(QUIET)$(CC) $(LIBC_CFLAGS) $(LIBC_INCLUDES) $(RETROS_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(QUIET)echo "[libc] cc $<"
 
 $(BUILD_DIR)/%.o: crt/%.s
 	$(call make_dir,$(BUILD_DIR))
 	$(QUIET)$(CC) -m32 -c $< -o $@
+	$(QUIET)echo "[libc] as $<"
 
 $(BUILD_DIR)/libc.a: $(MUSL_OBJS) $(RETROS_OBJS)
 	$(QUIET)$(RM_F) $@

@@ -75,6 +75,8 @@ docker compose up
   - The app static libraries (`apps/lib*.a`) are re-archived on every build, so every app relinks too. That matters when you change a struct shared between `lib/` and the kernel.
   - You don't need `make clean`, except after changing compile flags, which make doesn't track: run `docker compose run --rm builder clean`, then `docker compose up`.
 - **Toolchain:** the host (macOS) has no i386 cross toolchain. Use the container for real builds, and clang for quick checks (below).
+- **A first build is slow:** the host is arm64 and the container `linux/amd64`, so gcc runs emulated, one file at a time. The C library alone is ~550 files and takes a few minutes. Once they're built, later builds skip them.
+- **`bin/build` must be the container's:** it's a host tool (`HOST_CC`), and the repo is shared with the container, so a `make tools`, `make img` or `make create_fs` run on the Mac leaves a macOS binary there. The container's make sees it's newer than `tools/build.c`, tries to run it, and fails with `create_fs] Error 127`. `rm bin/build`, then `docker compose up` again.
 - **GCC catches more than clang:** the build uses GCC with `-Wall -Wextra -Wpedantic`, and GCC warns about things clang doesn't. One example from this repo: a `?:` mixing an enum value with a non-enum operand.
 
 ## Run
