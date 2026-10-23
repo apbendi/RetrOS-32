@@ -73,7 +73,7 @@ static char* about_text = "\nRetrOS-32 - 32bit Operating System\n    " KERNEL_RE
 void shell_clear()
 {
 	//struct gfx_theme* theme = kernel_gfx_current_theme();
-	kernel_gfx_draw_rectangle($process->current->gfx_window, 0, SHELL_POSITION, gfx_get_window_height(), 8, $process->current->term->bg_color);
+	kernel_gfx_draw_rectangle($process->current->gfx_window, 0, SHELL_POSITION, gfx_get_window_width(), 8, $process->current->term->bg_color);
 }
 
 /**
@@ -667,6 +667,7 @@ void __kthread_entry shell(int argc, char* argv[])
 			switch (event.data){
 			case CTRLC:
 				reset_shell();
+				gfx_commit();
 				break;
 			default:
 				shell_put(event.data);
