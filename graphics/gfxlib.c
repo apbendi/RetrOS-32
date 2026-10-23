@@ -57,6 +57,26 @@ int gfx_push_event(struct window* w, struct gfx_event* e)
 	return 0;
 }
 
+/**
+ * Takes the oldest event from w's queue, without waiting: for a thread reading a window that isn't its own, like a
+ * program reading the keys typed in its shell's window.
+ * @return 0, or -1 if there was none
+ */
+int gfx_window_get_event(struct window* w, struct gfx_event* event)
+{
+	ERR_ON_NULL(w);
+
+	int ret = -1;
+	SPINLOCK(w, {
+		if(w->events.tail != w->events.head){
+			memcpy(event, &w->events.list[w->events.tail], sizeof(struct gfx_event));
+			w->events.tail = (w->events.tail + 1) % GFX_MAX_EVENTS;
+			ret = 0;
+		}
+	});
+	return ret;
+}
+
 int kernel_gfx_draw_contoured_box(struct window* w, int x, int y, int width, int height, color_t color) 
 {
 	kernel_gfx_draw_rectangle(w, x, y, width, height, color);

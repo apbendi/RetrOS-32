@@ -62,7 +62,10 @@ enum {
     SYSCALL_GETCWD,
 
     /* Text to the terminal, as one call (terminal.h) */
-    SYSCALL_TERM_WRITE
+    SYSCALL_TERM_WRITE,
+
+    /* A line typed at the terminal (terminal.h) */
+    SYSCALL_TERM_READ
 };
 
 #endif /* __SYSCALL_HELPER_H */

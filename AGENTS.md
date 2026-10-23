@@ -272,7 +272,7 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
   - **The kernel's numbers:** system call numbers, error codes and file flags come from the kernel's own headers, which the library includes next to standard ones: `syscall_helper.h`, `errors.h` with `ERRORS_CODES_ONLY`, and `fs/fs_types.h`.
 - **Where it's installed:** headers in `/usr/include`, and `libc.a` and `crt1.o` in `/usr/lib`, with empty `libm.a` and friends as musl has them. In the repo, `rootfs/usr/`.
 - **How programs behave:**
-  - descriptors 0 to 2 are the terminal. `stdout` is line-buffered, and `stdin` is always at its end (#113);
+  - descriptors 0 to 2 are the terminal. `stdout` is line-buffered. `stdin` reads lines typed at the terminal, if the program is the one its shell is waiting for; otherwise it's at its end;
   - RetrOS's errors become `errno` values;
   - `rename` replaces an existing file;
   - the clock has whole seconds of local time;

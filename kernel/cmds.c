@@ -919,8 +919,9 @@ static int tcp(int argc, char *argv[])
     int ret;
     char* buffer = kalloc(1024);
     while(1){
+        /* Ctrl+C or Ctrl+D ends the connection */
         ret = $process->current->term->ops->scan($process->current->term, (ubyte_t *)buffer, 255);
-        if(ret < 0){
+        if(ret <= 0){
             break;
         }
         ret = kernel_send(socket, buffer, strlen(buffer), 0);
