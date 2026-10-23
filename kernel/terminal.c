@@ -21,6 +21,7 @@
 #include <screen.h>
 #include <memory.h>
 #include <serial.h>
+#include <vbe.h>
 
 #define MAX_FMT_STR_SIZE 50
 #define TERMINAL_TEXTBUFFER_INITIAL_CAPACITY 1024
@@ -66,7 +67,7 @@ static int __next_newline(void* _data)
 static void __terminal_remove_line(struct terminal* term)
 {
 	int skip = __next_newline(term->textbuffer);
-	memcpy(term->textbuffer, &term->textbuffer[skip], term->head-skip);
+	memmove(term->textbuffer, &term->textbuffer[skip], term->head-skip);
 	term->head -= skip;
 }
 
@@ -517,26 +518,100 @@ static int __terminal_reset(struct terminal* term)
 	return 0;
 }
 
-/* Moves a graphics terminal to the next line, scrolling when the window is full */
-static void __terminal_newline_graphics(struct terminal* term)
+/**
+ * The most lines a graphics terminal keeps: what a window the size of the screen shows, so a window that's made
+ * bigger shows as much as fits, and drawing never takes more than a screenful. At least 25, for a screen whose size
+ * isn't known.
+ */
+static int __terminal_max_lines(void)
 {
-	struct window* screen = term->screen;
+	int lines = vbe_info->height / 8;
+	return lines > 25 ? lines : 25;
+}
 
-	/* Once its window has closed, the terminal's text only goes to the log, so it keeps no more lines than it had */
-	if(screen == NULL){
-		if(term->lines > 0){
-			__terminal_scroll(term);
-		} else {
-			term->lines++;
-		}
-		return;
+/* And the most characters, for long lines: twice what a window the size of the screen shows, newlines included */
+static int __terminal_max_chars(void)
+{
+	int columns = vbe_info->width / 8;
+	return 2 * __terminal_max_lines() * ((columns > 80 ? columns : 80) + 1);
+}
+
+/* Stores a character in a graphics terminal, and drops text from the start that no window could show */
+static int __terminal_store_graphics(struct terminal* term, char c)
+{
+	if(__terminal_store_char(term, c) < 0){
+		return -1;
 	}
 
-	if((screen->inner_height/8) -1 == term->lines){
-		__terminal_scroll(term);
-	} else {
+	if(c == '\n'){
 		term->lines++;
+		while(term->lines > __terminal_max_lines()){
+			__terminal_remove_line(term);
+			term->lines--;
+		}
 	}
+
+	int max = __terminal_max_chars();
+	if(term->head > max){
+		/**
+		 * The first line goes if what's left still fills a window the size of the screen, so it's above any window.
+		 * Otherwise, as when a line is longer than that, the first half of the text goes, cutting a line.
+		 */
+		int first = term->lines > 0 ? __next_newline(term->textbuffer) : term->head;
+		if(term->head - first >= max / 2){
+			__terminal_remove_line(term);
+			term->lines--;
+		} else {
+			int drop = term->head / 2;
+			for (int i = 0; i < drop; i++){
+				if(term->textbuffer[i] == '\n') term->lines--;
+			}
+			memmove(term->textbuffer, term->textbuffer + drop, term->head - drop);
+			term->head -= drop;
+		}
+	}
+
+	return 0;
+}
+
+/* The columns of text a window shows. A character is drawn at (1 + 8*column, 2 + 8*row) */
+static int __terminal_columns(struct window* screen)
+{
+	int columns = (screen->inner_width - 1) / 8;
+	return columns > 0 ? columns : 1;
+}
+
+/* The rows a line of length characters takes, wrapped at columns: none when it's empty */
+static int __terminal_wrapped_rows(int length, int columns)
+{
+	return (length + columns - 1) / columns;
+}
+
+/**
+ * Lays out a graphics terminal's text from its end, wrapping lines at columns, so that the end fills the last of rows
+ * rows. A finished line takes at least a row; the unfinished last line takes rows only for its characters.
+ * @param skip set to the rows of the first line to draw that are above the window
+ * @return where in the text buffer to start drawing
+ */
+static int __terminal_first_shown(struct terminal* term, int columns, int rows, int* skip)
+{
+	char* text = term->textbuffer;
+	int start = term->head;
+	while(start > 0 && text[start-1] != '\n') start--;
+
+	int total = __terminal_wrapped_rows(term->head - start, columns);
+	while(total < rows && start > 0){
+		/* The line before ends with the newline at start-1 */
+		int end = start - 1;
+		start = end;
+		while(start > 0 && text[start-1] != '\n') start--;
+
+		int line_rows = __terminal_wrapped_rows(end - start, columns);
+		total += line_rows > 0 ? line_rows : 1;
+	}
+
+	*skip = total > rows ? total - rows : 0;
+	return start;
 }
 
 static int __terminal_putchar_graphics(struct terminal* term, char c)
@@ -544,17 +619,14 @@ static int __terminal_putchar_graphics(struct terminal* term, char c)
 	if(term == NULL) return -1;
 
 	terminal_lock(term);
-	if(c == '\n'){
-		__terminal_newline_graphics(term);
-
-		/* should be a flush syscall */
-		if(term->screen != NULL && term->screen != $process->current->gfx_window){
-			term->ops->commit(term);
-		}
-	}
-	if(__terminal_store_char(term, c) < 0){
+	if(__terminal_store_graphics(term, c) < 0){
 		terminal_unlock(term);
 		return -1;
+	}
+
+	/* should be a flush syscall */
+	if(c == '\n' && term->screen != NULL && term->screen != $process->current->gfx_window){
+		term->ops->commit(term);
 	}
 
 	if(term->screen != NULL && term->screen != $process->current->gfx_window){
@@ -591,8 +663,7 @@ int terminal_write(const char* data, int size)
 	}
 
 	for (int i = 0; i < size; i++){
-		if(data[i] == '\n') __terminal_newline_graphics(term);
-		if(__terminal_store_char(term, data[i]) < 0) break;
+		if(__terminal_store_graphics(term, data[i]) < 0) break;
 	}
 
 	/* As putchar does: another thread's terminal is redrawn now, and a thread's own when it commits */
@@ -708,19 +779,34 @@ static int __terminal_commit_graphics(struct terminal* term)
 		return -1;
 	}
 
-	/* Currently unsed */
-	//struct gfx_theme* theme = kernel_gfx_current_theme();
-	
-	int x = 0, y = 0;
+	/**
+	 * Lay out the text at the window's size now, so it fits however the window has changed. The shell draws its
+	 * prompt on the bottom row, so the text takes the rows above it, as many as it always has.
+	 */
+	int columns = __terminal_columns(screen);
+	int rows = screen->inner_height/8 - 1;
+	int skip;
+	int start = __terminal_first_shown(term, columns, rows, &skip);
+
 	kernel_gfx_draw_rectangle(screen, 0, 0, screen->inner_width, screen->inner_height, term->bg_color);
-	for (int i = term->tail; i < term->head; i++){
-		if(term->textbuffer[i] == '\n'){
+
+	/* Rows above the window, the first line's first skip rows, aren't drawn */
+	int x = 0, y = -skip;
+	for (int i = start; i < term->head; i++){
+		char c = term->textbuffer[i];
+		if(c == '\n'){
 			x = 0;
 			y++;
 			continue;
 		}
 
-		kernel_gfx_draw_char(screen, 1 + x*8, 2+ y*8, term->textbuffer[i], __terminal_syntax_color(term, term->textbuffer[i]));
+		if(x == columns){
+			x = 0;
+			y++;
+		}
+		if(y >= 0){
+			kernel_gfx_draw_char(screen, 1 + x*8, 2 + y*8, c, __terminal_syntax_color(term, c));
+		}
 		x++;
 	}
 
