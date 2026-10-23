@@ -690,7 +690,9 @@ static void shell_put(struct shell* sh, unsigned char c)
 		
 		/* exec_cmd reports its own errors, like an unknown command */
 		exec_cmd(sh->buffer);
-		
+
+		/* A command may have drawn into the window itself, so the prompt comes with a full redraw */
+		terminal_invalidate($process->current->term);
 		reset_shell(sh);
 		return;
 	}
