@@ -99,6 +99,11 @@ struct pcb {
     struct virtual_allocations* allocations;
     int used_memory;
 
+    /* What a kernel thread keeps for itself, for commands that run on its thread to find, e.g. the shell's state.
+     * local_free frees it when the thread exits, however it exits */
+    void* local;
+    void (*local_free)(void* local);
+
     struct pcb* parent;
     struct pcb *next;
     struct pcb *prev;

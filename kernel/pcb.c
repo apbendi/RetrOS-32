@@ -403,6 +403,10 @@ int pcb_cleanup_routine(void* arg)
 
 	/* And close its files, so their slots don't stay taken (#61) */
 	fs_close_files_of(pcb);
+
+	if(pcb->local_free != NULL){
+		pcb->local_free(pcb->local);
+	}
 	
 	switch (pcb->is_process){
 	case PCB_PROCESS:
