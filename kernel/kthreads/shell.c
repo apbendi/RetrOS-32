@@ -48,6 +48,8 @@
 #define SHELL_WIDTH 400 /* 300 */
 /* The longest command line, with its terminating 0: room for a command and two paths (#107) */
 #define SHELL_LINE_MAX (2*FS_PATH_MAX + 64)
+/* The most commands a shell's history keeps */
+#define SHELL_HISTORY_MAX 32
 
 void __kthread_entry shell(int argc, char* argv[]);
 
@@ -61,16 +63,27 @@ static const char backspace = '\b';
 struct shell {
 	char buffer[SHELL_LINE_MAX];
 	int length;
-	/* The last command run, which Up brings back */
-	char previous[SHELL_LINE_MAX];
+
+	/* The commands run, oldest first, each kalloc'd at its own length. Up and Down go back and forth through them */
+	char* history[SHELL_HISTORY_MAX];
+	int history_count;
+	/* The command Up and Down have brought back: -1 while typing a new line */
+	int history_position;
+	/* The new line being typed when Up was first pressed, which Down brings back past the newest command */
+	char draft[SHELL_LINE_MAX];
+
 	/* "kernel:<current directory>> " */
 	char prompt[FS_PATH_MAX + 16];
 	/* Set by the exit command: the shell exits once the line has run */
 	bool_t exiting;
 };
 
-static void __shell_free(void* sh)
+static void __shell_free(void* _sh)
 {
+	struct shell* sh = (struct shell*) _sh;
+	for (int i = 0; i < sh->history_count; i++){
+		kfree(sh->history[i]);
+	}
 	kfree(sh);
 }
 
@@ -137,7 +150,73 @@ static void reset_shell(struct shell* sh)
 
 	memset(sh->buffer, 0, SHELL_LINE_MAX);
 	sh->length = 0;
+	sh->history_position = -1;
 	__shell_show_line(sh);
+}
+
+/* Replaces the line being typed with text */
+static void __shell_set_line(struct shell* sh, const char* text)
+{
+	int length = strlen(text);
+	if(length > SHELL_LINE_MAX - 1) length = SHELL_LINE_MAX - 1;
+
+	memcpy(sh->buffer, text, length);
+	sh->buffer[length] = 0;
+	sh->length = length;
+	__shell_show_line(sh);
+}
+
+/* Adds a command to the history, unless it's blank or the same as the newest. The oldest goes when it's full */
+static void __shell_history_add(struct shell* sh, const char* line)
+{
+	const char* c = line;
+	while(*c == ' ' || *c == '\t') c++;
+	if(*c == 0) return;
+
+	if(sh->history_count > 0 && strcmp(sh->history[sh->history_count-1], line) == 0) return;
+
+	int length = strlen(line);
+	char* entry = kalloc(length + 1);
+	if(entry == NULL) return;
+	memcpy(entry, line, length + 1);
+
+	if(sh->history_count == SHELL_HISTORY_MAX){
+		kfree(sh->history[0]);
+		memmove(&sh->history[0], &sh->history[1], (SHELL_HISTORY_MAX - 1) * sizeof(char*));
+		sh->history_count--;
+	}
+	sh->history[sh->history_count++] = entry;
+}
+
+/* Up: brings back the command before the one shown, keeping the new line being typed for Down to bring back */
+static void __shell_history_up(struct shell* sh)
+{
+	if(sh->history_count == 0) return;
+
+	if(sh->history_position == -1){
+		memcpy(sh->draft, sh->buffer, sh->length + 1);
+		sh->history_position = sh->history_count - 1;
+	} else if(sh->history_position > 0){
+		sh->history_position--;
+	} else {
+		/* At the oldest */
+		return;
+	}
+	__shell_set_line(sh, sh->history[sh->history_position]);
+}
+
+/* Down: brings back the command after the one shown, or past the newest, the line that was being typed */
+static void __shell_history_down(struct shell* sh)
+{
+	if(sh->history_position == -1) return;
+
+	if(sh->history_position < sh->history_count - 1){
+		sh->history_position++;
+		__shell_set_line(sh, sh->history[sh->history_position]);
+		return;
+	}
+	sh->history_position = -1;
+	__shell_set_line(sh, sh->draft);
 }
 
 void ifconfig()
@@ -592,17 +671,18 @@ static void shell_put(struct shell* sh, unsigned char c)
 {
 	unsigned char uc = c;
 
+	/* Editing a command brought back changes only the line, not the history: Enter adds it as a new command */
 	if(uc == ARROW_UP){
-		/* Only the characters: replaying the terminating 0 would end the command there (#67) */
-		int len = strlen(sh->previous);
-		for (int i = 0; i < len; i++){
-			shell_put(sh, sh->previous[i]);
-		}
+		__shell_history_up(sh);
+		return;
+	}
+	if(uc == ARROW_DOWN){
+		__shell_history_down(sh);
 		return;
 	}
 
 	if(uc == newline){
-		memcpy(sh->previous, sh->buffer, strlen(sh->buffer)+1);
+		__shell_history_add(sh, sh->buffer);
 
 		/* The line moves from the input line into the output, so what the command prints goes after it */
 		terminal_hide_input($process->current->term);
