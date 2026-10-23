@@ -13,6 +13,25 @@ HOSTFWD_PORT ?= 8080
 QEMU_NETDEV = -netdev user,id=net0,hostfwd=tcp::$(HOSTFWD_PORT)-:80
 QEMU_OPS = -device e1000,netdev=net0 -serial stdio $(QEMU_NETDEV) -object filter-dump,id=net0,netdev=net0,file=dump.dat -m 32m -rtc base=localtime
 
+# QEMU 11's Cocoa display draws one guest pixel per screen pixel, so on a Retina display its window is half the size
+# it used to be. apbendi/tap's qemu-hidpi is QEMU with -display cocoa,scale=N, where scale=1 is the size before 11.0.
+# It's keg-only, so it's run from where Homebrew keeps it, when it's installed.
+comma := ,
+ifeq ($(OS),Windows_NT)
+  QEMU ?= qemu-system-i386.exe
+else ifeq ($(UNAME_S),Darwin)
+  QEMU_HIDPI := $(shell brew --prefix 2>/dev/null)/opt/qemu-hidpi/bin/qemu-system-i386
+  QEMU ?= $(if $(wildcard $(QEMU_HIDPI)),$(QEMU_HIDPI),qemu-system-i386)
+  # Stock QEMU rejects the scale option, so it's only passed to a QEMU that lists it
+  QEMU_HAS_SCALE = $(shell $(QEMU) -h 2>/dev/null | grep -F 'scale=<number>')
+  QEMU_DISPLAY ?= $(if $(QEMU_HAS_SCALE),-display cocoa$(comma)scale=1)
+  # make qemu suggests the patched build when it runs stock QEMU 11 or later
+  QEMU_HINT = $(if $(QEMU_HAS_SCALE),,$(shell v=$$($(QEMU) --version 2>/dev/null | \
+    sed -n 's/^QEMU emulator version \([0-9]*\).*/\1/p'); [ -n "$$v" ] && [ "$$v" -ge 11 ] && echo yes))
+else
+  QEMU ?= qemu-system-i386
+endif
+
 ifeq ($(UNAME_S),Darwin)
   GRUB ?= grub-mkrescue /usr/local/lib/grub/i386-pc/ -o myos.iso legacy/multiboot
 else
@@ -133,7 +152,7 @@ grub: grub_fix apps multiboot_kernel
 
 qemu_kernel: CFLAGS += -DGRUB_MULTIBOOT
 qemu_kernel: grub_fix multiboot_kernel
-	qemu-system-i386 $(QEMU_OPS) -kernel $(BUILD_DIR)/kernelout
+	$(QEMU) $(QEMU_OPS) $(QEMU_DISPLAY) -kernel $(BUILD_DIR)/kernelout
 
 docker-rebuild:
 	docker-compose build --no-cache
@@ -146,16 +165,13 @@ docker:
 vdi: clean docker
 	qemu-img convert -f raw -O vdi boot.img boot.vdi
 
-ifeq ($(OS),Windows_NT)
-QEMU_CMD = qemu-system-i386.exe $(QEMU_OPS) -drive file=RetrOS-32-debug.img,format=raw,index=0,media=disk
-else
-QEMU_CMD = qemu-system-i386 $(QEMU_OPS) -drive file=RetrOS-32-debug.img,format=raw,index=0,media=disk
-endif
+QEMU_CMD = $(QEMU) $(QEMU_OPS) -drive file=RetrOS-32-debug.img,format=raw,index=0,media=disk
 
 QEMU_HEADLESS_CMD = $(QEMU_CMD) -display none
 
 qemu:
-	$(QEMU_CMD)
+	$(if $(QEMU_HINT),@echo "Note: QEMU 11 and later show a small window on Retina displays. To fix it: brew install apbendi/tap/qemu-hidpi")
+	$(QEMU_CMD) $(QEMU_DISPLAY)
 
 qemu-headless:
 	$(QEMU_HEADLESS_CMD)
