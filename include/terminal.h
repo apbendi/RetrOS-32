@@ -68,6 +68,11 @@ struct terminal {
     /* References held, one per thread whose term points here: see terminal_get */
     int refs;
 
+    /* Held while the terminal's text changes or it's drawn: see terminal_lock */
+    spinlock_t lock;
+    struct pcb* lock_owner;
+    int lock_depth;
+
     struct window* screen;
     struct terminal_ops* ops;
     color_t text_color;
@@ -77,6 +82,9 @@ struct terminal {
 struct terminal* terminal_create(terminal_flags_t flags);
 void terminal_get(struct terminal* term);
 void terminal_put(struct terminal* term);
+void terminal_lock(struct terminal* term);
+void terminal_unlock(struct terminal* term);
+void terminal_release_window(struct terminal* term, struct pcb* pcb);
 
 int scan(ubyte_t* data, int size);
 
