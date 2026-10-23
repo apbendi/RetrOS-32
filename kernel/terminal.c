@@ -51,12 +51,6 @@ static color_t __terminal_syntax_color(struct terminal* term, unsigned char c)
 	}
 }
 
-void terminal_attach(struct terminal* term)
-{
-	$process->current->term = term;
-	term->screen = $process->current->gfx_window;
-}
-
 static int __next_newline(void* _data)
 {
 	char* data = (char*) _data;
@@ -257,33 +251,43 @@ struct terminal* terminal_create(terminal_flags_t flags)
 		term->text_color = VGA_COLOR_WHITE;
 	}
 
+	/* The creator's reference, in place of the one it held on the terminal it had */
+	term->refs = 1;
+	struct terminal* old = $process->current->term;
 	$process->current->term = term;
-	kref_init(&term->ref);
+	terminal_put(old);
 
 	return term;
 }
 
 /**
- * Destroys a terminal.
- * @param struct terminal* term
- * @return int 0 on success, -1 on failure
+ * Takes a reference to a terminal. Every thread whose term points at a terminal holds one, so a terminal lives as
+ * long as anything can write to it: a program started from a shell can outlive the shell (#55). Counted with
+ * interrupts off rather than under a spinlock, so creating a kernel thread, which runs in a critical section, can
+ * take one.
  */
-int terminal_destroy(struct terminal* term)
+void terminal_get(struct terminal* term)
 {
-	if(term == NULL) return -1;
+	if(term == NULL) return;
 
-	if(term->ref.refs > 0){
-		return 0;
-	}
+	CRITICAL_SECTION({
+		term->refs++;
+	});
+}
 
-	if(term->textbuffer != NULL){
-		kfree(term->textbuffer);
-		term->textbuffer = NULL;
-		term->textbuffer_size = 0;
-	}
+/* Releases a reference to a terminal, and frees it if that was the last */
+void terminal_put(struct terminal* term)
+{
+	if(term == NULL) return;
 
+	int refs;
+	CRITICAL_SECTION({
+		refs = --term->refs;
+	});
+	if(refs > 0) return;
+
+	kfree(term->textbuffer);
 	kfree(term);
-	return 0;
 }
 
 /* Terminal operations implementations */
@@ -451,7 +455,20 @@ static int __terminal_reset(struct terminal* term)
 /* Moves a graphics terminal to the next line, scrolling when the window is full */
 static void __terminal_newline_graphics(struct terminal* term)
 {
-	if((term->screen->inner_height/8) -1 == term->lines){
+	/* Read once: the window's owner may close it meanwhile, which sets screen to NULL */
+	struct window* screen = term->screen;
+
+	/* Once its window has closed, the terminal's text only goes to the log, so it keeps no more lines than it had */
+	if(screen == NULL){
+		if(term->lines > 0){
+			__terminal_scroll(term);
+		} else {
+			term->lines++;
+		}
+		return;
+	}
+
+	if((screen->inner_height/8) -1 == term->lines){
 		__terminal_scroll(term);
 	} else {
 		term->lines++;
@@ -551,16 +568,20 @@ static int __terminal_attach(struct terminal* term)
 {
 	if(term == NULL) return -1;
 
-	/* This is a BAD solution, FIXME Badly */
-	$process->current->term = term;
+	/* The thread swaps its reference to the terminal it had for one to this */
+	struct terminal* old = $process->current->term;
+	if(old != term){
+		terminal_get(term);
+		$process->current->term = term;
+		terminal_put(old);
+	}
+
 	if(term->screen == NULL){
 		term->screen = $process->current->gfx_window;
 	}
 
-	kref_get(&term->ref);
-	
 	return 0;
-} 
+}
 
 static int __terminal_detach(struct terminal* term)
 {
@@ -569,7 +590,7 @@ static int __terminal_detach(struct terminal* term)
 	$process->current->term = NULL;
 	term->screen = NULL;
 
-	kref_put(&term->ref);
+	terminal_put(term);
 
 	return 0;
 }
@@ -602,13 +623,17 @@ static int __terminal_commit_textmode(struct terminal* term)
 
 static int __terminal_commit_graphics(struct terminal* term)
 {
-	if(term == NULL || term->screen == NULL) return -1;
+	if(term == NULL) return -1;
+
+	/* Read once: the window's owner may close it meanwhile, which sets screen to NULL */
+	struct window* screen = term->screen;
+	if(screen == NULL) return -1;
 
 	/* Currently unsed */
 	//struct gfx_theme* theme = kernel_gfx_current_theme();
 	
 	int x = 0, y = 0;
-	kernel_gfx_draw_rectangle(term->screen, 0, 0, term->screen->inner_width, term->screen->inner_height, term->bg_color);
+	kernel_gfx_draw_rectangle(screen, 0, 0, screen->inner_width, screen->inner_height, term->bg_color);
 	for (int i = term->tail; i < term->head; i++){
 		if(term->textbuffer[i] == '\n'){
 			x = 0;
@@ -616,11 +641,11 @@ static int __terminal_commit_graphics(struct terminal* term)
 			continue;
 		}
 
-		kernel_gfx_draw_char(term->screen, 1 + x*8, 2+ y*8, term->textbuffer[i], __terminal_syntax_color(term, term->textbuffer[i]));
+		kernel_gfx_draw_char(screen, 1 + x*8, 2+ y*8, term->textbuffer[i], __terminal_syntax_color(term, term->textbuffer[i]));
 		x++;
 	}
 
-	term->screen->changed = 1;
+	screen->changed = 1;
 
 	return 0;
 }
