@@ -65,7 +65,8 @@ struct terminal {
     int head;
     int lines;
 
-    struct kref ref;
+    /* References held, one per thread whose term points here: see terminal_get */
+    int refs;
 
     struct window* screen;
     struct terminal_ops* ops;
@@ -74,7 +75,8 @@ struct terminal {
 };
 
 struct terminal* terminal_create(terminal_flags_t flags);
-int terminal_destroy(struct terminal* term);
+void terminal_get(struct terminal* term);
+void terminal_put(struct terminal* term);
 
 int scan(ubyte_t* data, int size);
 
@@ -85,7 +87,6 @@ void terminal_putchar(char c);
 
 
 void terminal_commit();
-void terminal_attach(struct terminal* term);
 void twriteln(const char* data);
 
 #endif

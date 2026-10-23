@@ -682,10 +682,9 @@ void __kthread_entry shell(int argc, char* argv[])
 			terminal_commit();
 			reset_shell();
 			break;
-		case GFX_EVENT_EXIT:{
-				terminal_destroy(term);
-				kernel_exit();
-			}
+		case GFX_EVENT_EXIT:
+			/* The terminal is freed when the last thread using it exits, which may be a program this shell started */
+			kernel_exit();
 			return;
 		default:
 			break;

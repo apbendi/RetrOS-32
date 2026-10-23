@@ -25,6 +25,7 @@
 #include <syscall_helper.h>
 
 #include <fs/fs.h>
+#include <terminal.h>
 
 #include <user.h>
 #include <admin.h>
@@ -373,6 +374,16 @@ int pcb_cleanup_routine(void* arg)
 	dbgprintf("%d\n", __cli_cnt);
 	struct pcb* pcb = &pcb_table[pid];
 
+	/* Its terminal stops drawing into its window, which goes now, and loses its reference. A program started from a
+	 * shell may still be writing to the shell's terminal (#55) */
+	if(pcb->term != NULL){
+		if(pcb->term->screen == pcb->gfx_window){
+			pcb->term->screen = NULL;
+		}
+		terminal_put(pcb->term);
+		pcb->term = NULL;
+	}
+
 	if(pcb->gfx_window != NULL){
 		gfx_destroy_window(pcb_table[pid].gfx_window);
 	}
@@ -465,6 +476,7 @@ error_t pcb_create_thread(struct pcb* parent, void (*entry)(), void* arg, byte_t
 		return ret;
 	}
 
+	terminal_get(pcb->term);
 	get_scheduler()->ops->add(get_scheduler(), pcb);
 
 	pcb_count++;
@@ -545,6 +557,7 @@ error_t pcb_create_process(char* program, int argc, char** argv, pcb_flag_t flag
 		return ret;
 	}
 
+	terminal_get(pcb->term);
 	get_scheduler()->ops->add(get_scheduler(), pcb);
 	// TODO: Check for errors
 
@@ -621,6 +634,7 @@ error_t pcb_create_kthread(void (*entry)(), char* name, int argc, char** argv)
 		return -ERROR_ALLOC;
 	}
 
+	terminal_get(pcb->term);
 	get_scheduler()->ops->add(get_scheduler(), pcb);
 
 	pcb_count++;
