@@ -833,7 +833,8 @@ void Editor::drawLineNumbers(const int* row_lines, int row_count)
     }
 
     gfx_draw_rectangle(gutter_x, HEADER_HEIGHT, gutter_w, text_h, COLOR_BG);
-    gfx_draw_line(gutter_x + gutter_w - 1, 0, gutter_x + gutter_w - 1, c_height, COLOR_VGA_MEDIUM_GRAY);
+    /* Below the header, which isn't redrawn when the gutter widens, so the line would stay there at its old place */
+    gfx_draw_line(gutter_x + gutter_w - 1, HEADER_HEIGHT, gutter_x + gutter_w - 1, c_height, COLOR_VGA_MEDIUM_GRAY);
 
     int rows = visibleLines();
     int draw_rows = minInt(rows, row_count);
@@ -876,7 +877,13 @@ void Editor::drawStatusLine(color_t color, const char* fmt, ...)
         w = 8;
     }
 
-    gfx_draw_rectangle(x, y, w, STATUS_HEIGHT, COLOR_BG);
+    /**
+     * The whole row, under the gutter and the margin too, except the gutter's line, which drawLineNumbers draws down
+     * to the bottom. The text starts further right as the gutter widens, and its old start would stay behind (#144)
+     */
+    int line_x = x - TEXT_GAP_WIDTH - 1;
+    gfx_draw_rectangle(TREE_VIEW_WIDTH, y, line_x - TREE_VIEW_WIDTH, STATUS_HEIGHT, COLOR_BG);
+    gfx_draw_rectangle(line_x + 1, y, TREE_VIEW_WIDTH + c_width - (line_x + 1), STATUS_HEIGHT, COLOR_BG);
 
     int max_chars = w / 8;
     if (max_chars < 1) {
@@ -1188,13 +1195,15 @@ void Editor::reDraw(int from, int to)
     normalizeScroll(cols);
 
     int text_x = textStartX();
-    int text_w = textClipWidth();
     int text_h = c_height - HEADER_HEIGHT - STATUS_HEIGHT;
     if (text_h < 8) {
         text_h = 8;
     }
 
-    gfx_draw_rectangle(text_x, HEADER_HEIGHT, text_w, text_h, COLOR_BG);
+    /* From the gutter's line to the window's edge, so the gap before the text and the margin after it are painted
+     * too. Otherwise a resize leaves them black, and a narrower gutter leaves its old digits in the gap (#144) */
+    int pane_x = text_x - TEXT_GAP_WIDTH;
+    gfx_draw_rectangle(pane_x, HEADER_HEIGHT, TREE_VIEW_WIDTH + c_width - pane_x, text_h, COLOR_BG);
 
     int draw_rows = rows;
     if (draw_rows > EDITOR_MAX_VIEW_ROWS) {
@@ -2765,6 +2774,8 @@ void Editor::Help()
             applyResolution(event.data, event.data2);
             reDrawHeader();
             treeView->drawTree(this);
+            /* reDraw paints the gutter, the margin and the status line around the help. A resize leaves new space black */
+            reDraw(0, m_bufferHead);
             drawHelp();
             break;
 
