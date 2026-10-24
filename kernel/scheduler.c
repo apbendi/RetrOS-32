@@ -163,12 +163,18 @@ static error_t sched_block(struct scheduler* sched, struct pcb* pcb)
     pcb->state = BLOCKED;
 
     CRITICAL_SECTION({
+        /* Switch at a depth of 1, as sched_default explains. acquire calls this from its own critical section. */
+        int depth = __cli_cnt;
+        __cli_cnt = 1;
+
         pcb_save_context(pcb);
 
         /* Switch to next PCB, should be chosen by flag? */
         assert(sched_round_robin(sched) == ERROR_OK);
 
         pcb_restore_context(sched->ctx.running);
+
+        __cli_cnt = depth;
     });
 
     return ERROR_OK;
@@ -297,6 +303,14 @@ static error_t sched_default(struct scheduler* sched)
     sched->ctx.running->yields++;
 
     CRITICAL_SECTION({
+        /**
+         * __cli_cnt is one count for all threads, so every switch happens at a depth of 1, whatever the caller's:
+         * the thread switched to unwinds its own depth from there, and this one gets its own back when it's switched
+         * in again. A thread that switched deeper, like one blocking in acquire, left the count above 0 for the
+         * others, with interrupts off, until it ran again; one killed meanwhile never did.
+         */
+        int depth = __cli_cnt;
+        __cli_cnt = 1;
 
         pcb_save_context(sched->ctx.running);
 
@@ -304,7 +318,9 @@ static error_t sched_default(struct scheduler* sched)
         PANIC_ON_ERR(sched_round_robin(sched));
 
         pcb_restore_context(sched->ctx.running);
-        
+
+        __cli_cnt = depth;
+
         //dbgprintf("Switching too PCB %s with page dir: %x, stack: %x, kstack: %x\n", sched->ctx.running->name, sched->ctx.running->page_dir, sched->ctx.running->ctx.esp, sched->ctx.running->kesp);
     });
 
@@ -331,6 +347,8 @@ static error_t sched_exit(struct scheduler* sched)
     dbgprintf("Process %s exited\n", sched->ctx.running->name);
     
     CRITICAL_SECTION({
+        /* Switch at a depth of 1, as sched_default explains. This thread never runs again to unwind its own. */
+        __cli_cnt = 1;
 
         pcb_save_context(sched->ctx.running);
 
