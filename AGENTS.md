@@ -16,7 +16,7 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
 
 | Path | What's there |
 |---|---|
-| `kernel/` | Kernel core: scheduler, PCBs, memory (`kmem.c`, `vmem.c`, `memory.c`), interrupts (`arch/`, `irs_entry.s`), syscalls, symbols (`ksyms.c`), the terminal (`terminal.c`) |
+| `kernel/` | Kernel core: scheduler, PCBs, memory (`kmem.c`, `vmem.c`, `memory.c`), interrupts (`arch/`, `irs_entry.s`), syscalls, symbols (`ksyms.c`), the terminal (`terminal.c`), the clipboard (`clipboard.c`) |
 | `kernel/kthreads/` | Kernel threads with windows: `shell`, `taskbar` (Start menu), `kclock`, `sysinf`, `about`, … |
 | `graphics/` | Window server (`windowserver.c`), window manager (`windowmanager.c`), windows (`window.c`), drawing (`gfxlib.c`), the gfx syscall (`api.c`) |
 | `drivers/` | VBE, keyboard, mouse, ATA, e1000, … |
@@ -297,7 +297,8 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - **Keys:** Shift with an arrow, Home, End, Page Up or Page Down selects; Ctrl+A selects all; Esc clears. Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste through the clipboard. Typing, Enter, Tab, Backspace and Delete replace or delete the selection.
 - **The mouse** (`handleMouse`): a press in the text puts the cursor at the nearest boundary between characters (`indexAtPoint`) and starts a selection; dragging moves its end; Shift+click selects from the cursor to there. A double click selects the word under the mouse, letters, digits and `_` or else a run of one character, and a triple click its line (`selectAround`). Neither starts a drag. Held above or below the text, a drag scrolls a row every `EDITOR_DRAG_SCROLL_MS`, so the loop waits for events without blocking meanwhile. The file tree still works on clicks, `GFX_EVENT_MOUSE`.
 - **Pasting** inserts the text exactly as it is, without the `}` typing a `{` adds. What doesn't fit in the 64 KB buffer is left out, and the status line says so.
-- **Editing ranges:** `ropeDeleteRange` and `ropeInsertText` change the rope a node at a time. Each node is a `malloc`, so a page of the app's heap, and rebuilding the rope for each edit would need twice the pages.
+- **Editing ranges:** `ropeDeleteRange` and `ropeInsertText` change only the nodes around the range, rather than rebuilding the rope. `ropeInsertText` makes its new nodes before linking any in, so running out of memory leaves the text as it was.
+  - **Memory:** each node is a 268-byte `malloc`. The kernel packs small allocations into the free space of a process's existing heap regions (`vmem_stack_alloc`), so about 15 share a page, and a 64 KB file's rope is about 17 pages.
 - **Drawing:** `drawSelection` draws the selection's background before the text, laying rows out as `reDraw` does.
 
 **In a Terminal** (`kernel/terminal.c`), the selection is the text between `sel_anchor`, -1 for none, and `sel_end`, as indexes into the text buffer. The input line, the prompt and what's being typed, isn't selectable.
@@ -434,7 +435,8 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
    `apps/breakout`, `apps/bcalc` and `apps/cube` follow this pattern.
 3. **Math:** `libcore` has no libm. `sin_60`/`cos_60` in `lib/libc.c` are 6° tables, offset by 90°: `cos_60[i]` is sin(6i°), and `sin_60[i]` is −cos(6i°). Avoid 64-bit integer division.
 4. **Files:** the file syscalls are in `lib/syscall.c` and `include/lib/syscall.h`; see "File system" for how they behave. They return negative codes from `include/errors.h`, and `error_get_string` (in `libcore`) gives a code's message.
-5. **Build and launch:** `docker compose up` installs the app into `rootfs/bin`. Launch it with `exec -d /bin/<name>.o`.
+5. **Input beyond clicks:** for dragging, handle `GFX_EVENT_MOUSE_DOWN`, `GFX_EVENT_MOUSE_MOVE` and `GFX_EVENT_MOUSE_UP`, and read the modifier keys and click counts from `flags` (see "Mouse" and "Key codes" under "Graphics system"). For copy and paste, `clipboard_set` and `clipboard_get` are in `lib/syscall.c` (see "Selection and the clipboard"). The Editor uses all of them.
+6. **Build and launch:** `docker compose up` installs the app into `rootfs/bin`. Launch it with `exec -d /bin/<name>.o`.
 
 These apps use RetrOS's own libraries, `libcore` and `libgraphic`, which aren't standard C. A program in standard C uses the C library instead: see "C programs".
 

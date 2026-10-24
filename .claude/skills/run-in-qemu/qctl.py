@@ -349,10 +349,25 @@ def mouse_to(m, x, y):
     sleep(0.1)
 
 
-def click(x, y, button, count=1):
+def hold_shift(m, seconds):
+    """Holds Shift for seconds. QEMU presses it now and releases it later, and mouse events meanwhile come with Shift held."""
+    m.run(f"sendkey shift {int(seconds * 1000)}")
+    sleep(0.05)
+    return time.time() + seconds
+
+
+def wait_until(deadline):
+    """Waits for a Shift held with hold_shift to come up, so the next command doesn't have it"""
+    left = deadline - time.time()
+    if left > 0:
+        sleep(left + 0.05)
+
+
+def click(x, y, button, count=1, shift=False):
     set_mark()
     m = Monitor()
     mouse_to(m, x, y)
+    released = hold_shift(m, 0.3 + 0.15 * count) if shift else 0
     # Repeated clicks come 150 ms apart, within the window server's 500 ms for a double or triple click
     for i in range(count):
         if i > 0:
@@ -360,6 +375,7 @@ def click(x, y, button, count=1):
         m.run(f"mouse_button {button}")
         sleep(0.1)
         m.run("mouse_button 0")
+    wait_until(released)
     m.close()
 
 
@@ -370,15 +386,18 @@ def move(x, y):
     m.close()
 
 
-def drag(x1, y1, x2, y2):
+def drag(x1, y1, x2, y2, shift=False):
     set_mark()
     m = Monitor()
     mouse_to(m, x1, y1)
+    steps = max(1, (max(abs(x2 - x1), abs(y2 - y1)) + 99) // 100)
+    released = hold_shift(m, 0.5 + 0.05 * steps) if shift else 0
     m.run("mouse_button 1")
     sleep(0.1)
     mouse_by(m, x2 - x1, y2 - y1)
     sleep(0.1)
     m.run("mouse_button 0")
+    wait_until(released)
     m.close()
 
 
@@ -590,10 +609,12 @@ def main():
     s = sub.add_parser("click"); s.add_argument("x", type=int); s.add_argument("y", type=int)
     s.add_argument("--right", action="store_true")
     s.add_argument("--count", type=int, default=1, help="click this many times, quickly: 2 for a double click")
+    s.add_argument("--shift", action="store_true", help="with Shift held")
     s = sub.add_parser("move"); s.add_argument("x", type=int); s.add_argument("y", type=int)
     s = sub.add_parser("drag")
     for a in ("x1", "y1", "x2", "y2"):
         s.add_argument(a, type=int)
+    s.add_argument("--shift", action="store_true", help="with Shift held")
     s = sub.add_parser("mon"); s.add_argument("command")
     a = p.parse_args()
 
@@ -610,9 +631,9 @@ def main():
     elif a.op == "windows": windows_cmd()
     elif a.op == "focus": focus(a.name)
     elif a.op == "shell": shell(a.command)
-    elif a.op == "click": click(a.x, a.y, 2 if a.right else 1, a.count)
+    elif a.op == "click": click(a.x, a.y, 2 if a.right else 1, a.count, a.shift)
     elif a.op == "move": move(a.x, a.y)
-    elif a.op == "drag": drag(a.x1, a.y1, a.x2, a.y2)
+    elif a.op == "drag": drag(a.x1, a.y1, a.x2, a.y2, a.shift)
     elif a.op == "mon": print(monitor(a.command))
 
 

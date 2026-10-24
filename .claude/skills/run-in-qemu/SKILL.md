@@ -36,6 +36,8 @@ $Q stop
 - **`focus NAME`** brings the window titled NAME to the front.
 - **`move X Y`** and **`drag X1 Y1 X2 Y2`** move the mouse; dragging a title bar moves the window.
 - **`click X Y --count 2`** clicks twice in quick succession, for a double click; `--count 3` for a triple. Separate `click` commands at one spot come about 430 ms apart, which the window server also counts as a double click, as it counts presses within 500 ms. Sleep at least 0.2 s between them for single clicks.
+- **`--shift`,** on `click` and `drag`, holds Shift through the press and release, e.g. for Shift+click to extend a selection. QEMU's `sendkey shift <ms>` presses Shift and releases it after the hold time, and mouse events meanwhile come with Shift held. The command waits for the release, so the next one doesn't get Shift.
+- **Selecting and copying:** the Editor and Terminal windows select with the mouse and the keyboard, and the shell's `clip` prints the clipboard to the serial log. So `drag`, then `key ctrl-c` (`ctrl-shift-c` in a Terminal), then `shell "clip"` and `wait` for the text checks what was selected without a screenshot.
 - **`text`** prints the VGA text screen, for the boot menu and text mode.
 - **`mon CMD`** runs any QEMU monitor command.
 
