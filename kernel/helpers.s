@@ -124,7 +124,12 @@ pcb_restore_context:
     pushl PCB_EFLAGS(%eax)  /* push EFLAGS onto the stack */
     popfl  /* pop EFLAGS from the stack */
 
-    popl %eax
+    /*
+     * The thread returns from the last call its switching function made at this depth: usually this one,
+     * but sched_round_robin's if that started a new PCB, since start_pcb never returns. There eax is
+     * checked for an error, so give it ERROR_OK, not a leftover stack value. movl leaves EFLAGS alone.
+     */
+    movl $0, %eax
 
     movl %ebp, %esp
     popl %ebp

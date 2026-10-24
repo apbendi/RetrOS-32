@@ -217,6 +217,8 @@ static error_t sched_round_robin(struct scheduler* sched)
                  * @brief This is where the new process is started
                  * This calls the start_pcb function and sets up the page directory.
                  * Should only be called once for each pcb.
+                 * start_pcb never returns, so the thread being switched out resumes after its call to
+                 * this function, not pcb_restore_context, and sees 0 in eax (see pcb_restore_context).
                  */
 
                 if(next->is_process){
