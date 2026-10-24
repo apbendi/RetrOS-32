@@ -61,7 +61,7 @@ int gfx_push_event(struct window* w, struct gfx_event* e)
 	});
 
 	/* TODO: Check for a block reason */
-	if(w->owner->state == BLOCKED) w->owner->state = RUNNING;
+	pcb_wake(w->owner);
 
 	return 0;
 }

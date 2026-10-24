@@ -170,7 +170,8 @@ error_t pcb_create_thread(struct pcb* parent, void (*entry)(), void* arg, byte_t
 error_t pcb_create_process(char* program, int args, char** argv, pcb_flag_t flags);
 
 int pcb_await(int pid);
-void pcb_kill(int pid);
+error_t pcb_kill(int pid);
+void pcb_wake(volatile struct pcb* pcb);
 
 void pcb_dbg_print(struct pcb* pcb);
 

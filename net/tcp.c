@@ -382,7 +382,7 @@ tcb_new_error:
 #define TCP_UNBLOCK(sock)\
 	if(sock->waiting != NULL){\
 		dbgprintf("[TCP] Unblocking process %d on socket %d\n", sock->waiting->pid, sock->socket);\
-		sock->waiting->state = RUNNING;\
+		pcb_wake(sock->waiting);\
 		sock->waiting = NULL;\
 	}
 
@@ -1297,7 +1297,7 @@ static int tcp_state_machine(struct sk_buff* skb){
 		sk->tcp->time_wait_expire = 0;
 		sk->data_ready = -1;
 		if(sk->waiting != NULL){
-			sk->waiting->state = RUNNING;
+			pcb_wake(sk->waiting);
 			sk->waiting = NULL;
 		}
 		if(sk->closing){
@@ -1444,7 +1444,7 @@ static int tcp_state_machine(struct sk_buff* skb){
 			sk->data_ready = -1;
 
 			if(sk->waiting != NULL){
-				sk->waiting->state = RUNNING;
+				pcb_wake(sk->waiting);
 				sk->waiting = NULL;
 			}
 			skb_free(skb);
@@ -1494,7 +1494,7 @@ static int tcp_state_machine(struct sk_buff* skb){
 			sk->data_ready = -1;
 
 			if(sk->waiting != NULL){
-				sk->waiting->state = RUNNING;
+				pcb_wake(sk->waiting);
 				sk->waiting = NULL;
 			}
 			skb_free(skb);
@@ -1525,7 +1525,7 @@ static int tcp_state_machine(struct sk_buff* skb){
 			sk->tcp->time_wait_expire = 0;
 			sk->data_ready = -1;
 			if(sk->waiting != NULL){
-				sk->waiting->state = RUNNING;
+				pcb_wake(sk->waiting);
 				sk->waiting = NULL;
 			}
 			skb_free(skb);
@@ -1603,7 +1603,7 @@ static int tcp_state_machine(struct sk_buff* skb){
 				sk->tcp->state = TCP_CLOSE_WAIT;
 				sk->data_ready = -1;
 				if(sk->waiting != NULL){
-					sk->waiting->state = RUNNING;
+					pcb_wake(sk->waiting);
 					sk->waiting = NULL;
 				}
 				result = ERROR_OK;
@@ -1647,7 +1647,7 @@ static int tcp_state_machine(struct sk_buff* skb){
 			/* Signal EOF to any blocked reader. */
 			sk->data_ready = -1;
 			if(sk->waiting != NULL){
-				sk->waiting->state = RUNNING;
+				pcb_wake(sk->waiting);
 				sk->waiting = NULL;
 			}
 			

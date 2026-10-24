@@ -256,7 +256,7 @@ static inline error_t net_sock_add_data_segment(struct sock* sock, struct sk_buf
         /* Wake the process that is blocked on this socket (accept/recv). */
         volatile struct pcb* pcb = sock->waiting;
         sock->waiting = NULL;
-        pcb->state = RUNNING;
+        pcb_wake(pcb);
     }
 
     sock->rx += skb->data_len;
@@ -439,7 +439,7 @@ void kernel_sock_shutdown(struct sock* socket, int how)
 
     /* Wake any process blocked on this socket (recv/accept/backlog waits). */
     if(socket->waiting != NULL){
-        socket->waiting->state = RUNNING;
+        pcb_wake(socket->waiting);
         socket->waiting = NULL;
     }
 

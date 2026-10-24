@@ -508,10 +508,34 @@ void th(int argc, char* argv[])
 }
 EXPORT_KSYMBOL(th);
 
+/* Kills a thread or program by the pid ps lists */
 void kill(int argc, char* argv[])
 {
-	int id = atoi(argv[1]);
-	pcb_kill(id);
+	/* atoi finds 0, idled's pid, in anything without digits, and overflows on too many */
+	int length = argc == 2 ? strlen(argv[1]) : 0;
+	bool_t number = length > 0 && length < 10;
+	for (int i = 0; i < length && number; i++){
+		number = isdigit(argv[1][i]);
+	}
+	if(!number){
+		twritef("usage: kill <pid>\n");
+		return;
+	}
+
+	int pid = atoi(argv[1]);
+	switch (pcb_kill(pid)){
+	case ERROR_OK:
+		break;
+	case -ERROR_ACCESS_DENIED:
+		twritef("%d is a system thread, which can't be killed.\n", pid);
+		break;
+	case -ERROR_INVALID_ARGUMENTS:
+		twritef("%d is the thread running this command. Use exit to close a shell.\n", pid);
+		break;
+	default:
+		twritef("No thread or program has pid %d.\n", pid);
+		break;
+	}
 }
 EXPORT_KSYMBOL(kill);
 

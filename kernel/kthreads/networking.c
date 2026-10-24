@@ -147,9 +147,7 @@ void __callback net_incoming_packet(struct netdev* dev)
     netd.stats.recvd++;
     dbgprintf("[net] RX queue depth is now %d\n", netd.skb_rx_queue->size);
 
-    if(netd.instance != NULL && netd.instance->state == BLOCKED){ 
-        netd.instance->state = RUNNING;
-    }
+    if(netd.instance != NULL) pcb_wake(netd.instance);
 
 }
 
@@ -229,9 +227,7 @@ int net_send_skb(struct sk_buff* skb)
     RETURN_ON_ERR(netd.skb_tx_queue->ops->add(netd.skb_tx_queue, skb));
     netd.packets++;
 
-    if(netd.instance != NULL && netd.instance->state == BLOCKED){ 
-        netd.instance->state = RUNNING;
-    }
+    if(netd.instance != NULL) pcb_wake(netd.instance);
 
     return 0;
 }

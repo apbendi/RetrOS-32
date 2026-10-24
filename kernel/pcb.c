@@ -32,14 +32,16 @@
 #include <usermanager.h>
 
 static struct pcb pcb_table[MAX_NUM_OF_PCBS];
+/* The user of the threads the kernel starts at boot, like idled, workd and wind. Logging in gives a thread another. */
+static struct user __system_user = {
+	.name = "system",
+	.permissions = SYSTEM_FULL_ACCESS,
+};
 static struct process __process = {
 	.current = &(struct pcb){
 		.name = "kernel",
 		.pid = 0,
-		.user = &(struct user){
-			.name = "system",
-			.permissions = SYSTEM_FULL_ACCESS,
-		}
+		.user = &__system_user
 	},
 };
 struct process* $process = &__process;
@@ -282,7 +284,7 @@ int pcb_total_usage()
 
 error_t pcb_get_info(int pid, struct pcb_info* info)
 {
-	if(pid < 0 || pid > MAX_NUM_OF_PCBS || pcb_table[pid].state == STOPPED)
+	if(pid < 0 || pid >= MAX_NUM_OF_PCBS || pcb_table[pid].state == STOPPED)
 		return -ERROR_INDEX;
 
 	struct pcb_info _info = {
@@ -295,17 +297,60 @@ error_t pcb_get_info(int pid, struct pcb_info* info)
 		.name = {0}
 	};
 	memcpy(_info.name, pcb_table[pid].name, PCB_MAX_NAME_LENGTH);
-	memcpy(_info.user, pcb_table[pid].user->name, USER_MAX_NAME_LENGTH);
+	/* A PCB being created gets its user after its slot */
+	if(pcb_table[pid].user != NULL) memcpy(_info.user, pcb_table[pid].user->name, USER_MAX_NAME_LENGTH);
 
 	*info = _info;
 
 	return ERROR_OK;
 }
 
-void pcb_kill(int pid)
+/**
+ * Kills a thread or process: the scheduler never runs it again, wherever it was, and hands it to workd to clean up. Locks
+ * it holds stay held. The threads the kernel starts at boot can't be killed, and neither can the caller, which can exit
+ * instead.
+ * @return 0, -ERROR_INDEX if no thread has the pid, -ERROR_ACCESS_DENIED for a boot thread, or -ERROR_INVALID_ARGUMENTS
+ *         for the caller
+ */
+error_t pcb_kill(int pid)
 {
-	if(pid < 0 || pid > MAX_NUM_OF_PCBS) return;
-	pcb_table[pid].state = ZOMBIE;
+	if(pid < 0 || pid >= MAX_NUM_OF_PCBS) return -ERROR_INDEX;
+
+	/* With interrupts off, workd can't free the slot between the checks and the kill */
+	error_t ret = ERROR_OK;
+	ENTER_CRITICAL();
+	struct pcb* pcb = &pcb_table[pid];
+	if(pcb->state == STOPPED){
+		/* A free slot isn't in the scheduler's queue, so a zombie there would never be cleaned up */
+		ret = -ERROR_INDEX;
+	} else if(pcb->user == &__system_user){
+		/* idled keeps the scheduler from running out of threads, and workd cleans up after every exit, its own included */
+		ret = -ERROR_ACCESS_DENIED;
+	} else if(pcb == $process->current){
+		/* It would run on as a zombie until it set its own state again */
+		ret = -ERROR_INVALID_ARGUMENTS;
+	} else {
+		pcb->state = ZOMBIE;
+	}
+	LEAVE_CRITICAL();
+
+	return ret;
+}
+
+/**
+ * Makes a thread that blocked itself, waiting for something, runnable again. Wake threads with this, not by setting
+ * their state, which would bring back one killed while it waited.
+ */
+void pcb_wake(volatile struct pcb* pcb)
+{
+	/**
+	 * With interrupts off, a kill can't come between the check and the store. Interrupt handlers call this too, like
+	 * the e1000's waking netd, so put the interrupt flag back as it was: LEAVE_CRITICAL would turn interrupts on.
+	 */
+	uint32_t eflags;
+	asm volatile("pushfl; popl %0; cli" : "=r"(eflags) : : "memory");
+	if(pcb->state == BLOCKED) pcb->state = RUNNING;
+	asm volatile("pushl %0; popfl" : : "r"(eflags) : "memory", "cc");
 }
 
 void Genesis()

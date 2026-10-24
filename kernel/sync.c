@@ -106,10 +106,12 @@ void release(mutex_t* l)
     mutex_validate(l);
 
     ENTER_CRITICAL();
-    struct pcb* blocked = l->blocked->ops->pop(l->blocked);
-    if(blocked != NULL){
+    struct pcb* blocked;
+    while((blocked = l->blocked->ops->pop(l->blocked)) != NULL){
         get_scheduler()->ops->add(get_scheduler(), blocked);
-        blocked->state = RUNNING;
+        /* One killed while it waited goes to the scheduler only to be cleaned up. It would never release the lock. */
+        if(blocked->state == ZOMBIE) continue;
+        pcb_wake(blocked);
 
         assert(l->state == LOCKED);
         LEAVE_CRITICAL();
