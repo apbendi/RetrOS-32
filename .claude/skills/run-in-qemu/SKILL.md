@@ -109,7 +109,7 @@ lldb --batch -o "target create --arch i386 bin/symbols" -o "settings set target.
      -o "gdb-remote localhost:1234" -o "breakpoint set -f cmds.c -l 130" -o "process continue" \
      -o "frame variable" -o "p *fs" -o "process detach" > .qemu/lldb.out 2>&1 &
 $Q pick 1024          # boots; it also notices if lldb stops the VM during boot
-$Q shell "list"       # runs the line with the breakpoint
+$Q shell "ls"         # runs the line with the breakpoint
 cat .qemu/lldb.out
 ```
 

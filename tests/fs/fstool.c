@@ -14,7 +14,7 @@
  *   fstool IMAGE pwrite PATH OFFSET      stdin into an existing PATH at OFFSET, after a seek
  *   fstool IMAGE append PATH             stdin onto the end of an existing PATH
  *   fstool IMAGE truncate PATH           empty an existing PATH, by opening it with the truncate flag
- *   fstool IMAGE new PATH                create an empty file, as the shell's "new file" does
+ *   fstool IMAGE new PATH                create an empty file, as the shell's touch does
  *   fstool IMAGE rm|mkdir|rmdir PATH     fs_unlink, fs_mkdir and fs_rmdir, which the syscalls of the same names use
  *   fstool IMAGE mv OLD NEW              fs_rename
  *   fstool IMAGE same-entry PATH OTHER   fs_same_entry: "same" or "different"
@@ -269,7 +269,7 @@ int main(int argc, char* argv[])
         status = fd < 0 ? failed("open", fd) : 0;
         if(fd >= 0) fs_close(fd);
     } else if(strcmp(op, "new") == 0){
-        /* The shell's "new file" opens with only the create flag */
+        /* The shell's touch opens with only the create flag */
         int fd = fs_open(arg, FS_FILE_FLAG_CREATE);
         status = fd < 0 ? failed("open", fd) : 0;
         if(fd >= 0) fs_close(fd);

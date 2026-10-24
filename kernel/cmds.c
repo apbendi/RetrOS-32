@@ -67,39 +67,6 @@ static int __write_file(char* filename, char* buffer, int size){
 }
 
 
-/**
- * @brief Create a file or directory
- * Specified by second argument "file" or "dir"
- */
-static int new(int argc, char* argv[])
-{
-    if(argc < 3) {
-        twritef("Usage: new [file, dir] <name>\n");
-        return 1;
-    }
-
-    if(strcmp(argv[1], "file") == 0) {
-
-        int fd = fs_open(argv[2], FS_FILE_FLAG_CREATE);
-        if(fd < 0) {
-            twritef("Failed to create file %s\n", argv[2]);
-            return 1;
-        }
-        fs_close(fd);
-
-    } else if(strcmp(argv[1], "dir") == 0) {
-
-        twritef("Currently unsupported.\n");
-    
-    } else {
-        twritef("Usage: new <file, dir> <name>\n");
-        return 1;
-    }
-
-    return 0;
-}
-EXPORT_KSYMBOL(new);
-
 /* Prints why a file system command failed on path, e.g. "rm: /bin: Is a directory." */
 static void __fs_cmd_error(const char* cmd, const char* path, int err)
 {
@@ -117,7 +84,7 @@ static const char* __padding(const char* text, int width)
     return spaces + (sizeof(spaces) - 1 - pad);
 }
 
-/* One line of list: the entry's size, the date and time it was last written, and its name, with "/" for a directory */
+/* One line of ls: the entry's size, the date and time it was last written, and its name, with "/" for a directory */
 static void __list_entry(const struct fs_dirent* entry)
 {
     char date[TIME_FORMAT_DATE_MAX + 1] = "";
@@ -146,7 +113,7 @@ static int __list_path(const char* path)
     struct fs_dirent entry;
     int ret = fs_stat(path, &entry);
     if(ret < 0){
-        __fs_cmd_error("list", path, ret);
+        __fs_cmd_error("ls", path, ret);
         return -1;
     }
 
@@ -158,7 +125,7 @@ static int __list_path(const char* path)
 
     int fd = fs_open(path, FS_FILE_FLAG_READ);
     if(fd < 0){
-        __fs_cmd_error("list", path, fd);
+        __fs_cmd_error("ls", path, fd);
         return -1;
     }
 
@@ -171,14 +138,14 @@ static int __list_path(const char* path)
 
     twritef("%d directory entries.\n", entries);
     if(ret < 0){
-        __fs_cmd_error("list", path, ret);
+        __fs_cmd_error("ls", path, ret);
         return -1;
     }
     return 0;
 }
 
 /* Lists each path given, or the current directory */
-static int list(int argc, char* argv[])
+static int ls(int argc, char* argv[])
 {
     if(argc < 2) return __list_path(".");
 
@@ -188,12 +155,6 @@ static int list(int argc, char* argv[])
         if(__list_path(argv[i]) < 0) failed = -1;
     }
     return failed;
-}
-EXPORT_KSYMBOL(list);
-
-static int ls(int argc, char* argv[])
-{
-    return list(argc, argv);
 }
 EXPORT_KSYMBOL(ls);
 
@@ -249,6 +210,23 @@ static int mkdir(int argc, char* argv[])
     return __fs_each_path("mkdir", argc, argv, fs_mkdir);
 }
 EXPORT_KSYMBOL(mkdir);
+
+/* Creates an empty file, or leaves a file that's already there as it is */
+static int __touch(const char* path)
+{
+    int fd = fs_open(path, FS_FILE_FLAG_CREATE);
+    if(fd < 0) return fd;
+
+    fs_close(fd);
+    return 0;
+}
+
+/* Creates empty files. Directories are for mkdir. */
+static int touch(int argc, char* argv[])
+{
+    return __fs_each_path("touch", argc, argv, __touch);
+}
+EXPORT_KSYMBOL(touch);
 
 /* Deletes files. Directories are for rmdir. */
 static int rm(int argc, char* argv[])
@@ -508,15 +486,15 @@ static int help(int argc, char* argv[])
 {
     twritef("Available commands:\n\n");
     twritef("Filesystem:      System:      Etc:\n");
-    twritef("  ls, list        ps           help\n");
-    twritef("  cd, pwd         tree         reset\n");
-    twritef("  mkdir, rmdir    kill         about\n");
-    twritef("  rm, mv, cp      exec         xxd\n");
-    twritef("  new, view       fdisk        bg\n");
-    twritef("  file            meminfo      sh\n");
-    twritef("Network:          conf         echo\n");
+    twritef("  ls, cd, pwd     ps           help\n");
+    twritef("  mkdir, rmdir    tree         reset\n");
+    twritef("  touch, cat      kill         about\n");
+    twritef("  rm, mv, cp      exec         bg\n");
+    twritef("  find, xxd       fdisk        sh\n");
+    twritef("                  meminfo      echo\n");
+    twritef("Network:          conf         color\n");
     twritef(" socks            services\n");
-    twritef(" ifconfig         admin        color\n");
+    twritef(" ifconfig         admin\n");
     twritef(" dns, tcp         clear\n\n");
     twritef("Quote names with spaces: cd \"my files\"\n");
     twritef("Compile C: exec /bin/tcc.o hello.c -o hello\n");
@@ -668,58 +646,116 @@ static int kevents(int argc, char* argv[])
 EXPORT_KSYMBOL(kevents);
 
 
-/* Prints a file's text */
-static int view(int argc, char* argv[]){
-    if(argc < 2) {
-        twritef("Usage: view <path>\n");
-        return 1;
-    }
+/* How much of a file cat and xxd read at a time. A multiple of xxd's rows, so only the last chunk ends a row early. */
+#define READ_CHUNK_SIZE 4096
 
-    struct fs_dirent entry;
-    int ret = fs_stat(argv[1], &entry);
-    if(ret == 0 && (entry.attributes & FS_ATTR_DIRECTORY)) ret = -ERROR_IS_DIRECTORY;
-    if(ret < 0){
-        __fs_cmd_error("view", argv[1], ret);
-        return -1;
-    }
-
-    int fd = fs_open(argv[1], FS_FILE_FLAG_READ);
-    if(fd < 0) {
-        __fs_cmd_error("view", argv[1], fd);
-        return -1;
-    }
-
-    int size = fs_size(fd);
-    if(size == 0) {
-        twritef("File %s is empty\n", argv[1]);
-        fs_close(fd);
-        return -1;
-    }
-
-    /* kalloc_try, so a file bigger than the free memory is an error rather than a panic */
-    char* buf = kalloc_try(size + 1);
+/**
+ * Reads the file at path from start to end, a chunk at a time, passing op each chunk and where in the file it starts.
+ * Reports its own errors, as cmd's, including "Is a directory": reading one fails.
+ * @return 0, or -1 if it failed
+ */
+static int __read_chunks(const char* cmd, const char* path, void (*op)(const char* data, int size, int offset))
+{
+    char* buf = kalloc_try(READ_CHUNK_SIZE);
     if(buf == NULL){
-        __fs_cmd_error("view", argv[1], -ERROR_ALLOC);
-        fs_close(fd);
+        __fs_cmd_error(cmd, path, -ERROR_ALLOC);
         return -1;
     }
 
-    int len = fs_read(fd, buf, size);
-    fs_close(fd);
-    if(len < 0) {
-        __fs_cmd_error("view", argv[1], len);
+    int fd = fs_open(path, FS_FILE_FLAG_READ);
+    if(fd < 0){
+        __fs_cmd_error(cmd, path, fd);
         kfree(buf);
         return -1;
     }
 
-    /* The text ends where the file does, or at its first zero byte */
-    buf[len] = 0;
-    twritef("%s\n", buf);
-
+    int offset = 0;
+    int len;
+    while((len = fs_read(fd, buf, READ_CHUNK_SIZE)) > 0){
+        op(buf, len, offset);
+        offset += len;
+    }
+    fs_close(fd);
     kfree(buf);
+
+    if(len < 0){
+        __fs_cmd_error(cmd, path, len);
+        return -1;
+    }
     return 0;
 }
-EXPORT_KSYMBOL(view);
+
+static void __cat_chunk(const char* data, int size, int offset)
+{
+    terminal_write(data, size);
+}
+
+/* Prints files one after another, exactly as they are. If the last doesn't end its line, the shell's prompt does. */
+static int cat(int argc, char* argv[]){
+    if(argc < 2) {
+        twritef("Usage: cat <path> [path ...]\n");
+        return -1;
+    }
+
+    int failed = 0;
+    for (int i = 1; i < argc; i++){
+        if(__read_chunks("cat", argv[i], __cat_chunk) < 0) failed = -1;
+    }
+    return failed;
+}
+EXPORT_KSYMBOL(cat);
+
+/* How many bytes a row of xxd shows. 8 fit a new Terminal window's width. */
+#define XXD_ROW_BYTES 8
+
+/* One row of xxd: where in the file it starts, its bytes in hex, then as text, with "." for what isn't printable */
+static void __xxd_row(const unsigned char* data, int size, int offset)
+{
+    static const char digits[] = "0123456789abcdef";
+    char line[10 + 3*XXD_ROW_BYTES + 1 + XXD_ROW_BYTES + 1];
+    int len = 0;
+
+    for (int shift = 28; shift >= 0; shift -= 4){
+        line[len++] = digits[(offset >> shift) & 0xf];
+    }
+    line[len++] = ':';
+    line[len++] = ' ';
+
+    /* A short last row is padded, so its text lines up with the rows above */
+    for (int i = 0; i < XXD_ROW_BYTES; i++){
+        line[len++] = i < size ? digits[data[i] >> 4] : ' ';
+        line[len++] = i < size ? digits[data[i] & 0xf] : ' ';
+        line[len++] = ' ';
+    }
+    line[len++] = ' ';
+
+    for (int i = 0; i < size; i++){
+        line[len++] = data[i] >= 32 && data[i] <= 126 ? data[i] : '.';
+    }
+    line[len++] = '\n';
+
+    /* One write per row: twritef would take a call per byte */
+    terminal_write(line, len);
+}
+
+static void __xxd_chunk(const char* data, int size, int offset)
+{
+    for (int i = 0; i < size; i += XXD_ROW_BYTES){
+        int row = size - i < XXD_ROW_BYTES ? size - i : XXD_ROW_BYTES;
+        __xxd_row((const unsigned char*)data + i, row, offset + i);
+    }
+}
+
+/* Prints a whole file's bytes in hex, XXD_ROW_BYTES to a row */
+static int xxd(int argc, char* argv[]){
+    if(argc != 2) {
+        twritef("Usage: xxd <path>\n");
+        return -1;
+    }
+
+    return __read_chunks("xxd", argv[1], __xxd_chunk);
+}
+EXPORT_KSYMBOL(xxd);
 
 static int __lower(int c)
 {
@@ -811,26 +847,6 @@ static int find(int argc, char* argv[]){
     return 0;
 }
 EXPORT_KSYMBOL(find);
-
-static int file(int argc, char* argv[]){
-    if(argc < 2) {
-        twritef("Usage: file <path>\n");
-        return 1;
-    }
-
-    int fd = fs_open(argv[1], FS_FILE_FLAG_READ);
-    if(fd < 0) {
-        twritef("Failed to open file %s\n", argv[1]);
-        return -1;
-    }
-
-    twritef("File %s:\n", argv[1]);
-    twritef("Size: %d\n", fs_size(fd));
-
-    fs_close(fd);
-    return 0;
-}
-EXPORT_KSYMBOL(file);
 
 #include <net/socket.h>
 #include <net/net.h>

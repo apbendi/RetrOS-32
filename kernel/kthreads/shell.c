@@ -341,37 +341,6 @@ void tree() {
 EXPORT_KSYMBOL(tree);
 
 
-void xxd(int argc, char* argv[])
-{
-	if(argc == 1){
-		twritef("usage: xxd <file>\n");
-		return;
-	}
-
-	int inode = fs_open(argv[1], FS_FILE_FLAG_READ);
-	if(inode < 0){
-		twritef("File %s not found.\n", argv[1]);
-		return;
-	}
-
-	char* buf = kalloc(32*1024);
-	int ret = fs_read(inode, buf, 32*1024);
-	if(ret < 0){
-		fs_close(inode);
-		kfree(buf);
-		twritef("Error reading file\n");
-		return;
-	}
-	
-	hexdump(buf, ret);
-	
-	fs_close(inode);
-	kfree(buf);
-
-	return;
-}
-EXPORT_KSYMBOL(xxd);
-
 void sh(int argc, char* argv[])
 {
 	if(argc == 1){
@@ -982,6 +951,8 @@ static void __kthread_entry textshell()
 
 		if(c == '\n'){
 			x = 0;
+			/* After output that didn't end its line, the command starts a row of its own */
+			terminal_end_line(term);
 			__shell_echo((char*)text_shell_buffer);
 
 			exec_cmd(text_shell_buffer);

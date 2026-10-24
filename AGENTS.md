@@ -237,9 +237,9 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - **The GUI shell** is a kernel thread per Terminal window, `shell()`.
   - **Its state:** a kalloc'd `struct shell`. Its PCB's `local` points to it, so commands running on its thread, like `reset` and `exit`, find it. `local_free` frees it however the thread exits.
   - **A command line:** the prompt, `kernel:<directory>> `, and what's typed are the input line. Enter hides it, writes the same text into the output, runs the command with `exec_cmd`, and shows a new prompt after the output.
-  - **A program's unfinished last line** gets a newline before the prompt (`terminal_end_line`).
+  - **An unfinished last line,** a program's or `cat`'s, gets a newline before the prompt (`terminal_end_line`).
   - **Keys:** backspace, Up and Down through the last 32 commands (`SHELL_HISTORY_MAX`), and Ctrl+C, which leaves the line in the output with `^C` after it. A line holds `SHELL_LINE_MAX`, 1,088 bytes.
-- **Text mode** (`textshell`) uses a terminal with the `terminal_ops_textmode` ops. It edits its line on its frame's bottom row, and shows no input line.
+- **Text mode** (`textshell`) uses a terminal with the `terminal_ops_textmode` ops. It edits its line on its frame's bottom row, and shows no input line. It also ends an unfinished last line before a command's echo.
 
 **Layout:** a graphics terminal lays out its text and input line at the window's size when it draws. It wraps lines at the window's width, and shows as much of the end as fits.
 - **What's kept:** as many lines as a screen-sized window shows (`__terminal_max_lines`), and at most twice the characters it holds (`__terminal_max_chars`).
@@ -291,7 +291,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - **Moving:** `fs_rename` also moves between directories. It refuses an existing destination, and a directory moved inside itself, which FatFs would do, losing the directory. Renaming to the same name in another case works, which is how `mv docs Docs` changes only the case.
 - **The current directory** is per process, kept in `fs.c` by PID. A new process or kernel thread starts in its creator's, and a thread shares its process's. Each shell window is a kernel thread with its own.
 
-**In the shell:** `ls` (`list`), `cd`, `pwd`, `mkdir`, `rm`, `rmdir`, `mv`, `cp`, `find`, `view`, `file` and `new file`, in `kernel/cmds.c`. `mv` and `cp` put the source inside a destination that's a directory, as on Unix; `cp` copies files, not directories. Quote names with spaces. The prompt shows the current directory, `kernel:/my projects> `. It follows the output, and each command stays on screen after it, as in the log.
+**In the shell:** `ls`, `cd`, `pwd`, `mkdir`, `rm`, `rmdir`, `mv`, `cp`, `find`, `touch`, `cat` and `xxd`, in `kernel/cmds.c`. `touch` creates an empty file, and leaves one that's already there as it is. `cat` prints files exactly as they are, one after another, and `xxd` prints a file's bytes in hex. `mv` and `cp` put the source inside a destination that's a directory, as on Unix; `cp` copies files, not directories. Quote names with spaces. The prompt shows the current directory, `kernel:/my projects> `. It follows the output, and each command stays on screen after it, as in the log.
 
 **In apps:** `open`, `read`, `write`, `seek`, `fclose`, `stat`, `readdir`, `mkdir`, `unlink`, `rmdir`, `rename`, `chdir` and `getcwd` in `lib/syscall.c`. Finder and the tree view (`apps/utils/TreeView.hpp`) list with `readdir`.
 
@@ -364,7 +364,7 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
 - **The time of day:** `get_current_time` (`drivers/rtc.c`) returns exactly what the CMOS real-time clock holds; the OS has no time zones. The Makefile starts QEMU with `-rtc base=localtime`, so the clock shows the host's local time (#19). #20 covers keeping the RTC in UTC with an offset setting.
   - It reads the RTC with interrupts off. Selecting a register (port `0x70`) and reading it (`0x71`) are separate accesses, and a thread switch between them lets another thread change which register gets read.
   - `struct time`'s `year` has two digits. `get_current_time` sets `centuary` to 20, so the full year is `centuary * 100 + year`.
-- **Showing a time or date:** use `time_format_time` and `time_format_date` (`include/timefmt.h`), not your own format string. The taskbar, the Clock window and `list` all use them.
+- **Showing a time or date:** use `time_format_time` and `time_format_date` (`include/timefmt.h`), not your own format string. The taskbar, the Clock window and `ls` all use them.
   - **Settings:** they follow the `[time]` section of `rootfs/sysutil/default.cfg`:
     - `clock=12h` or `24h`;
     - `date=mdy`, `dmy` or `ymd`.

@@ -117,7 +117,8 @@ static int __terminal_grow_textbuffer(struct terminal* term, int min_capacity)
 static void __terminal_copy_to_serial(struct terminal* term, char c)
 {
 	if(c != '\n'){
-		term->serial_line[term->serial_line_length++] = c;
+		/* A zero byte would end the line early in serial_printf's %s, so it's logged as the blank the screen shows */
+		term->serial_line[term->serial_line_length++] = c == 0 ? ' ' : c;
 		if(term->serial_line_length < TERMINAL_SERIAL_LINE_SIZE-1) return;
 	}
 	term->serial_line[term->serial_line_length] = 0;
@@ -969,17 +970,23 @@ int terminal_read(char* data, int size)
 	return ret < 0 ? 0 : ret;
 }
 
+/* Makes room for a new line of text in a text mode terminal, scrolling its text up a line when its frame is full */
+static void __terminal_new_line_textmode(struct terminal* term)
+{
+	if(SCREEN_HEIGHT-2 <= term->lines){
+		__terminal_scroll(term);
+	} else {
+		term->lines++;
+	}
+}
+
 static int __terminal_putchar_textmode(struct terminal* term, char c)
 {
 	if(term == NULL) return -1;
 
 	terminal_lock(term);
 	if(c == '\n'){
-		if(SCREEN_HEIGHT-2 <= term->lines){
-			__terminal_scroll(term);
-		} else {
-			term->lines++;
-		}
+		__terminal_new_line_textmode(term);
 	}
 
 	int ret = __terminal_store_char(term, c);
@@ -1145,9 +1152,9 @@ void terminal_hide_input(struct terminal* term)
 }
 
 /**
- * Ends a graphics terminal's unfinished last line, if it has one, so what's written next starts a row of its own: a
- * shell's prompt after a program's printf("done"). The log already has that line, under the program's name, if the
- * program has exited, so the newline isn't logged again then.
+ * Ends a terminal's unfinished last line, if it has one, so what's written next starts a row of its own: a shell's
+ * prompt after a program's printf("done"), or after cat of a file that doesn't end its line. The log already has that
+ * line, under the program's name, if the program has exited, so the newline isn't logged again then.
  */
 void terminal_end_line(struct terminal* term)
 {
@@ -1158,7 +1165,10 @@ void terminal_end_line(struct terminal* term)
 		if(term->serial_line_length > 0){
 			__terminal_copy_to_serial(term, '\n');
 		}
-		if(__terminal_buffer_char(term, '\n') == 0){
+		if(term->ops->putchar == __terminal_putchar_textmode){
+			__terminal_new_line_textmode(term);
+			__terminal_buffer_char(term, '\n');
+		} else if(__terminal_buffer_char(term, '\n') == 0){
 			__terminal_trim(term, '\n');
 		}
 	}

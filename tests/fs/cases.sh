@@ -221,7 +221,7 @@ write_empty() {
     create /E.TXT
     check
 }
-add write.empty-file "RetrOS creates an empty file, as the shell's new file does (#93)" write_empty
+add write.empty-file "RetrOS creates an empty file, as the shell's touch does (#93)" write_empty
 
 write_grow() {
     begin fresh || return

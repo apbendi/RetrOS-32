@@ -74,8 +74,8 @@ static struct file* __fs_file(int fd)
 
 /**
  * The file system fs_get() returns and fs_open and friends use: the first one registered, behind operations that
- * normalize every path first (fs_path_normalize). Callers that use the operations directly, like the shell's
- * list and file commands, get the same paths as fs_open.
+ * normalize every path first (fs_path_normalize). Callers that use the operations directly get the same paths as
+ * fs_open.
  */
 static struct filesystem* fs_backend = NULL;
 static struct filesystem fs_checked;
