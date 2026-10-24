@@ -673,6 +673,27 @@ int Editor::prevVisualRowStart(int row_start_index, int cols) const
     return prev;
 }
 
+/* The rows the text takes from the row that starts at index to its end, counted as scrolling counts them */
+int Editor::rowsFrom(int index, int cols) const
+{
+    int rows = 0;
+    int i = clampInt(index, 0, m_bufferHead);
+    while (i < m_bufferHead) {
+        int next = nextVisualRowStart(i, cols);
+        if (next <= i) {
+            break;
+        }
+        rows++;
+        i = next;
+    }
+
+    /* The empty line after a newline at the end has a row too */
+    if (m_bufferHead == 0 || m_textBuffer[m_bufferHead - 1] == '\n') {
+        rows++;
+    }
+    return rows;
+}
+
 void Editor::cursorFromViewStart(int view_start, int cols, int* out_row, int* out_col) const
 {
     int row = 0;
@@ -2155,25 +2176,39 @@ void Editor::FileChooser()
     }
 }
 
+/* The Help screen, a row each, with "" for an empty row */
+static const char* const editor_help[] = {
+    "Help",
+    "F1: Save file",
+    "F4: Open/create file",
+    "F2/F3: Scroll up/down",
+    "F9 or Esc: Close help",
+    "",
+    "Arrow keys: Move cursor",
+    "Home/End: Start/end of line",
+    "PgUp/PgDn: Move a page",
+    "Backspace: Delete character",
+    "Delete: Delete next character",
+    "Enter: New line",
+    "Tab: Insert spaces",
+    "Mouse: Click file in tree to open",
+};
+
+void Editor::drawHelp()
+{
+    int x = textStartX();
+
+    gfx_draw_rectangle(x, HEADER_HEIGHT, textClipWidth(), c_height - HEADER_HEIGHT - STATUS_HEIGHT, COLOR_BG);
+    for (int row = 0; row < (int)(sizeof(editor_help) / sizeof(editor_help[0])); row++) {
+        gfx_draw_format_text(x, HEADER_HEIGHT + (row * 8), COLOR_TEXT, "%s", editor_help[row]);
+    }
+}
+
 void Editor::Help()
 {
     reDrawHeader();
     treeView->drawTree(this);
-
-    int x = textStartX();
-
-    gfx_draw_rectangle(x, HEADER_HEIGHT, textClipWidth(), c_height - HEADER_HEIGHT - STATUS_HEIGHT, COLOR_BG);
-    gfx_draw_format_text(x, HEADER_HEIGHT, COLOR_TEXT, "Help");
-    gfx_draw_format_text(x, HEADER_HEIGHT + 8, COLOR_TEXT, "F1: Save file");
-    gfx_draw_format_text(x, HEADER_HEIGHT + 16, COLOR_TEXT, "F4: Open/create file");
-    gfx_draw_format_text(x, HEADER_HEIGHT + 24, COLOR_TEXT, "F2/F3: Scroll up/down");
-    gfx_draw_format_text(x, HEADER_HEIGHT + 32, COLOR_TEXT, "F9 or Esc: Close help");
-
-    gfx_draw_format_text(x, HEADER_HEIGHT + 48, COLOR_TEXT, "Arrow keys: Move cursor");
-    gfx_draw_format_text(x, HEADER_HEIGHT + 56, COLOR_TEXT, "Backspace: Delete character");
-    gfx_draw_format_text(x, HEADER_HEIGHT + 64, COLOR_TEXT, "Enter: New line");
-    gfx_draw_format_text(x, HEADER_HEIGHT + 72, COLOR_TEXT, "Tab: Insert spaces");
-    gfx_draw_format_text(x, HEADER_HEIGHT + 80, COLOR_TEXT, "Mouse: Click file in tree to open");
+    drawHelp();
 
     while (1) {
         struct gfx_event event;
@@ -2197,20 +2232,7 @@ void Editor::Help()
             applyResolution(event.data, event.data2);
             reDrawHeader();
             treeView->drawTree(this);
-
-            x = textStartX();
-            gfx_draw_rectangle(x, HEADER_HEIGHT, textClipWidth(), c_height - HEADER_HEIGHT - STATUS_HEIGHT, COLOR_BG);
-            gfx_draw_format_text(x, HEADER_HEIGHT, COLOR_TEXT, "Help");
-            gfx_draw_format_text(x, HEADER_HEIGHT + 8, COLOR_TEXT, "F1: Save file");
-            gfx_draw_format_text(x, HEADER_HEIGHT + 16, COLOR_TEXT, "F4: Open/create file");
-            gfx_draw_format_text(x, HEADER_HEIGHT + 24, COLOR_TEXT, "F2/F3: Scroll up/down");
-            gfx_draw_format_text(x, HEADER_HEIGHT + 32, COLOR_TEXT, "F9 or Esc: Close help");
-
-            gfx_draw_format_text(x, HEADER_HEIGHT + 48, COLOR_TEXT, "Arrow keys: Move cursor");
-            gfx_draw_format_text(x, HEADER_HEIGHT + 56, COLOR_TEXT, "Backspace: Delete character");
-            gfx_draw_format_text(x, HEADER_HEIGHT + 64, COLOR_TEXT, "Enter: New line");
-            gfx_draw_format_text(x, HEADER_HEIGHT + 72, COLOR_TEXT, "Tab: Insert spaces");
-            gfx_draw_format_text(x, HEADER_HEIGHT + 80, COLOR_TEXT, "Mouse: Click file in tree to open");
+            drawHelp();
             break;
 
         case GFX_EVENT_EXIT:
@@ -2271,6 +2293,51 @@ void Editor::EditorLoop()
     }
 }
 
+/* Moves the cursor down a line, to the column it had before moving up or down, or the end of a shorter line. @return false on the last line */
+bool Editor::cursorDown()
+{
+    int currentStart = lineStart(m_bufferEdit);
+    int currentCol = m_bufferEdit - currentStart;
+
+    if (m_preferredColumn < 0) {
+        m_preferredColumn = currentCol;
+    }
+
+    int currentEnd = lineEnd(currentStart);
+    if (currentEnd >= m_bufferHead || m_textBuffer[currentEnd] != '\n') {
+        return false;
+    }
+
+    int nextStart = currentEnd + 1;
+    int nextEnd = lineEnd(nextStart);
+    int nextLen = nextEnd - nextStart;
+
+    m_bufferEdit = nextStart + minInt(m_preferredColumn, nextLen);
+    return true;
+}
+
+/* Moves the cursor up a line, as cursorDown moves it down. @return false on the first line */
+bool Editor::cursorUp()
+{
+    int currentStart = lineStart(m_bufferEdit);
+    int currentCol = m_bufferEdit - currentStart;
+
+    if (m_preferredColumn < 0) {
+        m_preferredColumn = currentCol;
+    }
+
+    if (currentStart == 0) {
+        return false;
+    }
+
+    int prevEnd = currentStart - 1;
+    int prevStart = lineStart(prevEnd);
+    int prevLen = prevEnd - prevStart;
+
+    m_bufferEdit = prevStart + minInt(m_preferredColumn, prevLen);
+    return true;
+}
+
 void Editor::putChar(unsigned char c)
 {
     if (c == '\r') {
@@ -2307,46 +2374,58 @@ void Editor::putChar(unsigned char c)
         m_preferredColumn = -1;
         break;
 
-    case KEY_DOWN: {
-        int currentStart = lineStart(m_bufferEdit);
-        int currentCol = m_bufferEdit - currentStart;
+    case KEY_DOWN:
+        cursorDown();
+        break;
 
-        if (m_preferredColumn < 0) {
-            m_preferredColumn = currentCol;
+    case KEY_UP:
+        cursorUp();
+        break;
+
+    case KEY_HOME:
+        m_bufferEdit = lineStart(m_bufferEdit);
+        m_preferredColumn = -1;
+        break;
+
+    case KEY_END:
+        m_bufferEdit = lineEnd(m_bufferEdit);
+        m_preferredColumn = -1;
+        break;
+
+    case KEY_PAGE_DOWN:
+    case KEY_PAGE_UP: {
+        /* A screenful less a row, so the row at the edge stays in view. Past the last line, to the end of the text */
+        int page = visibleLines() - 1;
+        if (page < 1) {
+            page = 1;
         }
 
-        int currentEnd = lineEnd(currentStart);
-        if (currentEnd >= m_bufferHead || m_textBuffer[currentEnd] != '\n') {
-            break;
+        /* The view moves a page too, but down only as far as there's text below it */
+        bool down = c == KEY_PAGE_DOWN;
+        int cols = visibleColumns();
+        int below = rowsFrom(viewStartIndex(cols), cols) - visibleLines();
+        scroll(down ? minInt(page, below > 0 ? below : 0) : -page);
+        for (int n = 0; n < page; n++) {
+            if (!(down ? cursorDown() : cursorUp())) {
+                m_bufferEdit = down ? m_bufferHead : 0;
+                m_preferredColumn = -1;
+                break;
+            }
         }
-
-        int nextStart = currentEnd + 1;
-        int nextEnd = lineEnd(nextStart);
-        int nextLen = nextEnd - nextStart;
-
-        m_bufferEdit = nextStart + minInt(m_preferredColumn, nextLen);
         break;
     }
 
-    case KEY_UP: {
-        int currentStart = lineStart(m_bufferEdit);
-        int currentCol = m_bufferEdit - currentStart;
-
-        if (m_preferredColumn < 0) {
-            m_preferredColumn = currentCol;
+    case KEY_DELETE:
+        if (m_bufferEdit >= m_bufferHead) {
+            return;
         }
 
-        if (currentStart == 0) {
-            break;
+        if (ropeDeleteChar(m_bufferEdit)) {
+            m_dirty = 1;
+            m_preferredColumn = -1;
+            buffer_changed = true;
         }
-
-        int prevEnd = currentStart - 1;
-        int prevStart = lineStart(prevEnd);
-        int prevLen = prevEnd - prevStart;
-
-        m_bufferEdit = prevStart + minInt(m_preferredColumn, prevLen);
         break;
-    }
 
     case KEY_F3:
         scroll(1);

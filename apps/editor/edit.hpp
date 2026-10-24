@@ -88,6 +88,7 @@ private:
     int viewStartIndex(int cols) const;
     int nextVisualRowStart(int row_start_index, int cols) const;
     int prevVisualRowStart(int row_start_index, int cols) const;
+    int rowsFrom(int index, int cols) const;
     void cursorFromViewStart(int view_start, int cols, int* out_row, int* out_col) const;
 
     void setScrollFromIndex(int index, int cols);
@@ -95,6 +96,9 @@ private:
     void ensureCursorVisible(int cols, int rows);
 
     void getCursorLineCol(int& line, int& col) const;
+    bool cursorDown();
+    bool cursorUp();
+    void drawHelp();
     bool hasUnsavedChanges() const;
 
     void drawLineNumbers(const int* row_lines, int row_count);
