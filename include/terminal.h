@@ -102,6 +102,14 @@ struct terminal {
     color_t drawn_text_color;
     color_t drawn_bg_color;
 
+    /**
+     * The selection: the text between sel_anchor, where it started, and sel_end, the end that moves, as indexes into the
+     * text buffer. sel_anchor is -1 for none. selecting is set while the mouse is dragging it. See terminal_mouse.
+     */
+    int sel_anchor;
+    int sel_end;
+    bool_t selecting;
+
     struct window* screen;
     struct terminal_ops* ops;
     color_t text_color;
@@ -118,6 +126,7 @@ void terminal_set_input(struct terminal* term, const char* prompt, const char* t
 void terminal_hide_input(struct terminal* term);
 void terminal_end_line(struct terminal* term);
 void terminal_invalidate(struct terminal* term);
+int terminal_mouse(struct terminal* term, struct gfx_event* event);
 
 int scan(ubyte_t* data, int size);
 

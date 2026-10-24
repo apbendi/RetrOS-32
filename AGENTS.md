@@ -299,6 +299,12 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - **Editing ranges:** `ropeDeleteRange` and `ropeInsertText` change the rope a node at a time. Each node is a `malloc`, so a page of the app's heap, and rebuilding the rope for each edit would need twice the pages.
 - **Drawing:** `drawSelection` draws the selection's background before the text, laying rows out as `reDraw` does.
 
+**In a Terminal** (`kernel/terminal.c`), the selection is the text between `sel_anchor`, -1 for none, and `sel_end`, as indexes into the text buffer. The input line, the prompt and what's being typed, isn't selectable.
+- **The mouse:** `terminal_mouse` handles presses, drags and releases. A press starts a selection, a drag moves its end, and a release without a drag clears it. Shift+press moves the end of the selection there is. `__terminal_index_at` maps a point to a character with the layout `__terminal_draw_all` uses.
+- **Who calls it:** whoever is reading the window's events: the shell's loop, or `__terminal_scan_graphics` while a program reads a line. While a program runs without reading, the events wait in the window's queue.
+- **Drawing:** selected characters are drawn with the text and background colors swapped, and a selected newline as a cell. A change to the selection redraws the window in full. New output is never selected, so the drawing that adds only new text is unchanged, and scrolling the window's pixels moves the highlight with its text.
+- **Following the text:** dropping text from the buffer's start moves the selection, which shrinks or goes with what's dropped (`__terminal_selection_dropped`). `clear` and `reset` clear it.
+
 ## File system
 
 **Layers** (`fs/`):

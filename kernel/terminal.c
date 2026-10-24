@@ -65,13 +65,41 @@ static int __next_newline(void* _data)
 	return (int)data - (int)_data;
 }
 
+/**
+ * The selected text, from *start up to *end in the text buffer, whichever way it was selected, and within the text.
+ * @return false if nothing is selected
+ */
+static bool_t __terminal_selection(struct terminal* term, int* start, int* end)
+{
+	if(term->sel_anchor < 0) return false;
+
+	int anchor = term->sel_anchor < term->head ? term->sel_anchor : term->head;
+	int moving = term->sel_end < term->head ? term->sel_end : term->head;
+	*start = anchor < moving ? anchor : moving;
+	*end = anchor < moving ? moving : anchor;
+	return *start < *end;
+}
+
+/* Moves the selection with the text when count characters go from the text buffer's start. What went is no longer selected */
+static void __terminal_selection_dropped(struct terminal* term, int count)
+{
+	if(term->sel_anchor < 0) return;
+
+	term->sel_anchor = term->sel_anchor > count ? term->sel_anchor - count : 0;
+	term->sel_end = term->sel_end > count ? term->sel_end - count : 0;
+	if(term->sel_anchor == term->sel_end && !term->selecting){
+		term->sel_anchor = -1;
+	}
+}
+
 static void __terminal_remove_line(struct terminal* term)
 {
 	int skip = __next_newline(term->textbuffer);
 	memmove(term->textbuffer, &term->textbuffer[skip], term->head-skip);
 	term->head -= skip;
-	/* What's drawn moves with the text */
+	/* What's drawn and what's selected move with the text */
 	term->drawn_end -= skip;
+	__terminal_selection_dropped(term, skip);
 }
 
 static void __terminal_scroll(struct terminal* term)
@@ -252,6 +280,7 @@ struct terminal* terminal_create(terminal_flags_t flags)
 	term->bg_color = COLOR_BLACK;
 	term->screen = NULL;
 	term->reader = TERMINAL_NO_READER;
+	term->sel_anchor = -1;
 
 	char* bg_color = kernel_config_get_value("terminal", "background");
 	if(bg_color != NULL){
@@ -548,6 +577,8 @@ static int __terminal_scan_graphics(struct terminal* term, ubyte_t* data, int si
 			__terminal_end_read(term);
 			return 0;
 		default:
+			/* Selecting text works while a program reads, too */
+			terminal_mouse(term, &event);
 			break;
 		}
 	}
@@ -567,6 +598,8 @@ static int __terminal_reset(struct terminal* term)
 	term->tail = 0;
 	term->lines = 0;
 	term->drawn_valid = false;
+	term->sel_anchor = -1;
+	term->selecting = false;
 
 	memset(term->textbuffer, 0, term->textbuffer_size);
 	terminal_unlock(term);
@@ -620,6 +653,7 @@ static void __terminal_trim(struct terminal* term, char c)
 			}
 			memmove(term->textbuffer, term->textbuffer + drop, term->head - drop);
 			term->head -= drop;
+			__terminal_selection_dropped(term, drop);
 			/* The cut line wraps from a new start, so what's on screen moves */
 			term->drawn_valid = false;
 		}
@@ -760,10 +794,14 @@ static void __terminal_scroll_window(struct terminal* term, struct window* scree
 /**
  * Draws length characters of text from column *x of row *y, wrapping at columns, and moves *x and *y past them. Rows
  * above the window aren't drawn. A row below the window's last, with a character on it or ended by a newline, even an
- * empty one, scrolls the window up first.
+ * empty one, scrolls the window up first. index is where text starts in the text buffer, so selected characters are
+ * drawn with the colors swapped, or -1 for the input line, which isn't selected.
  */
-static void __terminal_draw_text(struct terminal* term, struct window* screen, const char* text, int length, int columns, int rows, int* x, int* y)
+static void __terminal_draw_text(struct terminal* term, struct window* screen, const char* text, int index, int length, int columns, int rows, int* x, int* y)
 {
+	int sel_start = 0, sel_end = 0;
+	bool_t selected = index >= 0 && __terminal_selection(term, &sel_start, &sel_end);
+
 	for (int i = 0; i < length; i++){
 		char c = text[i];
 		if(c != '\n' && *x == columns){
@@ -775,13 +813,19 @@ static void __terminal_draw_text(struct terminal* term, struct window* screen, c
 			*y = rows - 1;
 		}
 
+		/* A selected newline is a cell at its line's end, if the row has room for one */
+		bool_t inverse = selected && index + i >= sel_start && index + i < sel_end;
+		if(inverse && *y >= 0 && *x < columns){
+			kernel_gfx_draw_rectangle(screen, 1 + *x*8, 2 + *y*8, 8, 8, term->text_color);
+		}
+
 		if(c == '\n'){
 			*x = 0;
 			(*y)++;
 			continue;
 		}
 		if(*y >= 0){
-			kernel_gfx_draw_char(screen, 1 + *x*8, 2 + *y*8, c, __terminal_syntax_color(term, c));
+			kernel_gfx_draw_char(screen, 1 + *x*8, 2 + *y*8, c, inverse ? term->bg_color : __terminal_syntax_color(term, c));
 		}
 		(*x)++;
 	}
@@ -806,7 +850,7 @@ static void __terminal_draw_input(struct terminal* term, struct window* screen, 
 			__terminal_scroll_window(term, screen, rows, y - rows + 1);
 			y = rows - 1;
 		}
-		__terminal_draw_text(term, screen, term->input, term->input_length, columns, rows, &x, &y);
+		__terminal_draw_text(term, screen, term->input, -1, term->input_length, columns, rows, &x, &y);
 	}
 	term->drawn_input_end = __terminal_last_used_row(term, x, y);
 }
@@ -824,7 +868,7 @@ static void __terminal_draw_all(struct terminal* term, struct window* screen)
 
 	/* Rows above the window, the first line's first skip rows, aren't drawn. The input line continues the text */
 	int x = 0, y = -skip;
-	__terminal_draw_text(term, screen, term->textbuffer + start, term->head - start, columns, rows, &x, &y);
+	__terminal_draw_text(term, screen, term->textbuffer + start, start, term->head - start, columns, rows, &x, &y);
 	term->drawn_end = term->head;
 	term->drawn_x = x;
 	term->drawn_y = y;
@@ -875,13 +919,98 @@ static int __terminal_draw_changes(struct terminal* term, struct window* screen)
 	__terminal_clear_rows(term, screen, term->drawn_x, term->drawn_y, term->drawn_input_end - term->drawn_y + 1, rows);
 
 	int x = term->drawn_x, y = term->drawn_y;
-	__terminal_draw_text(term, screen, term->textbuffer + term->drawn_end, term->head - term->drawn_end, columns, rows, &x, &y);
+	__terminal_draw_text(term, screen, term->textbuffer + term->drawn_end, term->drawn_end, term->head - term->drawn_end, columns, rows, &x, &y);
 	term->drawn_end = term->head;
 	term->drawn_x = x;
 	term->drawn_y = y;
 	__terminal_draw_input(term, screen, columns, rows);
 
 	return 0;
+}
+
+/**
+ * The boundary between characters of the text nearest px, py in the window, with the text laid out as __terminal_draw_all
+ * lays it out. Above the window is its first row, and past a row's end is its end. Past the text, as on the input line,
+ * is the text's end.
+ */
+static int __terminal_index_at(struct terminal* term, struct window* screen, int px, int py)
+{
+	int columns = __terminal_columns(screen);
+	int rows = __terminal_rows(screen);
+	int skip;
+	int start = __terminal_first_shown(term, columns, rows, &skip);
+
+	int row = py < 2 ? 0 : (py - 2) / 8;
+	/* The nearer edge of the character under px */
+	int col = px < 1 ? 0 : (px - 1 + 4) / 8;
+	if(col > columns) col = columns;
+
+	int x = 0, y = -skip;
+	for (int i = start; i < term->head; i++){
+		char c = term->textbuffer[i];
+		if(c != '\n' && x == columns){
+			x = 0;
+			y++;
+		}
+
+		/* Past the end of a full row is the start of the next */
+		if(y > row || (y == row && x >= col)) return i;
+
+		if(c == '\n'){
+			if(y == row) return i;
+			x = 0;
+			y++;
+			continue;
+		}
+		x++;
+	}
+	return term->head;
+}
+
+/**
+ * Selects a graphics terminal's text with the mouse: a press starts a selection where it is, a drag moves its end, and
+ * a release without a drag clears it. A press with Shift moves the end of the selection there is. It's called by
+ * whoever is reading the terminal's window's events: its shell, or a program reading a line. The input line isn't
+ * selected, so a drag over it selects to the text's end.
+ * @return 1 if event was a press, drag or release, which it handled, 0 if not
+ */
+int terminal_mouse(struct terminal* term, struct gfx_event* event)
+{
+	if(term == NULL || event == NULL) return 0;
+	if(event->event != GFX_EVENT_MOUSE_DOWN && event->event != GFX_EVENT_MOUSE_MOVE && event->event != GFX_EVENT_MOUSE_UP){
+		return 0;
+	}
+
+	terminal_lock(term);
+	struct window* screen = term->screen;
+	if(screen == NULL || term->ops->commit != __terminal_commit_graphics){
+		terminal_unlock(term);
+		return 1;
+	}
+
+	int index = __terminal_index_at(term, screen, (int16_t)event->data, (int16_t)event->data2);
+	if(event->event == GFX_EVENT_MOUSE_DOWN){
+		if(!(event->flags & KEY_MOD_SHIFT) || term->sel_anchor < 0){
+			term->sel_anchor = index;
+		}
+		term->sel_end = index;
+		term->selecting = true;
+	} else if(term->selecting){
+		term->sel_end = index;
+		if(event->event == GFX_EVENT_MOUSE_UP){
+			term->selecting = false;
+			if(term->sel_end == term->sel_anchor) term->sel_anchor = -1;
+		}
+	} else {
+		terminal_unlock(term);
+		return 1;
+	}
+
+	/* What's selected changes the colors of text already drawn */
+	term->drawn_valid = false;
+	term->ops->commit(term);
+	terminal_unlock(term);
+	return 1;
 }
 
 static int __terminal_putchar_graphics(struct terminal* term, char c)
