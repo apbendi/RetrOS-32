@@ -22,15 +22,25 @@ typedef enum gfx_event_flags {
 
 typedef enum gfx_events {
     GFX_EVENT_KEYBOARD,
+    /* A click: the left button went down and up over the window. data and data2 are where it came up */
     GFX_EVENT_MOUSE,
     GFX_EVENT_EXIT,
-    GFX_EVENT_RESOLUTION
+    GFX_EVENT_RESOLUTION,
+    /**
+     * A press and what follows it, for dragging: the left button went down over the window's content, without moving
+     * or resizing the window. Then a move for each time the mouse moves while it's held, and the release, wherever the
+     * mouse is: a GFX_EVENT_MOUSE follows if that's over the window. data and data2 are relative to the window's
+     * content, so a move or release outside it is negative or past its size: read them as int16_t.
+     */
+    GFX_EVENT_MOUSE_DOWN,
+    GFX_EVENT_MOUSE_MOVE,
+    GFX_EVENT_MOUSE_UP
 } gfx_event_t;
 
 /**
- * flags is the modifier keys held, KEY_MOD_SHIFT, KEY_MOD_CTRL and KEY_MOD_ALT from keyboard.h, on a keyboard event:
- * those held when the key was pressed. It's 0 on other events. It fills the padding after event, so the struct is
- * 6 bytes, as it was before flags.
+ * flags is the modifier keys held, KEY_MOD_SHIFT, KEY_MOD_CTRL and KEY_MOD_ALT from keyboard.h: on a keyboard event,
+ * those held when the key was pressed, and on a press, move or release, those held at the time. It's 0 on other
+ * events. It fills the padding after event, so the struct is 6 bytes, as it was before flags.
  */
 struct gfx_event {
     uint8_t event;

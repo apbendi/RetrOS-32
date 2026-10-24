@@ -75,6 +75,10 @@ struct windowmanager {
     int mouse_state;
     /* window that got the current press, which also gets its release */
     struct window* pressed_window;
+    /* Set while pressed_window has had a GFX_EVENT_MOUSE_DOWN: it gets moves and the release. At drag_x, drag_y last */
+    int dragging;
+    int drag_x;
+    int drag_y;
 };
 
 struct windowmanager* wm_new(int flags);
