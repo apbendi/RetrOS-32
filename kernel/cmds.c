@@ -24,6 +24,7 @@
 #include <lib/lz.h>
 #include <timefmt.h>
 #include <errors.h>
+#include <clipboard.h>
 
 #define COMMAND(name, func) \
 	int name\
@@ -707,6 +708,57 @@ static int cat(int argc, char* argv[]){
     return failed;
 }
 EXPORT_KSYMBOL(cat);
+
+/**
+ * Without arguments, prints the clipboard exactly as it is, as cat prints a file. With them, sets the clipboard to
+ * them, separated by single spaces, as echo prints them, but without a newline after.
+ */
+static int clip(int argc, char* argv[]){
+    if(argc > 1){
+        int size = 0;
+        for (int i = 1; i < argc; i++){
+            size += strlen(argv[i]) + 1;
+        }
+
+        char* text = kalloc_try(size);
+        if(text == NULL){
+            twritef("clip: %s\n", error_get_string(-ERROR_ALLOC));
+            return -1;
+        }
+
+        int length = 0;
+        for (int i = 1; i < argc; i++){
+            int part = strlen(argv[i]);
+            memcpy(text + length, argv[i], part);
+            length += part;
+            if(i < argc - 1) text[length++] = ' ';
+        }
+
+        int ret = clipboard_set(text, length);
+        kfree(text);
+        if(ret < 0){
+            twritef("clip: %s\n", error_get_string(ret));
+            return -1;
+        }
+        return 0;
+    }
+
+    int size = clipboard_get(NULL, 0);
+    if(size <= 0) return 0;
+
+    char* text = kalloc_try(size);
+    if(text == NULL){
+        twritef("clip: %s\n", error_get_string(-ERROR_ALLOC));
+        return -1;
+    }
+
+    /* Another thread may have set a shorter text since */
+    int length = clipboard_get(text, size);
+    terminal_write(text, length < size ? length : size);
+    kfree(text);
+    return 0;
+}
+EXPORT_KSYMBOL(clip);
 
 /* How many bytes a row of xxd shows. 8 fit a new Terminal window's width. */
 #define XXD_ROW_BYTES 8

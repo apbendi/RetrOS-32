@@ -44,7 +44,7 @@ KERNELOBJ := $(addprefix $(BUILD_DIR)/,kernel.o terminal.o helpers.o pci.o virtu
 	libc.o interrupts.o irs_entry.o timer.o gdt.o smp.o keyboard.o pcb.o pcb_queue.o memory.o vmem.o kmem.o e1000.o display.o env.o conf.o \
 	sync.o kthreads.o ata.o atapi.o bitmap.o rtc.o tss.o kutils.o login.o cmds.o diskdev.o scheduler.o work.o rbuffer.o errors.o kclock.o tar.o color.o loopback.o \
 	serial.o io.o syscalls.o list.o hashmap.o vbe.o ksyms.o windowserver.o encoding.o mouse.o ipc.o sysinf.o font8.o net.o fs.o fatfs.o partition.o \
-	admin.o usermanager.o user.o group.o snake.o msgbox.o kevents.o textmode.o lz.o timefmt.o)
+	admin.o usermanager.o user.o group.o snake.o msgbox.o kevents.o textmode.o lz.o timefmt.o clipboard.o)
 KERNELOBJ += $(PROGRAMOBJ) $(GFXOBJ)
 
 BOOTOBJ := $(BUILD_DIR)/bootloader.o
