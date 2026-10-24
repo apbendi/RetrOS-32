@@ -197,6 +197,9 @@ The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but no
 - **The queue holds 10 events.** When it's full, the oldest is dropped.
 - **Drain all events every frame.** An app that reads one event per frame falls behind its input, and once the queue is full, events get dropped.
 - **On a resize,** apply only the latest size, and redraw everything. A window gets one `GFX_EVENT_RESOLUTION` per resize: when a corner drag is released (#10), or on maximize or restore. The kernel keeps the old content that still fits (#14), and the rest is black.
+- **Key codes** (`include/keyboard.h`): a `GFX_EVENT_KEYBOARD`'s `data` is the key's character, or for Ctrl+key, 128 plus the key's character without Shift, e.g. `CTRLC`, 227.
+  - **Keys without a character** have codes no Ctrl+key can be: the arrows (251–254), F1–F10 (193–202), `KEY_HOME`, `KEY_END`, `KEY_PAGE_UP`, `KEY_PAGE_DOWN` and `KEY_DELETE` (203–207), and F12 (134).
+  - **Apps** use the `KEY_*` names in `include/gfx/events.h`. Line editors ignore codes above 126.
 
 **Redraws:** the window server only redraws the screen when the mouse moves or a window is marked changed. Every gfx drawing syscall marks the app's window changed. Kernel threads that draw with `w->draw->*` must call `gfx_commit()` themselves, or their updates only appear when the mouse moves.
 
