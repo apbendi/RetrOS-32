@@ -234,6 +234,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - `GFX_EVENT_MOUSE_UP` where the button comes up, then the click if that's over the window.
 - **Coordinates** are relative to the content, so a move or release outside the window is negative or past its size: read `data` and `data2` as `int16_t`.
 - **Modifiers:** `flags` has the modifier keys held, as on a key, so Shift+click is a press with `KEY_MOD_SHIFT`.
+- **Double and triple clicks:** a press on the same window within `WM_MULTI_CLICK_MS`, 500 ms, and `WM_MULTI_CLICK_DISTANCE`, 4 pixels, of the last one counts one more, up to 3, then starts again. `GFX_EVENT_CLICKS(flags)` gives a press's count. The window manager keeps the last press's window (`click_window`), which `ws_remove` clears.
 - **The queue:** a move replaces a move at the end of the window's queue (`gfx_push_event`), so a drag can't push other events out.
 - **Destroyed windows:** `ws_remove` clears `pressed_window` and the drag, so nothing more is sent to a window that's going.
 
@@ -294,13 +295,13 @@ Syscalls run with interrupts enabled, so they can be preempted.
 
 **In the Editor** (`apps/editor/edit.cpp`), the selection runs from `m_selAnchor`, -1 for none, to the cursor.
 - **Keys:** Shift with an arrow, Home, End, Page Up or Page Down selects; Ctrl+A selects all; Esc clears. Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste through the clipboard. Typing, Enter, Tab, Backspace and Delete replace or delete the selection.
-- **The mouse** (`handleMouse`): a press in the text puts the cursor at the nearest boundary between characters (`indexAtPoint`) and starts a selection; dragging moves its end; Shift+click selects from the cursor to there. Held above or below the text, a drag scrolls a row every `EDITOR_DRAG_SCROLL_MS`, so the loop waits for events without blocking meanwhile. The file tree still works on clicks, `GFX_EVENT_MOUSE`.
+- **The mouse** (`handleMouse`): a press in the text puts the cursor at the nearest boundary between characters (`indexAtPoint`) and starts a selection; dragging moves its end; Shift+click selects from the cursor to there. A double click selects the word under the mouse, letters, digits and `_` or else a run of one character, and a triple click its line (`selectAround`). Neither starts a drag. Held above or below the text, a drag scrolls a row every `EDITOR_DRAG_SCROLL_MS`, so the loop waits for events without blocking meanwhile. The file tree still works on clicks, `GFX_EVENT_MOUSE`.
 - **Pasting** inserts the text exactly as it is, without the `}` typing a `{` adds. What doesn't fit in the 64 KB buffer is left out, and the status line says so.
 - **Editing ranges:** `ropeDeleteRange` and `ropeInsertText` change the rope a node at a time. Each node is a `malloc`, so a page of the app's heap, and rebuilding the rope for each edit would need twice the pages.
 - **Drawing:** `drawSelection` draws the selection's background before the text, laying rows out as `reDraw` does.
 
 **In a Terminal** (`kernel/terminal.c`), the selection is the text between `sel_anchor`, -1 for none, and `sel_end`, as indexes into the text buffer. The input line, the prompt and what's being typed, isn't selectable.
-- **The mouse:** `terminal_mouse` handles presses, drags and releases. A press starts a selection, a drag moves its end, and a release without a drag clears it. Shift+press moves the end of the selection there is. `__terminal_index_at` maps a point to a character with the layout `__terminal_draw_all` uses.
+- **The mouse:** `terminal_mouse` handles presses, drags and releases. A press starts a selection, a drag moves its end, and a release without a drag clears it. Shift+press moves the end of the selection there is. A double click selects a word and a triple click a line, as in the Editor (`__terminal_select_around`). `__terminal_index_at` maps a point to a character with the layout `__terminal_draw_all` uses.
 - **The keyboard:** `terminal_key` takes the selection's keys before the shell or a reader sees them. Shift with an arrow moves the selection's end a character, or a row on screen, starting a selection at the end of the output if there's none. Ctrl+Shift+A selects all the text kept, and Esc clears. Up and Down without Shift still go through the shell's history.
 - **Copying:** Ctrl+Shift+C copies the selection, and so does Ctrl+C when something is selected, which also clears it. With nothing selected, Ctrl+C cancels the line, or ends a program's read, as before.
 - **Pasting:** Ctrl+V and Ctrl+Shift+V add the clipboard's text to the terminal's pending input (`pending`), with tabs made spaces and other control characters but newlines left out.

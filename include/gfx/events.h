@@ -41,7 +41,11 @@ typedef enum gfx_events {
  * flags is the modifier keys held, KEY_MOD_SHIFT, KEY_MOD_CTRL and KEY_MOD_ALT from keyboard.h: on a keyboard event,
  * those held when the key was pressed, and on a press, move or release, those held at the time. It's 0 on other
  * events. It fills the padding after event, so the struct is 6 bytes, as it was before flags.
+ * On a GFX_EVENT_MOUSE_DOWN, flags also counts the clicks: GFX_EVENT_CLICKS is 2 for a double click and 3 for a triple.
  */
+#define GFX_EVENT_CLICKS_SHIFT 4
+#define GFX_EVENT_CLICKS(flags) (((flags) >> GFX_EVENT_CLICKS_SHIFT) & 3)
+
 struct gfx_event {
     uint8_t event;
     uint8_t flags;

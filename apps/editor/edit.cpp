@@ -1040,6 +1040,54 @@ int Editor::indexAtPoint(int x, int y) const
     return m_bufferHead;
 }
 
+/* Whether c is part of a word, for a double click: a letter, a digit or _ */
+static bool isWordChar(unsigned char c)
+{
+    return isAlpha(c) || (c >= '0' && c <= '9');
+}
+
+/**
+ * Selects what's around the character at index, for a double click: its word, a run of letters, digits and _, or else
+ * a run of the same character, like spaces. Past a line's end is its last character. With line, for a triple click,
+ * selects its whole line and the newline after it.
+ */
+void Editor::selectAround(int index, bool line)
+{
+    int i = clampInt(index, 0, m_bufferHead);
+    m_preferredColumn = -1;
+
+    if (line) {
+        int end = lineEnd(i);
+        m_selAnchor = lineStart(i);
+        m_bufferEdit = end < m_bufferHead ? end + 1 : end;
+        return;
+    }
+
+    if ((i >= m_bufferHead || m_textBuffer[i] == '\n') && i > 0 && m_textBuffer[i - 1] != '\n') {
+        i--;
+    }
+    if (i >= m_bufferHead || m_textBuffer[i] == '\n') {
+        /* An empty line has nothing to select */
+        m_selAnchor = i;
+        m_bufferEdit = i;
+        return;
+    }
+
+    unsigned char c = m_textBuffer[i];
+    bool word = isWordChar(c);
+    int start = i;
+    int end = i + 1;
+    while (start > 0 && (word ? isWordChar(m_textBuffer[start - 1]) : m_textBuffer[start - 1] == c)) {
+        start--;
+    }
+    while (end < m_bufferHead && (word ? isWordChar(m_textBuffer[end]) : m_textBuffer[end] == c)) {
+        end++;
+    }
+
+    m_selAnchor = start;
+    m_bufferEdit = end;
+}
+
 /**
  * A press in the text puts the cursor there and starts a selection, or with Shift selects from the cursor, or the
  * selection's start, to there. Dragging moves the selection's end. Holding the mouse above or below the text scrolls it
@@ -1055,6 +1103,14 @@ void Editor::handleMouse(const struct gfx_event& event)
     case GFX_EVENT_MOUSE_DOWN:
         if (x < TREE_VIEW_WIDTH || y < HEADER_HEIGHT || y >= text_bottom) {
             return;
+        }
+
+        /* A double click selects the word under the mouse, and a triple its line. It's no drag, so a shaking mouse can't undo it */
+        if (GFX_EVENT_CLICKS(event.flags) >= 2) {
+            selectAround(indexAtPoint(x - 4, y), GFX_EVENT_CLICKS(event.flags) == 3);
+            m_dragging = false;
+            m_dragScroll = 0;
+            break;
         }
 
         if (event.flags & KEY_MOD_SHIFT) {
@@ -2668,6 +2724,7 @@ static const char* const editor_help[] = {
     "Mouse: Click file in tree to open",
     "Drag over text: Select",
     "Shift+click: Select to there",
+    "Double/triple click: Word/line",
 };
 
 void Editor::drawHelp()

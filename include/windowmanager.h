@@ -79,7 +79,20 @@ struct windowmanager {
     int dragging;
     int drag_x;
     int drag_y;
+
+    /**
+     * The last press, for counting double and triple clicks: which window it was on, when, where, and its count. A
+     * press on the same window within WM_MULTI_CLICK_MS and WM_MULTI_CLICK_DISTANCE pixels counts one more.
+     */
+    struct window* click_window;
+    int click_tick;
+    int click_x;
+    int click_y;
+    int click_count;
 };
+
+#define WM_MULTI_CLICK_MS 500
+#define WM_MULTI_CLICK_DISTANCE 4
 
 struct windowmanager* wm_new(int flags);
 
