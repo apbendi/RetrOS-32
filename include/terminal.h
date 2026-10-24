@@ -110,6 +110,11 @@ struct terminal {
     int sel_end;
     bool_t selecting;
 
+    /* Text pasted, which the shell or a program reading a line takes before new keys, as if typed: see terminal_key */
+    char* pending;
+    int pending_length;
+    int pending_position;
+
     struct window* screen;
     struct terminal_ops* ops;
     color_t text_color;
@@ -128,6 +133,8 @@ void terminal_end_line(struct terminal* term);
 void terminal_invalidate(struct terminal* term);
 int terminal_mouse(struct terminal* term, struct gfx_event* event);
 int terminal_key(struct terminal* term, unsigned char key, unsigned char modifiers);
+int terminal_take_pending(struct terminal* term);
+void terminal_drop_pending(struct terminal* term);
 
 int scan(ubyte_t* data, int size);
 
