@@ -782,6 +782,11 @@ void __kthread_entry shell(int argc, char* argv[])
 			/* The text and the input line are laid out again at the new size */
 			terminal_commit();
 			break;
+		case GFX_EVENT_MOUSE_DOWN:
+		case GFX_EVENT_MOUSE_MOVE:
+		case GFX_EVENT_MOUSE_UP:
+			terminal_mouse(term, &event);
+			break;
 		case GFX_EVENT_EXIT:
 			/* The terminal is freed when the last thread using it exits, which may be a program this shell started */
 			kernel_exit();
