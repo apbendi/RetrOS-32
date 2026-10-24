@@ -127,6 +127,7 @@ void terminal_hide_input(struct terminal* term);
 void terminal_end_line(struct terminal* term);
 void terminal_invalidate(struct terminal* term);
 int terminal_mouse(struct terminal* term, struct gfx_event* event);
+int terminal_key(struct terminal* term, unsigned char key, unsigned char modifiers);
 
 int scan(ubyte_t* data, int size);
 

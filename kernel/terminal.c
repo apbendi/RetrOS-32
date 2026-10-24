@@ -535,6 +535,8 @@ static int __terminal_scan_graphics(struct terminal* term, ubyte_t* data, int si
 		switch (event.event){
 		case GFX_EVENT_KEYBOARD:{
 				unsigned char c = event.data;
+				if(terminal_key(term, c, event.flags)) break;
+
 				if(c == CTRLC){
 					__terminal_end_read(term);
 					return -1;
@@ -929,20 +931,18 @@ static int __terminal_draw_changes(struct terminal* term, struct window* screen)
 }
 
 /**
- * The boundary between characters of the text nearest px, py in the window, with the text laid out as __terminal_draw_all
- * lays it out. Above the window is its first row, and past a row's end is its end. Past the text, as on the input line,
- * is the text's end.
+ * The boundary between characters of the text at column col of row row, with the text laid out as __terminal_draw_all
+ * lays it out: the window's first row is 0. Above the text shown is its start, and past a row's end is its end. Past
+ * the text, as on the input line, is the text's end.
  */
-static int __terminal_index_at(struct terminal* term, struct window* screen, int px, int py)
+static int __terminal_index_at_cell(struct terminal* term, struct window* screen, int col, int row)
 {
 	int columns = __terminal_columns(screen);
 	int rows = __terminal_rows(screen);
 	int skip;
 	int start = __terminal_first_shown(term, columns, rows, &skip);
 
-	int row = py < 2 ? 0 : (py - 2) / 8;
-	/* The nearer edge of the character under px */
-	int col = px < 1 ? 0 : (px - 1 + 4) / 8;
+	if(col < 0) col = 0;
 	if(col > columns) col = columns;
 
 	int x = 0, y = -skip;
@@ -965,6 +965,92 @@ static int __terminal_index_at(struct terminal* term, struct window* screen, int
 		x++;
 	}
 	return term->head;
+}
+
+/* As __terminal_index_at_cell, for the point px, py in the window, nearest the edge of the character under it. Above the window is its first row */
+static int __terminal_index_at(struct terminal* term, struct window* screen, int px, int py)
+{
+	int row = py < 2 ? 0 : (py - 2) / 8;
+	int col = px < 1 ? 0 : (px - 1 + 4) / 8;
+	return __terminal_index_at_cell(term, screen, col, row);
+}
+
+/* The column and row of the boundary before index in the text, laid out as __terminal_index_at_cell lays it out */
+static void __terminal_cell_of(struct terminal* term, struct window* screen, int index, int* col, int* row)
+{
+	int columns = __terminal_columns(screen);
+	int rows = __terminal_rows(screen);
+	int skip;
+	int start = __terminal_first_shown(term, columns, rows, &skip);
+
+	int x = 0, y = -skip;
+	for (int i = start; i < index && i < term->head; i++){
+		char c = term->textbuffer[i];
+		if(c != '\n' && x == columns){
+			x = 0;
+			y++;
+		}
+		if(c == '\n'){
+			x = 0;
+			y++;
+			continue;
+		}
+		x++;
+	}
+	*col = x;
+	*row = y;
+}
+
+/**
+ * Handles the keys that select a graphics terminal's text, before its shell or a program reading a line sees them. Shift
+ * with an arrow moves the selection's end, by a character or a row on screen, starting a selection at the end of the
+ * text if there's none. Ctrl+Shift+A selects all the text, and Esc clears the selection.
+ * @return 1 if it handled key, 0 to leave it to the caller, as Esc with nothing selected
+ */
+int terminal_key(struct terminal* term, unsigned char key, unsigned char modifiers)
+{
+	if(term == NULL || term->ops->commit != __terminal_commit_graphics) return 0;
+
+	bool_t shift = (modifiers & KEY_MOD_SHIFT) != 0;
+	bool_t arrow = key == ARROW_LEFT || key == ARROW_RIGHT || key == ARROW_UP || key == ARROW_DOWN;
+	if(!(shift && (arrow || key == CTRLA)) && key != 27) return 0;
+
+	terminal_lock(term);
+	struct window* screen = term->screen;
+	if(screen == NULL || (key == 27 && term->sel_anchor < 0)){
+		terminal_unlock(term);
+		return 0;
+	}
+
+	if(key == 27){
+		term->sel_anchor = -1;
+	} else if(key == CTRLA){
+		term->sel_anchor = 0;
+		term->sel_end = term->head;
+	} else {
+		if(term->sel_anchor < 0){
+			term->sel_anchor = term->head;
+			term->sel_end = term->head;
+		}
+
+		int end = term->sel_end < term->head ? term->sel_end : term->head;
+		if(key == ARROW_LEFT){
+			end = end > 0 ? end - 1 : 0;
+		} else if(key == ARROW_RIGHT){
+			end = end < term->head ? end + 1 : term->head;
+		} else {
+			int col, row;
+			__terminal_cell_of(term, screen, end, &col, &row);
+			end = __terminal_index_at_cell(term, screen, col, key == ARROW_UP ? row - 1 : row + 1);
+		}
+		term->sel_end = end;
+	}
+	term->selecting = false;
+
+	term->drawn_valid = false;
+	term->ops->commit(term);
+	terminal_unlock(term);
+	return 1;
 }
 
 /**

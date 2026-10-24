@@ -761,6 +761,11 @@ void __kthread_entry shell(int argc, char* argv[])
 
 		switch (event.event){
 		case GFX_EVENT_KEYBOARD:
+			/* Keys that select the terminal's text don't reach the line */
+			if(terminal_key(term, event.data, event.flags)){
+				break;
+			}
+
 			switch (event.data){
 			case CTRLC:
 				/* As in bash and zsh, the line stays in the output with ^C after it, and a new prompt starts below */
