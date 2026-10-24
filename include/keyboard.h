@@ -41,6 +41,7 @@
 
 #define TAB 9
 
+#define CTRLA 225
 #define CTRLC 227
 #define CTRLD 228
 #define CTRLE 229

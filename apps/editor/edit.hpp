@@ -13,6 +13,8 @@
 #define COLOR_BG COLOR_VGA_LIGHTEST_GRAY
 #define COLOR_TEXT COLOR_VGA_MEDIUM_DARK_GRAY
 #define COLOR_MISC COLOR_VGA_MISC
+/* Behind selected text: a pale blue in the standard VGA palette */
+#define COLOR_SELECTED 80
 
 #define TREE_VIEW_WIDTH 130
 #define HEADER_HEIGHT 13
@@ -46,7 +48,7 @@ public:
     bool Save();
     void Help();
     bool Open(char* path);
-    void putChar(unsigned char c);
+    void putChar(unsigned char c, int modifiers = 0);
     void Lex();
     bool Quit();
     bool SaveMsg();
@@ -71,7 +73,14 @@ private:
     };
 
     void reDraw(int from, int to);
+    void drawSelection(int view_start, int cols, int rows, int text_x);
     void highlightSyntax(unsigned char* start);
+
+    bool hasSelection() const;
+    bool selectionRange(int& start, int& end) const;
+    void clearSelection();
+    bool deleteSelection();
+    bool deleteRange(int start, int end);
 
     int visibleLines() const;
     int visibleColumns() const;
@@ -111,6 +120,7 @@ private:
     bool ropeSyncToBuffer();
     bool ropeInsertChar(int index, unsigned char c);
     bool ropeDeleteChar(int index);
+    bool ropeDeleteRange(int index, int count);
     bool ropeLocate(int index, struct rope_node** out_node, int* out_offset) const;
     struct rope_node* ropeCreateNode();
     void ropeDetachNode(struct rope_node* node);
@@ -128,6 +138,8 @@ private:
     int m_y;
     int m_dirty;
     int m_preferredColumn;
+    /* Where the selection started, which runs from here to the cursor; -1 for none */
+    int m_selAnchor;
     char m_currentPath[FS_PATH_MAX];
     /* An error is on the status line, which the next redraw leaves in place instead of drawing the file's name */
     int m_keepStatus;
