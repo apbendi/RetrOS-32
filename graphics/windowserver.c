@@ -118,8 +118,8 @@ static int ws_remove(struct windowserver* ws, struct window* window)
      *
      * With interrupts off, so the window server sees all of these or none of them:
      * - removed keeps the window from being put back in a list, made pressed_window or made fullscreen.
-     * - pressed_window is cleared, so a later release doesn't reach it. Not done in wm remove, which isn't
-     *   only for destroyed windows.
+     * - pressed_window is cleared, with any drag it had, so a later move or release doesn't reach it, and so is
+     *   click_window, the last press's. Not done in wm remove, which isn't only for destroyed windows.
      * - A fullscreen window gets its own buffer back, the one that's freed later, instead of the composition
      *   buffer, and the desktop is composited again (#17). Its owner has exited, so nothing draws into it,
      *   and buffer_lock isn't needed.
@@ -128,6 +128,10 @@ static int ws_remove(struct windowserver* ws, struct window* window)
     window->removed = 1;
     if(ws->_wm->pressed_window == window){
         ws->_wm->pressed_window = NULL;
+        ws->_wm->dragging = 0;
+    }
+    if(ws->_wm->click_window == window){
+        ws->_wm->click_window = NULL;
     }
     if(ws->_fullscreen == window){
         __ws_leave_fullscreen(ws);
@@ -347,7 +351,7 @@ static int ws_set_background_file(struct windowserver* ws, const char* path)
     return ERROR_OK;
 }
 
-static int __ws_key_event(struct windowserver* ws, unsigned char key)
+static int __ws_key_event(struct windowserver* ws, unsigned char key, unsigned char modifiers)
 {
     ERR_ON_NULL(ws);
     WS_VALIDATE(ws);
@@ -430,6 +434,7 @@ static int __ws_key_event(struct windowserver* ws, unsigned char key)
             /* sends keyboard event to userspace */
             struct gfx_event e = {
                 .data = key,
+                .flags = modifiers,
                 .event = GFX_EVENT_KEYBOARD
             };
             gfx_push_event(ws->_wm->windows, &e);
@@ -451,9 +456,10 @@ static int ws_draw(struct windowserver* ws)
     /* get state variables */
     int mouse_changed = mouse_get_event(&ws->m);
     ws->window_changes = ws->_wm->ops->changes(ws->_wm);
-    unsigned char key = kb_get_char(0);
-
-    __ws_key_event(ws, key);
+    struct kb_key key;
+    if(kb_get_key(&key)){
+        __ws_key_event(ws, key.key, key.modifiers);
+    }
     
     if((ws->window_changes || mouse_changed ) && ws->_fullscreen == NULL){
         memcpy(ws->_wm->composition_buffer, ws->background, ws->_wm->composition_buffer_size);

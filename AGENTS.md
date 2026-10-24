@@ -16,7 +16,7 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
 
 | Path | What's there |
 |---|---|
-| `kernel/` | Kernel core: scheduler, PCBs, memory (`kmem.c`, `vmem.c`, `memory.c`), interrupts (`arch/`, `irs_entry.s`), syscalls, symbols (`ksyms.c`), the terminal (`terminal.c`) |
+| `kernel/` | Kernel core: scheduler, PCBs, memory (`kmem.c`, `vmem.c`, `memory.c`), interrupts (`arch/`, `irs_entry.s`), syscalls, symbols (`ksyms.c`), the terminal (`terminal.c`), the clipboard (`clipboard.c`) |
 | `kernel/kthreads/` | Kernel threads with windows: `shell`, `taskbar` (Start menu), `kclock`, `sysinf`, `about`, … |
 | `graphics/` | Window server (`windowserver.c`), window manager (`windowmanager.c`), windows (`window.c`), drawing (`gfxlib.c`), the gfx syscall (`api.c`) |
 | `drivers/` | VBE, keyboard, mouse, ATA, e1000, … |
@@ -197,6 +197,11 @@ The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but no
 - **The queue holds 10 events.** When it's full, the oldest is dropped.
 - **Drain all events every frame.** An app that reads one event per frame falls behind its input, and once the queue is full, events get dropped.
 - **On a resize,** apply only the latest size, and redraw everything. A window gets one `GFX_EVENT_RESOLUTION` per resize: when a corner drag is released (#10), or on maximize or restore. The kernel keeps the old content that still fits (#14), and the rest is black.
+- **Key codes** (`include/keyboard.h`): a `GFX_EVENT_KEYBOARD`'s `data` is the key's character, or for Ctrl+key, 128 plus the key's character without Shift, e.g. `CTRLC`, 227.
+  - **Keys without a character** have codes no Ctrl+key can be: the arrows (251–254), F1–F10 (193–202), `KEY_HOME`, `KEY_END`, `KEY_PAGE_UP`, `KEY_PAGE_DOWN` and `KEY_DELETE` (203–207), and F12 (134).
+  - **Apps** use the `KEY_*` names in `include/gfx/events.h`. Line editors ignore codes above 126.
+  - **Modifiers:** the event's `flags` has the modifier keys held when the key was pressed, `KEY_MOD_SHIFT`, `KEY_MOD_CTRL` and `KEY_MOD_ALT`. So Shift+Left is `KEY_LEFT` with `KEY_MOD_SHIFT`, and Ctrl+Shift+C is `CTRLC` with both. The driver queues each key with them (`struct kb_key`), and `kb_get_modifiers()` gives the ones held now.
+  - **Fake Shifts:** a real keyboard sends Shift presses and releases prefixed with `0xE0` around the gray arrows, Home, End and the like. The driver ignores them. QEMU doesn't send them.
 
 **Redraws:** the window server only redraws the screen when the mouse moves or a window is marked changed. Every gfx drawing syscall marks the app's window changed. Kernel threads that draw with `w->draw->*` must call `gfx_commit()` themselves, or their updates only appear when the mouse moves.
 
@@ -222,6 +227,16 @@ The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but no
 Syscalls run with interrupts enabled, so they can be preempted.
 
 **Mouse:** the window manager remembers which window got the press (`pressed_window`). A release always goes to that window, but it only counts as a click if the cursor is still over it. Clicks are handled at the cursor's arrow tip (`VESA_CURSOR_HOTSPOT_X`/`_Y`).
+- **Clicks:** `GFX_EVENT_MOUSE` is a click, at `data`, `data2` in the window's content. It's sent on the release.
+- **Dragging:** a press on a window's content, not one that grabs its title bar or resize corner, starts a drag (`wm->dragging`). The window gets:
+  - `GFX_EVENT_MOUSE_DOWN` where the press was;
+  - `GFX_EVENT_MOUSE_MOVE` each frame the mouse has moved while the button is held, wherever the mouse is;
+  - `GFX_EVENT_MOUSE_UP` where the button comes up, then the click if that's over the window.
+- **Coordinates** are relative to the content, so a move or release outside the window is negative or past its size: read `data` and `data2` as `int16_t`.
+- **Modifiers:** `flags` has the modifier keys held, as on a key, so Shift+click is a press with `KEY_MOD_SHIFT`.
+- **Double and triple clicks:** a press on the same window within `WM_MULTI_CLICK_MS`, 500 ms, and `WM_MULTI_CLICK_DISTANCE`, 4 pixels, of the last one counts one more, up to 3, then starts again. `GFX_EVENT_CLICKS(flags)` gives a press's count. The window manager keeps the last press's window (`click_window`), which `ws_remove` clears.
+- **The queue:** a move replaces a move at the end of the window's queue (`gfx_push_event`), so a drag can't push other events out.
+- **Destroyed windows:** `ws_remove` clears `pressed_window` and the drag, so nothing more is sent to a window that's going.
 
 **Listing windows:** F12 logs the current workspace's windows to the serial log, front to back, with each one's rectangle, owner and flags (`wm_log_windows`). The shell's `windows` command prints the same list. Both copy the list under `wm->spinlock` with `wm_get_windows`, then print after releasing it.
 
@@ -238,7 +253,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - **Its state:** a kalloc'd `struct shell`. Its PCB's `local` points to it, so commands running on its thread, like `reset` and `exit`, find it. `local_free` frees it however the thread exits.
   - **A command line:** the prompt, `kernel:<directory>> `, and what's typed are the input line. Enter hides it, writes the same text into the output, runs the command with `exec_cmd`, and shows a new prompt after the output.
   - **An unfinished last line,** a program's or `cat`'s, gets a newline before the prompt (`terminal_end_line`).
-  - **Keys:** backspace, Up and Down through the last 32 commands (`SHELL_HISTORY_MAX`), and Ctrl+C, which leaves the line in the output with `^C` after it. A line holds `SHELL_LINE_MAX`, 1,088 bytes.
+  - **Keys:** backspace, Up and Down through the last 32 commands (`SHELL_HISTORY_MAX`), and Ctrl+C, which leaves the line in the output with `^C` after it, unless text is selected, which it copies instead (see "Selection and the clipboard"). A line holds `SHELL_LINE_MAX`, 1,088 bytes.
 - **Text mode** (`textshell`) uses a terminal with the `terminal_ops_textmode` ops. It edits its line on its frame's bottom row, and shows no input line. It also ends an unfinished last line before a command's echo.
 
 **Layout:** a graphics terminal lays out its text and input line at the window's size when it draws. It wraps lines at the window's width, and shows as much of the end as fits.
@@ -269,6 +284,33 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - **Editing:** the line is edited on the input line, after what the program printed, with the keys typed in the shell's window. Enter adds it to the text, so it's shown and logged as the program's.
 - **End of input:** Ctrl+D on an empty line; Ctrl+C, which throws the line away, since RetrOS has no signals; or the window closing.
 - **The kernel's own `scan`,** which `tcp` and the text shell's login use, reads the same way.
+
+## Selection and the clipboard
+
+**The clipboard** (`kernel/clipboard.c`, `include/clipboard.h`) is one text, of up to `CLIPBOARD_MAX`, 64 KB, without a terminating 0. Every program and kernel thread shares it.
+- **Setting it:** `clipboard_set(data, size)` copies the text in, replacing the old one, and returns `size`. Too much, or no memory for the copy, returns a negative error code and leaves the old text.
+- **Reading it:** `clipboard_get(data, size)` copies out as much as fits, and returns the whole text's size. So a size of 0 asks how big it is.
+- **Who calls them:** kernel code directly; apps through `SYSCALL_CLIPBOARD_SET` and `SYSCALL_CLIPBOARD_GET`, with wrappers of the same names in `lib/syscall.c`.
+- **The shell's `clip`** prints the clipboard as it is, or with arguments sets it to them, joined by single spaces as `echo` joins them, without a newline. It's a quick way to check what an app copied, from the serial log.
+
+**In the Editor** (`apps/editor/edit.cpp`), the selection runs from `m_selAnchor`, -1 for none, to the cursor.
+- **Keys:** Shift with an arrow, Home, End, Page Up or Page Down selects; Ctrl+A selects all; Esc clears. Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste through the clipboard. Typing, Enter, Tab, Backspace and Delete replace or delete the selection.
+- **The mouse** (`handleMouse`): a press in the text puts the cursor at the nearest boundary between characters (`indexAtPoint`) and starts a selection; dragging moves its end; Shift+click selects from the cursor to there. A double click selects the word under the mouse, letters, digits and `_` or else a run of one character, and a triple click its line (`selectAround`). Neither starts a drag. Held above or below the text, a drag scrolls a row every `EDITOR_DRAG_SCROLL_MS`, so the loop waits for events without blocking meanwhile. The file tree still works on clicks, `GFX_EVENT_MOUSE`.
+- **Pasting** inserts the text exactly as it is, without the `}` typing a `{` adds. What doesn't fit in the 64 KB buffer is left out, and the status line says so.
+- **Editing ranges:** `ropeDeleteRange` and `ropeInsertText` change only the nodes around the range, rather than rebuilding the rope. `ropeInsertText` makes its new nodes before linking any in, so running out of memory leaves the text as it was.
+  - **Memory:** each node is a 268-byte `malloc`. The kernel packs small allocations into the free space of a process's existing heap regions (`vmem_stack_alloc`), so about 15 share a page, and a 64 KB file's rope is about 17 pages.
+- **Drawing:** `drawSelection` draws the selection's background before the text, laying rows out as `reDraw` does.
+
+**In a Terminal** (`kernel/terminal.c`), the selection is the text between `sel_anchor`, -1 for none, and `sel_end`, as indexes into the text buffer. The input line, the prompt and what's being typed, isn't selectable.
+- **The mouse:** `terminal_mouse` handles presses, drags and releases. A press starts a selection, a drag moves its end, and a release without a drag clears it. Shift+press moves the end of the selection there is. A double click selects a word and a triple click a line, as in the Editor (`__terminal_select_around`). `__terminal_index_at` maps a point to a character with the layout `__terminal_draw_all` uses.
+- **The keyboard:** `terminal_key` takes the selection's keys before the shell or a reader sees them. Shift with an arrow moves the selection's end a character, or a row on screen, starting a selection at the end of the output if there's none. Ctrl+Shift+A selects all the text kept, and Esc clears. Up and Down without Shift still go through the shell's history.
+- **Copying:** Ctrl+Shift+C copies the selection, and so does Ctrl+C when something is selected, which also clears it. With nothing selected, Ctrl+C cancels the line, or ends a program's read, as before.
+- **Pasting:** Ctrl+V and Ctrl+Shift+V add the clipboard's text to the terminal's pending input (`pending`), with tabs made spaces and other control characters but newlines left out.
+  - **Taking it:** the shell types it into its line, running the line at each newline, as Enter would (`__shell_type_pending`). `__terminal_scan_graphics` takes it before new keys, so a program reading lines gets the pasted lines in turn, and the shell types what's left after it exits.
+  - **Ctrl+C** in a program's read throws away what's pending. Closing the window frees it with the terminal.
+- **Who calls them:** whoever is reading the window's events: the shell's loop, or `__terminal_scan_graphics` while a program reads a line. While a program runs without reading, the events wait in the window's queue (#131).
+- **Drawing:** selected characters are drawn with the text and background colors swapped, and a selected newline as a cell. A change to the selection redraws the window in full. New output is never selected, so the drawing that adds only new text is unchanged, and scrolling the window's pixels moves the highlight with its text.
+- **Following the text:** dropping text from the buffer's start moves the selection, which shrinks or goes with what's dropped (`__terminal_selection_dropped`). `clear` and `reset` clear it.
 
 ## File system
 
@@ -393,7 +435,8 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
    `apps/breakout`, `apps/bcalc` and `apps/cube` follow this pattern.
 3. **Math:** `libcore` has no libm. `sin_60`/`cos_60` in `lib/libc.c` are 6° tables, offset by 90°: `cos_60[i]` is sin(6i°), and `sin_60[i]` is −cos(6i°). Avoid 64-bit integer division.
 4. **Files:** the file syscalls are in `lib/syscall.c` and `include/lib/syscall.h`; see "File system" for how they behave. They return negative codes from `include/errors.h`, and `error_get_string` (in `libcore`) gives a code's message.
-5. **Build and launch:** `docker compose up` installs the app into `rootfs/bin`. Launch it with `exec -d /bin/<name>.o`.
+5. **Input beyond clicks:** for dragging, handle `GFX_EVENT_MOUSE_DOWN`, `GFX_EVENT_MOUSE_MOVE` and `GFX_EVENT_MOUSE_UP`, and read the modifier keys and click counts from `flags` (see "Mouse" and "Key codes" under "Graphics system"). For copy and paste, `clipboard_set` and `clipboard_get` are in `lib/syscall.c` (see "Selection and the clipboard"). The Editor uses all of them.
+6. **Build and launch:** `docker compose up` installs the app into `rootfs/bin`. Launch it with `exec -d /bin/<name>.o`.
 
 These apps use RetrOS's own libraries, `libcore` and `libgraphic`, which aren't standard C. A program in standard C uses the C library instead: see "C programs".
 

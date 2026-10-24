@@ -177,6 +177,16 @@ int getcwd(char* buf, int size)
     return invoke_syscall(SYSCALL_GETCWD, (int)buf, size, 0);
 }
 
+int clipboard_set(const char* data, int size)
+{
+    return invoke_syscall(SYSCALL_CLIPBOARD_SET, (int)data, size, 0);
+}
+
+int clipboard_get(char* data, int size)
+{
+    return invoke_syscall(SYSCALL_CLIPBOARD_GET, (int)data, size, 0);
+}
+
 int system(const char* command)
 {
     return invoke_syscall(SYSCALL_SYSTEM, (int)command, 0, 0);

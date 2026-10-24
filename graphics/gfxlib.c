@@ -26,6 +26,9 @@
  * that holds it must not call another one that takes it.
  */
 
+/* Programs copy events in and out by this size, and flags took padding that was already there */
+_Static_assert(sizeof(struct gfx_event) == 6, "struct gfx_event must stay 6 bytes");
+
 int gfx_get_window_width()
 {
 	return $process->current->gfx_window->inner_width;
@@ -41,14 +44,20 @@ int gfx_push_event(struct window* w, struct gfx_event* e)
 	ERR_ON_NULL(w);
 
 	SPINLOCK(w,  {
-		int next_head = (w->events.head + 1) % GFX_MAX_EVENTS;
-		/* When full, drop the oldest event. Letting head catch up to tail would make the queue look empty. */
-		if(next_head == w->events.tail){
-			w->events.tail = (w->events.tail + 1) % GFX_MAX_EVENTS;
-		}
+		/* A drag sends a move every frame, so a move replaces one at the end of the queue, rather than pushing older events out */
+		int last = (w->events.head + GFX_MAX_EVENTS - 1) % GFX_MAX_EVENTS;
+		if(e->event == GFX_EVENT_MOUSE_MOVE && w->events.head != w->events.tail && w->events.list[last].event == GFX_EVENT_MOUSE_MOVE){
+			memcpy(&w->events.list[last], e, sizeof(*e));
+		} else {
+			int next_head = (w->events.head + 1) % GFX_MAX_EVENTS;
+			/* When full, drop the oldest event. Letting head catch up to tail would make the queue look empty. */
+			if(next_head == w->events.tail){
+				w->events.tail = (w->events.tail + 1) % GFX_MAX_EVENTS;
+			}
 
-		memcpy(&w->events.list[w->events.head], e, sizeof(*e));
-		w->events.head = next_head;
+			memcpy(&w->events.list[w->events.head], e, sizeof(*e));
+			w->events.head = next_head;
+		}
 	});
 
 	/* TODO: Check for a block reason */

@@ -13,6 +13,8 @@
 #define COLOR_BG COLOR_VGA_LIGHTEST_GRAY
 #define COLOR_TEXT COLOR_VGA_MEDIUM_DARK_GRAY
 #define COLOR_MISC COLOR_VGA_MISC
+/* Behind selected text: a pale blue in the standard VGA palette */
+#define COLOR_SELECTED 80
 
 #define TREE_VIEW_WIDTH 130
 #define HEADER_HEIGHT 13
@@ -32,6 +34,8 @@
 #define EDITOR_MIN_RIGHT_PANE_WIDTH 48
 #define EDITOR_MIN_HEIGHT (HEADER_HEIGHT + STATUS_HEIGHT + 8)
 #define EDITOR_MAX_VIEW_ROWS 1024
+/* How often a drag held above or below the text scrolls it a row */
+#define EDITOR_DRAG_SCROLL_MS 50
 
 struct keyword {
     char word[10];
@@ -46,7 +50,7 @@ public:
     bool Save();
     void Help();
     bool Open(char* path);
-    void putChar(unsigned char c);
+    void putChar(unsigned char c, int modifiers = 0);
     void Lex();
     bool Quit();
     bool SaveMsg();
@@ -71,7 +75,22 @@ private:
     };
 
     void reDraw(int from, int to);
+    void drawSelection(int view_start, int cols, int rows, int text_x);
     void highlightSyntax(unsigned char* start);
+
+    bool hasSelection() const;
+    bool selectionRange(int& start, int& end) const;
+    void clearSelection();
+    bool deleteSelection();
+    bool deleteRange(int start, int end);
+    bool insertText(int index, const unsigned char* data, int len);
+    bool copySelection();
+    void paste();
+
+    int indexAtPoint(int x, int y) const;
+    void handleMouse(const struct gfx_event& event);
+    void selectAround(int index, bool line);
+    void dragScrollTick();
 
     int visibleLines() const;
     int visibleColumns() const;
@@ -88,6 +107,7 @@ private:
     int viewStartIndex(int cols) const;
     int nextVisualRowStart(int row_start_index, int cols) const;
     int prevVisualRowStart(int row_start_index, int cols) const;
+    int rowsFrom(int index, int cols) const;
     void cursorFromViewStart(int view_start, int cols, int* out_row, int* out_col) const;
 
     void setScrollFromIndex(int index, int cols);
@@ -95,6 +115,9 @@ private:
     void ensureCursorVisible(int cols, int rows);
 
     void getCursorLineCol(int& line, int& col) const;
+    bool cursorDown();
+    bool cursorUp();
+    void drawHelp();
     bool hasUnsavedChanges() const;
 
     void drawLineNumbers(const int* row_lines, int row_count);
@@ -107,6 +130,8 @@ private:
     bool ropeSyncToBuffer();
     bool ropeInsertChar(int index, unsigned char c);
     bool ropeDeleteChar(int index);
+    bool ropeDeleteRange(int index, int count);
+    bool ropeInsertText(int index, const unsigned char* data, int len);
     bool ropeLocate(int index, struct rope_node** out_node, int* out_offset) const;
     struct rope_node* ropeCreateNode();
     void ropeDetachNode(struct rope_node* node);
@@ -124,6 +149,12 @@ private:
     int m_y;
     int m_dirty;
     int m_preferredColumn;
+    /* Where the selection started, which runs from here to the cursor; -1 for none */
+    int m_selAnchor;
+    /* Set from a press in the text until its release. m_dragScroll is -1 or 1 while the mouse is above or below the text, at m_dragX */
+    bool m_dragging;
+    int m_dragScroll;
+    int m_dragX;
     char m_currentPath[FS_PATH_MAX];
     /* An error is on the status line, which the next redraw leaves in place instead of drawing the file's name */
     int m_keepStatus;
