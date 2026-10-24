@@ -294,6 +294,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
 
 **In the Editor** (`apps/editor/edit.cpp`), the selection runs from `m_selAnchor`, -1 for none, to the cursor.
 - **Keys:** Shift with an arrow, Home, End, Page Up or Page Down selects; Ctrl+A selects all; Esc clears. Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste through the clipboard. Typing, Enter, Tab, Backspace and Delete replace or delete the selection.
+- **The mouse** (`handleMouse`): a press in the text puts the cursor at the nearest boundary between characters (`indexAtPoint`) and starts a selection; dragging moves its end; Shift+click selects from the cursor to there. Held above or below the text, a drag scrolls a row every `EDITOR_DRAG_SCROLL_MS`, so the loop waits for events without blocking meanwhile. The file tree still works on clicks, `GFX_EVENT_MOUSE`.
 - **Pasting** inserts the text exactly as it is, without the `}` typing a `{` adds. What doesn't fit in the 64 KB buffer is left out, and the status line says so.
 - **Editing ranges:** `ropeDeleteRange` and `ropeInsertText` change the rope a node at a time. Each node is a `malloc`, so a page of the app's heap, and rebuilding the rope for each edit would need twice the pages.
 - **Drawing:** `drawSelection` draws the selection's background before the text, laying rows out as `reDraw` does.
