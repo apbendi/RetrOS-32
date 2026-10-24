@@ -4,15 +4,16 @@
 #include <stdint.h>
 #include <keyboard.h>
 
-#define KEY_UP 254
-#define KEY_DOWN 253
-#define KEY_LEFT 252
-#define KEY_RIGHT 251
-#define KEY_F9 242 /* CTRL r */
-#define KEY_F4 247
-#define KEY_F3 248
-#define KEY_F2 249
-#define KEY_F1 250
+/* Key codes for apps, from keyboard.h, which also has KEY_HOME, KEY_END, KEY_PAGE_UP, KEY_PAGE_DOWN and KEY_DELETE */
+#define KEY_UP ARROW_UP
+#define KEY_DOWN ARROW_DOWN
+#define KEY_LEFT ARROW_LEFT
+#define KEY_RIGHT ARROW_RIGHT
+#define KEY_F9 F9
+#define KEY_F4 F4
+#define KEY_F3 F3
+#define KEY_F2 F2
+#define KEY_F1 F1
 
 typedef enum gfx_event_flags {
     GFX_EVENT_BLOCKING = 1 << 0,

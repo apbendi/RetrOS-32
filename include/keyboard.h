@@ -3,20 +3,31 @@
 
 #include <stdint.h>
 
+/**
+ * A key with a character sends it, and Ctrl+key sends 128 plus the key's character without Shift (drivers/keyboard.c).
+ * So a key without a character needs a code that's no Ctrl+key's. 251-254 would be Ctrl with '{', '|', '}' or '~',
+ * which only come with Shift.
+ */
 #define ARROW_UP 254
 #define ARROW_DOWN 253
 #define ARROW_LEFT 252
 #define ARROW_RIGHT 251
-#define F1 250
-#define F2 249 /* CTRL y */
-#define F3 248
-#define F4 247 /* CTRL w */
-#define F5 246
-#define F6 245
-#define F7 244 /* CTRL t */
-#define F8 243
-#define F9 242 /* CTRL r */
-#define F10 241 /* CTRL q */
+/* A character without Shift is never an uppercase letter, so 193-218, 128 plus 'A' to 'Z', can't be a Ctrl+key */
+#define F1 193
+#define F2 194
+#define F3 195
+#define F4 196
+#define F5 197
+#define F6 198
+#define F7 199
+#define F8 200
+#define F9 201
+#define F10 202
+#define KEY_HOME 203
+#define KEY_END 204
+#define KEY_PAGE_UP 205
+#define KEY_PAGE_DOWN 206
+#define KEY_DELETE 207
 /* Ctrl+key is 128 plus the key's character, and no key's character is 1-7, so 129-135 can't be a Ctrl+key */
 #define F12 134
 

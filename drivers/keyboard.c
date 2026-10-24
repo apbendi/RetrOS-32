@@ -49,16 +49,16 @@ static const unsigned char kbdus[128] = {
     F2,         F3,          F4,  F5,  F6,   F7,  F8,  F9,  F10, /* < ... F10 */
     0,                               /* 69 - Num lock*/
     0,                               /* Scroll Lock */
-    0,                               /* Home key */
+    KEY_HOME,                        /* Home key */
     ARROW_UP,                        /* Up Arrow */
-    0,                               /* Page Up */
+    KEY_PAGE_UP,                     /* Page Up */
     '-',        ARROW_LEFT,          /* Left Arrow */
     0,          ARROW_RIGHT,         /* Right Arrow */
-    '+',        0,                   /* 79 - End key*/
+    '+',        KEY_END,             /* 79 - End key*/
     ARROW_DOWN,                      /* Down Arrow */
-    0,                               /* Page Down */
+    KEY_PAGE_DOWN,                   /* Page Down */
     0,                               /* Insert Key */
-    0,                               /* Delete Key */
+    KEY_DELETE,                      /* Delete Key */
     0,          0,           0,   0, /* F11 Key */
     F12,                             /* F12 Key */
     0,                               /* All other keys are undefined */
@@ -82,16 +82,16 @@ static const unsigned char kbdus_shift[128] = {
     F2,         F3,          F4,  F5,  F6,   F7,  F8,  F9,  F10, /* < ... F10 */
     0,                               /* 69 - Num lock*/
     0,                               /* Scroll Lock */
-    0,                               /* Home key */
+    KEY_HOME,                        /* Home key */
     ARROW_UP,                        /* Up Arrow */
-    0,                               /* Page Up */
+    KEY_PAGE_UP,                     /* Page Up */
     '-',        ARROW_LEFT,          /* Left Arrow */
     0,          ARROW_RIGHT,         /* Right Arrow */
-    '+',        0,                   /* 79 - End key*/
+    '+',        KEY_END,             /* 79 - End key*/
     ARROW_DOWN,                      /* Down Arrow */
-    0,                               /* Page Down */
+    KEY_PAGE_DOWN,                   /* Page Down */
     0,                               /* Insert Key */
-    0,                               /* Delete Key */
+    KEY_DELETE,                      /* Delete Key */
     0,          0,           0,   0, /* F11 Key */
     F12,                             /* F12 Key */
     0,                               /* All other keys are undefined */
