@@ -442,6 +442,7 @@ Editor::Editor()
     m_y = 0;
     m_dirty = 0;
     m_preferredColumn = -1;
+    m_selAnchor = -1;
     m_keepStatus = 0;
     scrollY = 0;
     m_scrollWrap = 0;
@@ -932,6 +933,61 @@ void Editor::reDrawHeader()
     gfx_draw_format_text(right_x, 2, COLOR_BLACK, "%s", right_label);
 }
 
+/**
+ * Draws the selection's background where the text will go over it: a run of cells on each row it covers, with a selected
+ * newline as a cell at its line's end. Lays out rows from view_start as reDraw does.
+ */
+void Editor::drawSelection(int view_start, int cols, int rows, int text_x)
+{
+    int start = 0;
+    int end = 0;
+    if (!selectionRange(start, end) || end <= view_start) {
+        return;
+    }
+
+    /* The selected columns of one row, from run_from up to run_to, drawn when the row ends */
+    int run_row = -1;
+    int run_from = 0;
+    int run_to = 0;
+    auto drawRun = [&]() {
+        if (run_row >= 0 && run_to > run_from) {
+            gfx_draw_rectangle(text_x + (run_from * 8), HEADER_HEIGHT + (run_row * 8), (run_to - run_from) * 8, 8, COLOR_SELECTED);
+        }
+        run_row = -1;
+    };
+
+    int row = 0;
+    int col = 0;
+    for (int i = view_start; i < end && row < rows; i++) {
+        unsigned char ch = m_textBuffer[i];
+        if (ch != '\n' && col >= cols) {
+            row++;
+            col = 0;
+            if (row >= rows) {
+                break;
+            }
+        }
+
+        /* A newline after a full row has no cell left on it */
+        if (i >= start && col < cols) {
+            if (run_row != row) {
+                drawRun();
+                run_row = row;
+                run_from = col;
+            }
+            run_to = col + 1;
+        }
+
+        if (ch == '\n') {
+            row++;
+            col = 0;
+        } else {
+            col++;
+        }
+    }
+    drawRun();
+}
+
 void Editor::reDraw(int from, int to)
 {
     (void)from;
@@ -970,6 +1026,8 @@ void Editor::reDraw(int from, int to)
 
     int view_start = viewStartIndex(cols);
     int line_no = lineNumberAtIndex(view_start);
+
+    drawSelection(view_start, cols, draw_rows, text_x);
 
     int row = 0;
     int col = 0;
@@ -1053,9 +1111,13 @@ void Editor::reDraw(int from, int to)
     const char* file_label = m_currentPath[0] ? m_currentPath : "(untitled)";
     const char* dirty_tag = hasUnsavedChanges() ? "*" : "";
 
-    /* A long path keeps its end, after "...", so the line and column stay in view */
+    int sel_start = 0;
+    int sel_end = 0;
+    bool selected = selectionRange(sel_start, sel_end);
+
+    /* A long path keeps its end, after "...", so the line and column, and how much is selected, stay in view */
     const char* dots = "";
-    int room = textClipWidth() / 8 - (int)strlen("*  Ln:99999 Col:9999");
+    int room = textClipWidth() / 8 - (int)strlen(selected ? "*  Ln:99999 Col:9999  65535 selected" : "*  Ln:99999 Col:9999");
     int label_len = strlen(file_label);
     if (room > 4 && label_len > room) {
         file_label += label_len - (room - 3);
@@ -1064,6 +1126,10 @@ void Editor::reDraw(int from, int to)
 
     if (m_keepStatus) {
         m_keepStatus = 0;
+        return;
+    }
+    if (selected) {
+        drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "%s%s%s  Ln:%d Col:%d  %d selected", dots, file_label, dirty_tag, line, colnum, sel_end - sel_start);
         return;
     }
     drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "%s%s%s  Ln:%d Col:%d", dots, file_label, dirty_tag, line, colnum);
@@ -1538,6 +1604,100 @@ bool Editor::ropeDeleteChar(int index)
     return true;
 }
 
+/* Deletes count characters from index, cutting each node they're in once. @return false if they aren't all in the text */
+bool Editor::ropeDeleteRange(int index, int count)
+{
+    if (index < 0 || count < 0 || index + count > m_bufferHead) {
+        return false;
+    }
+    if (count == 0) {
+        return true;
+    }
+
+    struct rope_node* node = nullptr;
+    int offset = 0;
+    if (!ropeLocate(index, &node, &offset) || node == nullptr) {
+        return false;
+    }
+
+    /* At the end of a node, the first character to go is in the next */
+    int left = count;
+    while (node != nullptr && left > 0) {
+        struct rope_node* next = node->next;
+        int take = minInt(left, node->len - offset);
+        if (take > 0) {
+            memmove(&node->data[offset], &node->data[offset + take], node->len - offset - take);
+            node->len -= take;
+            left -= take;
+            m_bufferHead -= take;
+            if (node->len == 0) {
+                ropeDetachNode(node);
+            }
+        }
+        node = next;
+        offset = 0;
+    }
+
+    /* Joins the nodes either side of the gap, if they fit in one */
+    if (ropeLocate(index, &node, &offset) && node != nullptr) {
+        ropeTryMerge(node);
+    }
+
+    return left == 0;
+}
+
+/* Whether some text is selected: the anchor is set, and the cursor has moved from it */
+bool Editor::hasSelection() const
+{
+    return m_selAnchor >= 0 && m_selAnchor != m_bufferEdit;
+}
+
+/* The selected text, from start up to end, in order whichever way it was selected. @return false if there's none */
+bool Editor::selectionRange(int& start, int& end) const
+{
+    if (!hasSelection()) {
+        return false;
+    }
+
+    start = minInt(m_selAnchor, m_bufferEdit);
+    end = m_selAnchor > m_bufferEdit ? m_selAnchor : m_bufferEdit;
+    return true;
+}
+
+void Editor::clearSelection()
+{
+    m_selAnchor = -1;
+}
+
+/* Deletes the text from start up to end, and puts the cursor where it was. @return false if there was nothing to delete */
+bool Editor::deleteRange(int start, int end)
+{
+    start = clampInt(start, 0, m_bufferHead);
+    end = clampInt(end, start, m_bufferHead);
+    if (end == start || !ropeDeleteRange(start, end - start)) {
+        return false;
+    }
+
+    ropeSyncToBuffer();
+    m_bufferEdit = start;
+    m_dirty = 1;
+    m_preferredColumn = -1;
+    return true;
+}
+
+/* Deletes the selected text, leaving the cursor where it started. @return false if nothing was selected */
+bool Editor::deleteSelection()
+{
+    int start = 0;
+    int end = 0;
+    if (!selectionRange(start, end)) {
+        return false;
+    }
+
+    clearSelection();
+    return deleteRange(start, end);
+}
+
 void Editor::scroll(int lines)
 {
     if (lines == 0) {
@@ -1582,6 +1742,7 @@ void Editor::Reset()
     m_fileSize = 0;
     m_dirty = 0;
     m_preferredColumn = -1;
+    m_selAnchor = -1;
     scrollY = 0;
     m_scrollWrap = 0;
     m_currentPath[0] = 0;
@@ -1695,6 +1856,7 @@ bool Editor::Open(char* path)
         m_fileSize = 0;
         m_dirty = 0;
         m_preferredColumn = -1;
+        m_selAnchor = -1;
         scrollY = 0;
         m_scrollWrap = 0;
         drawStatusLine(COLOR_VGA_RED, "Out of memory while loading file.");
@@ -1709,6 +1871,7 @@ bool Editor::Open(char* path)
     m_fileSize = m_bufferHead;
     m_dirty = 0;
     m_preferredColumn = -1;
+    m_selAnchor = -1;
 
     reDrawHeader();
     reDraw(0, m_bufferHead);
@@ -2187,6 +2350,9 @@ static const char* const editor_help[] = {
     "Arrow keys: Move cursor",
     "Home/End: Start/end of line",
     "PgUp/PgDn: Move a page",
+    "Shift+move: Select",
+    "Ctrl+A: Select all",
+    "Esc: Clear selection",
     "Backspace: Delete character",
     "Delete: Delete next character",
     "Enter: New line",
@@ -2259,7 +2425,7 @@ void Editor::EditorLoop()
 
         switch (event.event) {
         case GFX_EVENT_KEYBOARD:
-            putChar(event.data);
+            putChar(event.data, event.flags);
             break;
 
         case GFX_EVENT_MOUSE:
@@ -2338,15 +2504,79 @@ bool Editor::cursorUp()
     return true;
 }
 
-void Editor::putChar(unsigned char c)
+/* The keys that move the cursor, which select with Shift */
+static bool isMovementKey(unsigned char c)
+{
+    switch (c) {
+    case KEY_LEFT:
+    case KEY_RIGHT:
+    case KEY_UP:
+    case KEY_DOWN:
+    case KEY_HOME:
+    case KEY_END:
+    case KEY_PAGE_UP:
+    case KEY_PAGE_DOWN:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* Handles a key typed, with the modifier keys held, KEY_MOD_* from keyboard.h */
+void Editor::putChar(unsigned char c, int modifiers)
 {
     if (c == '\r') {
         c = '\n';
     }
 
+    /* A move with Shift extends the selection from where it started; one without ends it */
+    if (isMovementKey(c)) {
+        if (modifiers & KEY_MOD_SHIFT) {
+            if (m_selAnchor < 0) {
+                m_selAnchor = m_bufferEdit;
+            }
+        } else if (hasSelection() && (c == KEY_LEFT || c == KEY_RIGHT)) {
+            /* To the selection's start or end, not a character past it */
+            int start = 0;
+            int end = 0;
+            selectionRange(start, end);
+            m_bufferEdit = c == KEY_LEFT ? start : end;
+            m_preferredColumn = -1;
+            clearSelection();
+            ensureCursorVisible(visibleColumns(), visibleLines());
+            reDraw(0, m_bufferHead);
+            return;
+        } else {
+            clearSelection();
+        }
+    }
+
+    /* Typing, Enter, Tab, Backspace and Delete replace or delete the selection */
+    bool edits = c == '\b' || c == KEY_DELETE || c == '\n' || c == '\t' || (c >= 32 && c <= 126);
+    if (edits && deleteSelection()) {
+        if (c == '\b' || c == KEY_DELETE) {
+            ensureCursorVisible(visibleColumns(), visibleLines());
+            reDraw(0, m_bufferHead);
+            return;
+        }
+    } else if (edits) {
+        clearSelection();
+    }
+
     bool buffer_changed = false;
 
     switch (c) {
+    case CTRLA:
+        m_selAnchor = 0;
+        m_bufferEdit = m_bufferHead;
+        m_preferredColumn = -1;
+        break;
+
+    case 27:
+        /* Esc */
+        clearSelection();
+        break;
+
     case '\b':
         if (m_bufferEdit <= 0 || m_bufferHead <= 0) {
             return;
