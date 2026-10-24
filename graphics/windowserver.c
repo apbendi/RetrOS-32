@@ -347,7 +347,7 @@ static int ws_set_background_file(struct windowserver* ws, const char* path)
     return ERROR_OK;
 }
 
-static int __ws_key_event(struct windowserver* ws, unsigned char key)
+static int __ws_key_event(struct windowserver* ws, unsigned char key, unsigned char modifiers)
 {
     ERR_ON_NULL(ws);
     WS_VALIDATE(ws);
@@ -430,6 +430,7 @@ static int __ws_key_event(struct windowserver* ws, unsigned char key)
             /* sends keyboard event to userspace */
             struct gfx_event e = {
                 .data = key,
+                .flags = modifiers,
                 .event = GFX_EVENT_KEYBOARD
             };
             gfx_push_event(ws->_wm->windows, &e);
@@ -451,9 +452,10 @@ static int ws_draw(struct windowserver* ws)
     /* get state variables */
     int mouse_changed = mouse_get_event(&ws->m);
     ws->window_changes = ws->_wm->ops->changes(ws->_wm);
-    unsigned char key = kb_get_char(0);
-
-    __ws_key_event(ws, key);
+    struct kb_key key;
+    if(kb_get_key(&key)){
+        __ws_key_event(ws, key.key, key.modifiers);
+    }
     
     if((ws->window_changes || mouse_changed ) && ws->_fullscreen == NULL){
         memcpy(ws->_wm->composition_buffer, ws->background, ws->_wm->composition_buffer_size);

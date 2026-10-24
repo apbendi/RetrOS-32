@@ -45,7 +45,20 @@
 #define CTRLD 228
 #define CTRLE 229
 
+/* The modifier keys held with a key, in struct kb_key and gfx_event's flags */
+#define KEY_MOD_SHIFT (1 << 0)
+#define KEY_MOD_CTRL (1 << 1)
+#define KEY_MOD_ALT (1 << 2)
+
+/* A key typed, with the modifier keys held when it was pressed */
+struct kb_key {
+    unsigned char key;
+    unsigned char modifiers;
+};
+
 void init_keyboard();
 unsigned char kb_get_char(int block);
+int kb_get_key(struct kb_key* key);
+unsigned char kb_get_modifiers(void);
 
 #endif

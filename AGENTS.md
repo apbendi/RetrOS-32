@@ -200,6 +200,8 @@ The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but no
 - **Key codes** (`include/keyboard.h`): a `GFX_EVENT_KEYBOARD`'s `data` is the key's character, or for Ctrl+key, 128 plus the key's character without Shift, e.g. `CTRLC`, 227.
   - **Keys without a character** have codes no Ctrl+key can be: the arrows (251–254), F1–F10 (193–202), `KEY_HOME`, `KEY_END`, `KEY_PAGE_UP`, `KEY_PAGE_DOWN` and `KEY_DELETE` (203–207), and F12 (134).
   - **Apps** use the `KEY_*` names in `include/gfx/events.h`. Line editors ignore codes above 126.
+  - **Modifiers:** the event's `flags` has the modifier keys held when the key was pressed, `KEY_MOD_SHIFT`, `KEY_MOD_CTRL` and `KEY_MOD_ALT`. So Shift+Left is `KEY_LEFT` with `KEY_MOD_SHIFT`, and Ctrl+Shift+C is `CTRLC` with both. The driver queues each key with them (`struct kb_key`), and `kb_get_modifiers()` gives the ones held now.
+  - **Fake Shifts:** a real keyboard sends Shift presses and releases prefixed with `0xE0` around the gray arrows, Home, End and the like. The driver ignores them. QEMU doesn't send them.
 
 **Redraws:** the window server only redraws the screen when the mouse moves or a window is marked changed. Every gfx drawing syscall marks the app's window changed. Kernel threads that draw with `w->draw->*` must call `gfx_commit()` themselves, or their updates only appear when the mouse moves.
 
