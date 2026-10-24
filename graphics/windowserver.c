@@ -118,8 +118,8 @@ static int ws_remove(struct windowserver* ws, struct window* window)
      *
      * With interrupts off, so the window server sees all of these or none of them:
      * - removed keeps the window from being put back in a list, made pressed_window or made fullscreen.
-     * - pressed_window is cleared, so a later release doesn't reach it. Not done in wm remove, which isn't
-     *   only for destroyed windows.
+     * - pressed_window is cleared, with any drag it had, so a later move or release doesn't reach it. Not done in
+     *   wm remove, which isn't only for destroyed windows.
      * - A fullscreen window gets its own buffer back, the one that's freed later, instead of the composition
      *   buffer, and the desktop is composited again (#17). Its owner has exited, so nothing draws into it,
      *   and buffer_lock isn't needed.
@@ -128,6 +128,7 @@ static int ws_remove(struct windowserver* ws, struct window* window)
     window->removed = 1;
     if(ws->_wm->pressed_window == window){
         ws->_wm->pressed_window = NULL;
+        ws->_wm->dragging = 0;
     }
     if(ws->_fullscreen == window){
         __ws_leave_fullscreen(ws);

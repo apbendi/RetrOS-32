@@ -227,6 +227,15 @@ The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but no
 Syscalls run with interrupts enabled, so they can be preempted.
 
 **Mouse:** the window manager remembers which window got the press (`pressed_window`). A release always goes to that window, but it only counts as a click if the cursor is still over it. Clicks are handled at the cursor's arrow tip (`VESA_CURSOR_HOTSPOT_X`/`_Y`).
+- **Clicks:** `GFX_EVENT_MOUSE` is a click, at `data`, `data2` in the window's content. It's sent on the release.
+- **Dragging:** a press on a window's content, not one that grabs its title bar or resize corner, starts a drag (`wm->dragging`). The window gets:
+  - `GFX_EVENT_MOUSE_DOWN` where the press was;
+  - `GFX_EVENT_MOUSE_MOVE` each frame the mouse has moved while the button is held, wherever the mouse is;
+  - `GFX_EVENT_MOUSE_UP` where the button comes up, then the click if that's over the window.
+- **Coordinates** are relative to the content, so a move or release outside the window is negative or past its size: read `data` and `data2` as `int16_t`.
+- **Modifiers:** `flags` has the modifier keys held, as on a key, so Shift+click is a press with `KEY_MOD_SHIFT`.
+- **The queue:** a move replaces a move at the end of the window's queue (`gfx_push_event`), so a drag can't push other events out.
+- **Destroyed windows:** `ws_remove` clears `pressed_window` and the drag, so nothing more is sent to a window that's going.
 
 **Listing windows:** F12 logs the current workspace's windows to the serial log, front to back, with each one's rectangle, owner and flags (`wm_log_windows`). The shell's `windows` command prints the same list. Both copy the list under `wm->spinlock` with `wm_get_windows`, then print after releasing it.
 
