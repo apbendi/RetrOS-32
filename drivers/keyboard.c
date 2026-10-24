@@ -26,7 +26,8 @@
 #define KB_BUFFER_SIZE 255
 
 static mutex_t kb_lock;
-static unsigned char kb_buffer[KB_BUFFER_SIZE];
+/* Each key with the modifiers held when it was pressed, so they're still right when it's read */
+static struct kb_key kb_buffer[KB_BUFFER_SIZE];
 static volatile int kb_buffer_head = 0;
 static volatile int kb_buffer_tail = 0;
 
@@ -104,40 +105,46 @@ static uint8_t __super_pressed = 0;
 static uint8_t __caps_lock_enabled = 0;
 static uint8_t __extended_scancode = 0;
 
-unsigned char kb_get_char(int spin) {
+/* The modifier keys held now: KEY_MOD_SHIFT, KEY_MOD_CTRL and KEY_MOD_ALT */
+unsigned char kb_get_modifiers(void) {
+  return (__shift_pressed ? KEY_MOD_SHIFT : 0) | (__ctrl_pressed ? KEY_MOD_CTRL : 0) |
+         (__alt_pressed ? KEY_MOD_ALT : 0);
+}
+
+/* Takes the oldest key typed, if there is one. @return 1 if it took one, 0 if there was none */
+int kb_get_key(struct kb_key* key) {
   acquire(&kb_lock);
-
-  if (spin) {
-
-    while (kb_buffer_tail == kb_buffer_head) {
-      release(&kb_lock);
-
-      kernel_yield();
-
-      acquire(&kb_lock);
-    }
-
-  } else {
-    if (kb_buffer_tail == kb_buffer_head) {
-      release(&kb_lock);
-      return 0;
-    }
+  if (kb_buffer_tail == kb_buffer_head) {
+    release(&kb_lock);
+    return 0;
   }
 
-  unsigned char c = kb_buffer[kb_buffer_tail];
+  *key = kb_buffer[kb_buffer_tail];
   kb_buffer_tail = (kb_buffer_tail + 1) % KB_BUFFER_SIZE;
 
   release(&kb_lock);
-  return c;
+  return 1;
 }
 
-void kb_add_char(unsigned char c) {
+unsigned char kb_get_char(int spin) {
+  struct kb_key key;
+  while (!kb_get_key(&key)) {
+    if (!spin) {
+      return 0;
+    }
+    kernel_yield();
+  }
+  return key.key;
+}
+
+static void kb_add_char(unsigned char c) {
   int next_head = (kb_buffer_head + 1) % KB_BUFFER_SIZE;
   if (next_head == kb_buffer_tail) {
     kb_buffer_tail = (kb_buffer_tail + 1) % KB_BUFFER_SIZE;
   }
 
-  kb_buffer[kb_buffer_head] = c;
+  kb_buffer[kb_buffer_head].key = c;
+  kb_buffer[kb_buffer_head].modifiers = kb_get_modifiers();
   kb_buffer_head = next_head;
 }
 
@@ -170,6 +177,16 @@ static void __int_handler kb_callback() {
   if (__extended_scancode) {
     __extended_scancode = 0;
     switch (scancode) {
+    case 0x2a: /* a fake shift down */
+    case 0xaa: /* a fake shift up */
+    case 0x36:
+    case 0xb6:
+      /**
+       * A keyboard sends these around the gray arrows, Home, End and the like, as if Shift went up before the key
+       * and down after it while Shift is held, and the other way round with Num Lock on. They aren't the Shift keys,
+       * whose own codes come without 0xE0, so Shift+Left still arrives with Shift.
+       */
+      return;
     case 0x1d: /* right ctrl down */
       __ctrl_pressed = 1;
       return;

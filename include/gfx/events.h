@@ -27,20 +27,28 @@ typedef enum gfx_events {
     GFX_EVENT_RESOLUTION
 } gfx_event_t;
 
+/**
+ * flags is the modifier keys held, KEY_MOD_SHIFT, KEY_MOD_CTRL and KEY_MOD_ALT from keyboard.h, on a keyboard event:
+ * those held when the key was pressed. It's 0 on other events. It fills the padding after event, so the struct is
+ * 6 bytes, as it was before flags.
+ */
 struct gfx_event {
     uint8_t event;
+    uint8_t flags;
     uint16_t data;
     uint16_t data2;
 };
 
 struct gfx_event_key {
     uint8_t event;
+    uint8_t flags;
     uint16_t data;
     uint16_t unused;
 };
 
 struct gfx_event_mouse {
     uint8_t event;
+    uint8_t flags;
     uint16_t x;
     uint16_t y;
 };

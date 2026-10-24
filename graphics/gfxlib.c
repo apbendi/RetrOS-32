@@ -26,6 +26,9 @@
  * that holds it must not call another one that takes it.
  */
 
+/* Programs copy events in and out by this size, and flags took padding that was already there */
+_Static_assert(sizeof(struct gfx_event) == 6, "struct gfx_event must stay 6 bytes");
+
 int gfx_get_window_width()
 {
 	return $process->current->gfx_window->inner_width;
