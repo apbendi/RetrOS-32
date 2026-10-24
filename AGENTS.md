@@ -284,6 +284,14 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - **End of input:** Ctrl+D on an empty line; Ctrl+C, which throws the line away, since RetrOS has no signals; or the window closing.
 - **The kernel's own `scan`,** which `tcp` and the text shell's login use, reads the same way.
 
+## Selection and the clipboard
+
+**The clipboard** (`kernel/clipboard.c`, `include/clipboard.h`) is one text, of up to `CLIPBOARD_MAX`, 64 KB, without a terminating 0. Every program and kernel thread shares it.
+- **Setting it:** `clipboard_set(data, size)` copies the text in, replacing the old one, and returns `size`. Too much, or no memory for the copy, returns a negative error code and leaves the old text.
+- **Reading it:** `clipboard_get(data, size)` copies out as much as fits, and returns the whole text's size. So a size of 0 asks how big it is.
+- **Who calls them:** kernel code directly; apps through `SYSCALL_CLIPBOARD_SET` and `SYSCALL_CLIPBOARD_GET`, with wrappers of the same names in `lib/syscall.c`.
+- **The shell's `clip`** prints the clipboard as it is, or with arguments sets it to them, joined by single spaces as `echo` joins them, without a newline. It's a quick way to check what an app copied, from the serial log.
+
 ## File system
 
 **Layers** (`fs/`):

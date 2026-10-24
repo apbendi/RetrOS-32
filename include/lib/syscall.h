@@ -38,6 +38,14 @@ int rename(const char* path, const char* new_path);
 int chdir(const char* path);
 int getcwd(char* buf, int size);
 
+/**
+ * The clipboard, which every program and the Terminal share: one text of up to 64 KB, without a terminating 0.
+ * clipboard_set copies size bytes in, and returns size. clipboard_get copies out as much as fits in size bytes, and
+ * returns the whole text's size, so a size of 0 asks how big it is. Both return a negative error code on failure.
+ */
+int clipboard_set(const char* data, int size);
+int clipboard_get(char* data, int size);
+
 void* zmalloc(int size);
 void* malloc(int size);
 void free(void* ptr);

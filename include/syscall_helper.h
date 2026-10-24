@@ -65,7 +65,11 @@ enum {
     SYSCALL_TERM_WRITE,
 
     /* A line typed at the terminal (terminal.h) */
-    SYSCALL_TERM_READ
+    SYSCALL_TERM_READ,
+
+    /* The clipboard (clipboard.h) */
+    SYSCALL_CLIPBOARD_SET,
+    SYSCALL_CLIPBOARD_GET
 };
 
 #endif /* __SYSCALL_HELPER_H */
