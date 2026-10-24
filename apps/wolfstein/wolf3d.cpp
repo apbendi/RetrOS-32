@@ -38,7 +38,7 @@ public:
     void input(char key){
         switch (key){
         case 'a':{
-                m_player.angle -= 6;
+                m_player.angle += 6;
                 m_player.angle = FixAng(m_player.angle);
                 m_player.dir.x = cos(m_player.angle);
                 m_player.dir.y = -sin(m_player.angle);
@@ -47,7 +47,7 @@ public:
             }
             break;
         case 'd':{
-                m_player.angle += 6;
+                m_player.angle -= 6;
                 m_player.angle = FixAng(m_player.angle);
 
                 m_player.dir.x = cos(m_player.angle);
@@ -56,14 +56,12 @@ public:
             }
             break;
         case 'w':{
-                m_player.pos.x += m_player.dir.x * 0.2;
-                m_player.pos.y += m_player.dir.y * 0.2;
+                move(m_player.dir.x * 0.2, m_player.dir.y * 0.2);
                 render();
             }
             break;
         case 's':{
-                m_player.pos.x -= m_player.dir.x * 0.2;
-                m_player.pos.y -= m_player.dir.y * 0.2;
+                move(-m_player.dir.x * 0.2, -m_player.dir.y * 0.2);
                 render();
             }
             break;
@@ -90,7 +88,7 @@ private:
         struct Point2D pos;
         struct Point2D dir;
         int angle;
-    } m_player = { {4, 4}, {1, 0}, 0 };
+    } m_player = { {2.5, 4.5}, {1, 0}, 0 }; /* in the middle of an empty cell, facing the blue block */
 
     int m_width;
     int m_height;
@@ -118,6 +116,31 @@ private:
         1,0,0,0,0,0,0,1,
         1,1,1,1,1,1,1,1,	
     };
+
+    /* How close the player can get to a wall */
+    #define PLAYER_RADIUS 0.2f
+
+    /* Is there room for the player at x, y, with no wall within PLAYER_RADIUS? */
+    bool isFree(float x, float y) {
+        for (int i = 0; i < 4; i++) {
+            int mapX = (int)(x + (i & 1 ? PLAYER_RADIUS : -PLAYER_RADIUS));
+            int mapY = (int)(y + (i & 2 ? PLAYER_RADIUS : -PLAYER_RADIUS));
+            if (mapX < 0 || mapX >= 8 || mapY < 0 || mapY >= 8 || m_map[mapY * 8 + mapX] != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /* Move one axis at a time, so walking into a wall at an angle slides along it */
+    void move(float dx, float dy) {
+        if (isFree(m_player.pos.x + dx, m_player.pos.y)) {
+            m_player.pos.x += dx;
+        }
+        if (isFree(m_player.pos.x, m_player.pos.y + dy)) {
+            m_player.pos.y += dy;
+        }
+    }
 
     void drawMinimap() {
         if(!showDebug){
@@ -156,19 +179,18 @@ private:
         
         int rays = 60;
         int i = 0;
-        int rectSize = (m_width + rays - 1) / rays;
 
         for (int rayIndex = -30; rayIndex < 30; rayIndex++) {
-            /* Calculate ray's angle */
-            int rayAngle = FixAng(m_player.angle + rayIndex); /* Adjust ray angle based on player angle */
+            /* Calculate ray's angle. Angles grow to the player's left, so the leftmost column gets the largest. */
+            int rayAngle = FixAng(m_player.angle - rayIndex);
 
             /* Perform raycasting */
-            int hit;
+            int hit = 0;
             float hitDistance = castRay(rayAngle, &hit);
             int lineHeight = calculateWallHeight(hitDistance, rayAngle);
 
             /* Scale and shift lineHeight */
-            float scaledHeight = static_cast<float>(lineHeight) / (m_height-50);
+            float scaledHeight = static_cast<float>(lineHeight) / MAX(m_height-50, 1);
             float distanceFactor = scaledHeight * scaledHeight;
 
             /* Dim the color based on distance while keeping a minimum blue intensity */
@@ -178,8 +200,8 @@ private:
             int color = COLOR_VGA_MEDIUM_GRAY;
 
             /* Calculate the dimensions for the rectangle */
-            int rectX = i * rectSize; /* X position */
-            int rectWidth = MIN(rectSize, m_width - rectX); /* Adjust width for the last ray */
+            int rectX = i * m_width / rays; /* X position, spreading the rays over the whole width */
+            int rectWidth = (i + 1) * m_width / rays - rectX;
             int lineOffset = (m_height - lineHeight) / 2; /* Y position */
             int rectHeight = lineHeight; /* Height of the rectangle */
             i++;
@@ -222,10 +244,10 @@ private:
         float dirX = cos(FixAng(angle));
         float dirY = -sin(FixAng(angle));
 
-        /* Ray marching */
+        /* Ray marching, until the ray hits a wall or leaves the map, so *hit is always set */
         float distance;
         float distanceStep = (m_height * 0.0015);
-        for (distance = 0; distance < m_height-25; distance += distanceStep) {
+        for (distance = 0; ; distance += distanceStep) {
             int mapX = ((int)rayX);
             int mapY = ((int)rayY);
 
@@ -260,10 +282,10 @@ private:
         /* Correct the distance to avoid the fisheye effect */
         float correctedDistance = distance * cos_values[CLAMP(ABS(angleDiff), 0, 359)];
 
-        /* Calculate wall height */
+        /* Calculate wall height. Walls never get shorter than 25 px, so the farthest ones still show at the horizon. */
         int height = (int)(m_height-correctedDistance);
 
-        return height;
+        return MAX(height, 25);
     }
 
     int FixAng(int a){ if(a>359){ a-=360;} if(a<0){ a+=360;} return a;}
