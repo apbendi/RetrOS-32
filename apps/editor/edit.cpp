@@ -1646,6 +1646,110 @@ bool Editor::ropeDeleteRange(int index, int count)
     return left == 0;
 }
 
+/**
+ * Inserts len characters at index, in nodes of their own, splitting the node index is in the middle of.
+ * @return false, having changed nothing, without the room in the buffer or the memory for the nodes
+ */
+bool Editor::ropeInsertText(int index, const unsigned char* data, int len)
+{
+    if (len <= 0) {
+        return true;
+    }
+    if (index < 0 || index > m_bufferHead || m_bufferHead + len > m_bufferSize - 1) {
+        return false;
+    }
+
+    /* The new nodes first, so running out of memory leaves the rope as it was */
+    struct rope_node* first = nullptr;
+    struct rope_node* last = nullptr;
+    for (int pos = 0; pos < len; pos += ROPE_CHUNK_SIZE) {
+        struct rope_node* fresh = ropeCreateNode();
+        if (fresh == nullptr) {
+            while (first != nullptr) {
+                struct rope_node* next = first->next;
+                free(first);
+                first = next;
+            }
+            return false;
+        }
+
+        fresh->len = minInt(ROPE_CHUNK_SIZE, len - pos);
+        memcpy(fresh->data, &data[pos], fresh->len);
+        fresh->prev = last;
+        if (last != nullptr) {
+            last->next = fresh;
+        } else {
+            first = fresh;
+        }
+        last = fresh;
+    }
+
+    struct rope_node* node = nullptr;
+    int offset = 0;
+    ropeLocate(index, &node, &offset);
+
+    /* They go between prev and next. An empty rope has neither */
+    struct rope_node* prev = nullptr;
+    struct rope_node* next = nullptr;
+    if (node != nullptr && offset == 0) {
+        prev = node->prev;
+        next = node;
+    } else if (node != nullptr && offset == node->len) {
+        prev = node;
+        next = node->next;
+    } else if (node != nullptr) {
+        struct rope_node* right = ropeCreateNode();
+        if (right == nullptr) {
+            while (first != nullptr) {
+                struct rope_node* following = first->next;
+                free(first);
+                first = following;
+            }
+            return false;
+        }
+
+        right->len = node->len - offset;
+        memcpy(right->data, &node->data[offset], right->len);
+        node->len = offset;
+
+        right->prev = node;
+        right->next = node->next;
+        if (node->next != nullptr) {
+            node->next->prev = right;
+        } else {
+            m_ropeTail = right;
+        }
+        node->next = right;
+
+        prev = node;
+        next = right;
+    }
+
+    first->prev = prev;
+    last->next = next;
+    if (prev != nullptr) {
+        prev->next = first;
+    } else {
+        m_ropeHead = first;
+    }
+    if (next != nullptr) {
+        next->prev = last;
+    } else {
+        m_ropeTail = last;
+    }
+    m_bufferHead += len;
+
+    /* Joins the nodes at either end, if they fit in one */
+    if (ropeLocate(index, &node, &offset) && node != nullptr) {
+        ropeTryMerge(node);
+    }
+    if (ropeLocate(index + len, &node, &offset) && node != nullptr) {
+        ropeTryMerge(node);
+    }
+
+    return true;
+}
+
 /* Whether some text is selected: the anchor is set, and the cursor has moved from it */
 bool Editor::hasSelection() const
 {
@@ -1696,6 +1800,81 @@ bool Editor::deleteSelection()
 
     clearSelection();
     return deleteRange(start, end);
+}
+
+/* Inserts len characters at index, and puts the cursor after them. @return false without the room or the memory */
+bool Editor::insertText(int index, const unsigned char* data, int len)
+{
+    if (!ropeInsertText(index, data, len)) {
+        return false;
+    }
+
+    ropeSyncToBuffer();
+    m_bufferEdit = index + len;
+    m_dirty = 1;
+    m_preferredColumn = -1;
+    return true;
+}
+
+/* Copies the selected text to the clipboard. @return false if nothing was selected, or it couldn't be copied, which the status line says */
+bool Editor::copySelection()
+{
+    int start = 0;
+    int end = 0;
+    if (!selectionRange(start, end)) {
+        return false;
+    }
+
+    int ret = clipboard_set((const char*)&m_textBuffer[start], end - start);
+    if (ret < 0) {
+        drawStatusLine(COLOR_VGA_RED, "Can't copy: %s", error_get_string(ret));
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Puts the clipboard's text in place of the selection, or at the cursor, exactly as it is: without the } that typing
+ * a { adds (#119). What doesn't fit in the buffer is left out, and the status line says so.
+ */
+void Editor::paste()
+{
+    int size = clipboard_get(nullptr, 0);
+    if (size <= 0) {
+        return;
+    }
+
+    int start = m_bufferEdit;
+    int end = m_bufferEdit;
+    selectionRange(start, end);
+    int room = (m_bufferSize - 1) - (m_bufferHead - (end - start));
+    int len = minInt(size, room);
+    if (len <= 0) {
+        drawStatusLine(COLOR_VGA_RED, "Can't paste: the Editor holds %d characters.", m_bufferSize - 1);
+        return;
+    }
+
+    unsigned char* data = (unsigned char*) malloc(len);
+    if (data == nullptr) {
+        drawStatusLine(COLOR_VGA_RED, "Can't paste: out of memory.");
+        return;
+    }
+
+    /* Another program may have changed the clipboard since it was measured */
+    size = clipboard_get((char*)data, len);
+    if (size < len) {
+        len = size > 0 ? size : 0;
+    }
+
+    deleteSelection();
+    bool pasted = insertText(m_bufferEdit, data, len);
+    free(data);
+
+    if (!pasted) {
+        drawStatusLine(COLOR_VGA_RED, "Can't paste: out of memory.");
+    } else if (len < size) {
+        drawStatusLine(COLOR_VGA_RED, "Pasted %d of %d characters: the Editor holds %d.", len, size, m_bufferSize - 1);
+    }
 }
 
 void Editor::scroll(int lines)
@@ -2353,6 +2532,7 @@ static const char* const editor_help[] = {
     "Shift+move: Select",
     "Ctrl+A: Select all",
     "Esc: Clear selection",
+    "Ctrl+C/X/V: Copy/cut/paste",
     "Backspace: Delete character",
     "Delete: Delete next character",
     "Enter: New line",
@@ -2575,6 +2755,20 @@ void Editor::putChar(unsigned char c, int modifiers)
     case 27:
         /* Esc */
         clearSelection();
+        break;
+
+    case CTRLC:
+        copySelection();
+        break;
+
+    case CTRLX:
+        if (copySelection()) {
+            deleteSelection();
+        }
+        break;
+
+    case CTRLV:
+        paste();
         break;
 
     case '\b':

@@ -292,6 +292,12 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - **Who calls them:** kernel code directly; apps through `SYSCALL_CLIPBOARD_SET` and `SYSCALL_CLIPBOARD_GET`, with wrappers of the same names in `lib/syscall.c`.
 - **The shell's `clip`** prints the clipboard as it is, or with arguments sets it to them, joined by single spaces as `echo` joins them, without a newline. It's a quick way to check what an app copied, from the serial log.
 
+**In the Editor** (`apps/editor/edit.cpp`), the selection runs from `m_selAnchor`, -1 for none, to the cursor.
+- **Keys:** Shift with an arrow, Home, End, Page Up or Page Down selects; Ctrl+A selects all; Esc clears. Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste through the clipboard. Typing, Enter, Tab, Backspace and Delete replace or delete the selection.
+- **Pasting** inserts the text exactly as it is, without the `}` typing a `{` adds. What doesn't fit in the 64 KB buffer is left out, and the status line says so.
+- **Editing ranges:** `ropeDeleteRange` and `ropeInsertText` change the rope a node at a time. Each node is a `malloc`, so a page of the app's heap, and rebuilding the rope for each edit would need twice the pages.
+- **Drawing:** `drawSelection` draws the selection's background before the text, laying rows out as `reDraw` does.
+
 ## File system
 
 **Layers** (`fs/`):
