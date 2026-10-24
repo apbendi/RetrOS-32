@@ -1160,9 +1160,53 @@ int terminal_key(struct terminal* term, unsigned char key, unsigned char modifie
 	return 1;
 }
 
+/* Whether c is part of a word, for a double click: a letter, a digit or _ */
+static bool_t __terminal_word_char(char c)
+{
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+/**
+ * Selects what's around the character at index in the text, for a double click: its word, a run of letters, digits and
+ * _, or else a run of the same character, like spaces. Past a line's end is its last character. With line, for a
+ * triple click, selects its whole line and the newline after it.
+ */
+static void __terminal_select_around(struct terminal* term, int index, bool_t line)
+{
+	char* text = term->textbuffer;
+	int i = index < term->head ? index : term->head;
+	if(i < 0) i = 0;
+
+	if(line){
+		int start = i;
+		while(start > 0 && text[start-1] != '\n') start--;
+		int end = i;
+		while(end < term->head && text[end] != '\n') end++;
+		term->sel_anchor = start;
+		term->sel_end = end < term->head ? end + 1 : end;
+		return;
+	}
+
+	if((i >= term->head || text[i] == '\n') && i > 0 && text[i-1] != '\n') i--;
+	if(i >= term->head || text[i] == '\n'){
+		/* An empty line has nothing to select */
+		term->sel_anchor = -1;
+		return;
+	}
+
+	char c = text[i];
+	bool_t word = __terminal_word_char(c);
+	int start = i, end = i + 1;
+	while(start > 0 && (word ? __terminal_word_char(text[start-1]) : text[start-1] == c)) start--;
+	while(end < term->head && (word ? __terminal_word_char(text[end]) : text[end] == c)) end++;
+	term->sel_anchor = start;
+	term->sel_end = end;
+}
+
 /**
  * Selects a graphics terminal's text with the mouse: a press starts a selection where it is, a drag moves its end, and
- * a release without a drag clears it. A press with Shift moves the end of the selection there is. It's called by
+ * a release without a drag clears it. A press with Shift moves the end of the selection there is. A double click
+ * selects a word, and a triple click a line, without a drag. It's called by
  * whoever is reading the terminal's window's events: its shell, or a program reading a line. The input line isn't
  * selected, so a drag over it selects to the text's end.
  * @return 1 if event was a press, drag or release, which it handled, 0 if not
@@ -1181,8 +1225,13 @@ int terminal_mouse(struct terminal* term, struct gfx_event* event)
 		return 1;
 	}
 
-	int index = __terminal_index_at(term, screen, (int16_t)event->data, (int16_t)event->data2);
-	if(event->event == GFX_EVENT_MOUSE_DOWN){
+	int px = (int16_t)event->data, py = (int16_t)event->data2;
+	int index = __terminal_index_at(term, screen, px, py);
+	if(event->event == GFX_EVENT_MOUSE_DOWN && GFX_EVENT_CLICKS(event->flags) >= 2){
+		/* The character under the mouse, rather than the nearer edge of one */
+		__terminal_select_around(term, __terminal_index_at(term, screen, px - 4, py), GFX_EVENT_CLICKS(event->flags) == 3);
+		term->selecting = false;
+	} else if(event->event == GFX_EVENT_MOUSE_DOWN){
 		if(!(event->flags & KEY_MOD_SHIFT) || term->sel_anchor < 0){
 			term->sel_anchor = index;
 		}

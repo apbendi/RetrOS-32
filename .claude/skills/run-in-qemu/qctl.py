@@ -349,13 +349,17 @@ def mouse_to(m, x, y):
     sleep(0.1)
 
 
-def click(x, y, button):
+def click(x, y, button, count=1):
     set_mark()
     m = Monitor()
     mouse_to(m, x, y)
-    m.run(f"mouse_button {button}")
-    sleep(0.1)
-    m.run("mouse_button 0")
+    # Repeated clicks come 150 ms apart, within the window server's 500 ms for a double or triple click
+    for i in range(count):
+        if i > 0:
+            sleep(0.05)
+        m.run(f"mouse_button {button}")
+        sleep(0.1)
+        m.run("mouse_button 0")
     m.close()
 
 
@@ -585,6 +589,7 @@ def main():
     s = sub.add_parser("shell"); s.add_argument("command")
     s = sub.add_parser("click"); s.add_argument("x", type=int); s.add_argument("y", type=int)
     s.add_argument("--right", action="store_true")
+    s.add_argument("--count", type=int, default=1, help="click this many times, quickly: 2 for a double click")
     s = sub.add_parser("move"); s.add_argument("x", type=int); s.add_argument("y", type=int)
     s = sub.add_parser("drag")
     for a in ("x1", "y1", "x2", "y2"):
@@ -605,7 +610,7 @@ def main():
     elif a.op == "windows": windows_cmd()
     elif a.op == "focus": focus(a.name)
     elif a.op == "shell": shell(a.command)
-    elif a.op == "click": click(a.x, a.y, 2 if a.right else 1)
+    elif a.op == "click": click(a.x, a.y, 2 if a.right else 1, a.count)
     elif a.op == "move": move(a.x, a.y)
     elif a.op == "drag": drag(a.x1, a.y1, a.x2, a.y2)
     elif a.op == "mon": print(monitor(a.command))

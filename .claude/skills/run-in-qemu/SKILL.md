@@ -35,6 +35,7 @@ $Q stop
 - **`windows`** lists the windows front to back, with each one's position, size and owner, and where to click to bring it to the front. It presses F12, which makes the window server log the list.
 - **`focus NAME`** brings the window titled NAME to the front.
 - **`move X Y`** and **`drag X1 Y1 X2 Y2`** move the mouse; dragging a title bar moves the window.
+- **`click X Y --count 2`** clicks twice in quick succession, for a double click; `--count 3` for a triple. Separate `click` commands at one spot come about 430 ms apart, which the window server also counts as a double click, as it counts presses within 500 ms. Sleep at least 0.2 s between them for single clicks.
 - **`text`** prints the VGA text screen, for the boot menu and text mode.
 - **`mon CMD`** runs any QEMU monitor command.
 

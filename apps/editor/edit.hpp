@@ -89,6 +89,7 @@ private:
 
     int indexAtPoint(int x, int y) const;
     void handleMouse(const struct gfx_event& event);
+    void selectAround(int index, bool line);
     void dragScrollTick();
 
     int visibleLines() const;

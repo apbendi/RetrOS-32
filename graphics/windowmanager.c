@@ -20,6 +20,8 @@
 #include <memory.h>
 #include <mouse.h>
 #include <math.h>
+#include <timer.h>
+#include <math.h>
 #include <vbe.h>
 #include <pcb.h>
 
@@ -362,15 +364,16 @@ static int wm_default_draw(struct windowmanager* wm, struct window* window)
 
 /**
  * Sends a press, move or release at x, y on the screen to w, relative to its content, and with the modifier keys held.
- * Outside the content, that's negative or past its size, so it's stored as an int16_t.
+ * Outside the content, that's negative or past its size, so it's stored as an int16_t. A press also has its count of
+ * clicks, 1 to 3.
  */
-static void __wm_push_mouse(struct window* w, uint8_t event, int x, int y)
+static void __wm_push_mouse(struct window* w, uint8_t event, int x, int y, int clicks)
 {
     int offset = HAS_FLAG(w->flags, GFX_HIDE_HEADER) ? 0 : 8;
     struct gfx_event e = {
         .data = (uint16_t)(int16_t)(x - (w->x + offset)),
         .data2 = (uint16_t)(int16_t)(y - (w->y + offset)),
-        .flags = kb_get_modifiers(),
+        .flags = kb_get_modifiers() | (clicks << GFX_EVENT_CLICKS_SHIFT),
         .event = event
     };
     gfx_push_event(w, &e);
@@ -450,7 +453,7 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
 
         if(pressed != NULL){
             if(dragging){
-                __wm_push_mouse(pressed, GFX_EVENT_MOUSE_UP, x, y);
+                __wm_push_mouse(pressed, GFX_EVENT_MOUSE_UP, x, y, 0);
             }
 
             /* It's only a click if the mouse is still over the pressed window. */
@@ -479,7 +482,7 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
     if((flags & MOUSE_LEFT) && wm->dragging && pressed != NULL && (x != wm->drag_x || y != wm->drag_y)){
         wm->drag_x = x;
         wm->drag_y = y;
-        __wm_push_mouse(pressed, GFX_EVENT_MOUSE_MOVE, x, y);
+        __wm_push_mouse(pressed, GFX_EVENT_MOUSE_MOVE, x, y, 0);
     }
 
     if(moving != NULL){
@@ -509,10 +512,20 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
 
         /* A press on the content, rather than one that grabbed the title bar or the corner, starts a drag for the window */
         if(wm->pressed_window == window && window->is_moving.state != GFX_WINDOW_MOVING && !window->resize && __wm_over_content(window, x, y)){
+            /* Soon after the last press, near it and on the same window, is a double or triple click. A fourth starts again */
+            int now = timer_get_tick();
+            bool_t again = window == wm->click_window && now - wm->click_tick <= WM_MULTI_CLICK_MS
+                && ABS(x - wm->click_x) <= WM_MULTI_CLICK_DISTANCE && ABS(y - wm->click_y) <= WM_MULTI_CLICK_DISTANCE;
+            wm->click_count = again && wm->click_count < 3 ? wm->click_count + 1 : 1;
+            wm->click_window = window;
+            wm->click_tick = now;
+            wm->click_x = x;
+            wm->click_y = y;
+
             wm->dragging = 1;
             wm->drag_x = x;
             wm->drag_y = y;
-            __wm_push_mouse(window, GFX_EVENT_MOUSE_DOWN, x, y);
+            __wm_push_mouse(window, GFX_EVENT_MOUSE_DOWN, x, y, wm->click_count);
         }
 
         /* If clicked window is not in front, push it. */
