@@ -81,6 +81,9 @@ private:
     void clearSelection();
     bool deleteSelection();
     bool deleteRange(int start, int end);
+    bool insertText(int index, const unsigned char* data, int len);
+    bool copySelection();
+    void paste();
 
     int visibleLines() const;
     int visibleColumns() const;
@@ -121,6 +124,7 @@ private:
     bool ropeInsertChar(int index, unsigned char c);
     bool ropeDeleteChar(int index);
     bool ropeDeleteRange(int index, int count);
+    bool ropeInsertText(int index, const unsigned char* data, int len);
     bool ropeLocate(int index, struct rope_node** out_node, int* out_offset) const;
     struct rope_node* ropeCreateNode();
     void ropeDetachNode(struct rope_node* node);
