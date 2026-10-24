@@ -34,6 +34,8 @@
 #define EDITOR_MIN_RIGHT_PANE_WIDTH 48
 #define EDITOR_MIN_HEIGHT (HEADER_HEIGHT + STATUS_HEIGHT + 8)
 #define EDITOR_MAX_VIEW_ROWS 1024
+/* How often a drag held above or below the text scrolls it a row */
+#define EDITOR_DRAG_SCROLL_MS 50
 
 struct keyword {
     char word[10];
@@ -84,6 +86,10 @@ private:
     bool insertText(int index, const unsigned char* data, int len);
     bool copySelection();
     void paste();
+
+    int indexAtPoint(int x, int y) const;
+    void handleMouse(const struct gfx_event& event);
+    void dragScrollTick();
 
     int visibleLines() const;
     int visibleColumns() const;
@@ -144,6 +150,10 @@ private:
     int m_preferredColumn;
     /* Where the selection started, which runs from here to the cursor; -1 for none */
     int m_selAnchor;
+    /* Set from a press in the text until its release. m_dragScroll is -1 or 1 while the mouse is above or below the text, at m_dragX */
+    bool m_dragging;
+    int m_dragScroll;
+    int m_dragX;
     char m_currentPath[FS_PATH_MAX];
     /* An error is on the status line, which the next redraw leaves in place instead of drawing the file's name */
     int m_keepStatus;

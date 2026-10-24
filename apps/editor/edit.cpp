@@ -443,6 +443,9 @@ Editor::Editor()
     m_dirty = 0;
     m_preferredColumn = -1;
     m_selAnchor = -1;
+    m_dragging = false;
+    m_dragScroll = 0;
+    m_dragX = 0;
     m_keepStatus = 0;
     scrollY = 0;
     m_scrollWrap = 0;
@@ -658,7 +661,7 @@ int Editor::prevVisualRowStart(int row_start_index, int cols) const
         return 0;
     }
 
-    int prev = 0;
+    /* The last row that starts before target: the one whose next row is target, or would be past it */
     int cur = 0;
 
     while (cur < target) {
@@ -667,11 +670,10 @@ int Editor::prevVisualRowStart(int row_start_index, int cols) const
             break;
         }
 
-        prev = cur;
         cur = next;
     }
 
-    return prev;
+    return cur;
 }
 
 /* The rows the text takes from the row that starts at index to its end, counted as scrolling counts them */
@@ -986,6 +988,130 @@ void Editor::drawSelection(int view_start, int cols, int rows, int text_x)
         }
     }
     drawRun();
+}
+
+/**
+ * The boundary between characters nearest x, y in the window's content, with the text laid out as reDraw draws it.
+ * Above the text is its first row and below it its last. Left of the text is a row's start, and past a row's end is
+ * its end. Past the text's last row is the text's end.
+ */
+int Editor::indexAtPoint(int x, int y) const
+{
+    int cols = visibleColumns();
+    int rows = visibleLines();
+
+    int row = y < HEADER_HEIGHT ? 0 : (y - HEADER_HEIGHT) / 8;
+    if (row >= rows) {
+        row = rows - 1;
+    }
+
+    /* The nearer edge of the character under x */
+    int dx = x - textStartX();
+    int col = dx < 0 ? 0 : (dx + 4) / 8;
+    if (col > cols) {
+        col = cols;
+    }
+
+    int r = 0;
+    int c = 0;
+    for (int i = viewStartIndex(cols); i < m_bufferHead; i++) {
+        unsigned char ch = m_textBuffer[i];
+        if (ch != '\n' && c >= cols) {
+            r++;
+            c = 0;
+        }
+
+        /* Past the end of a full row is the start of the next */
+        if (r > row || (r == row && c >= col)) {
+            return i;
+        }
+
+        if (ch == '\n') {
+            if (r == row) {
+                return i;
+            }
+            r++;
+            c = 0;
+        } else {
+            c++;
+        }
+    }
+
+    return m_bufferHead;
+}
+
+/**
+ * A press in the text puts the cursor there and starts a selection, or with Shift selects from the cursor, or the
+ * selection's start, to there. Dragging moves the selection's end. Holding the mouse above or below the text scrolls it
+ * (dragScrollTick).
+ */
+void Editor::handleMouse(const struct gfx_event& event)
+{
+    int x = (int16_t)event.data;
+    int y = (int16_t)event.data2;
+    int text_bottom = c_height - STATUS_HEIGHT;
+
+    switch (event.event) {
+    case GFX_EVENT_MOUSE_DOWN:
+        if (x < TREE_VIEW_WIDTH || y < HEADER_HEIGHT || y >= text_bottom) {
+            return;
+        }
+
+        if (event.flags & KEY_MOD_SHIFT) {
+            if (m_selAnchor < 0) {
+                m_selAnchor = m_bufferEdit;
+            }
+        } else {
+            m_selAnchor = indexAtPoint(x, y);
+        }
+        m_bufferEdit = indexAtPoint(x, y);
+        m_preferredColumn = -1;
+        m_dragging = true;
+        m_dragScroll = 0;
+        m_dragX = x;
+        break;
+
+    case GFX_EVENT_MOUSE_MOVE:
+    case GFX_EVENT_MOUSE_UP:
+        if (!m_dragging) {
+            return;
+        }
+
+        m_dragX = x;
+        m_dragScroll = y < HEADER_HEIGHT ? -1 : (y >= text_bottom ? 1 : 0);
+        m_bufferEdit = indexAtPoint(x, clampInt(y, HEADER_HEIGHT, text_bottom - 1));
+        m_preferredColumn = -1;
+
+        if (event.event == GFX_EVENT_MOUSE_UP) {
+            m_dragging = false;
+            m_dragScroll = 0;
+        }
+        break;
+
+    default:
+        return;
+    }
+
+    reDraw(0, m_bufferHead);
+}
+
+/* While a drag is held above or below the text: scrolls a row that way, if there's more text there, and selects to the row that came into view */
+void Editor::dragScrollTick()
+{
+    if (!m_dragging || m_dragScroll == 0) {
+        return;
+    }
+
+    int cols = visibleColumns();
+    int rows = visibleLines();
+    if (m_dragScroll < 0 || rowsFrom(viewStartIndex(cols), cols) > rows) {
+        scroll(m_dragScroll);
+    }
+
+    int y = m_dragScroll < 0 ? HEADER_HEIGHT : HEADER_HEIGHT + ((rows - 1) * 8);
+    m_bufferEdit = indexAtPoint(m_dragX, y);
+    m_preferredColumn = -1;
+    reDraw(0, m_bufferHead);
 }
 
 void Editor::reDraw(int from, int to)
@@ -1866,7 +1992,9 @@ void Editor::paste()
         len = size > 0 ? size : 0;
     }
 
+    /* An anchor with nothing selected yet, as after a click, would select the pasted text */
     deleteSelection();
+    clearSelection();
     bool pasted = insertText(m_bufferEdit, data, len);
     free(data);
 
@@ -2538,6 +2666,8 @@ static const char* const editor_help[] = {
     "Enter: New line",
     "Tab: Insert spaces",
     "Mouse: Click file in tree to open",
+    "Drag over text: Select",
+    "Shift+click: Select to there",
 };
 
 void Editor::drawHelp()
@@ -2601,11 +2731,27 @@ void Editor::EditorLoop()
 
     while (1) {
         struct gfx_event event;
-        gfx_get_event(&event, GFX_EVENT_BLOCKING);
+
+        /* A drag held above or below the text scrolls a row each tick, so wait for events only that long */
+        if (m_dragScroll != 0) {
+            if (gfx_get_event(&event, GFX_EVENT_NONBLOCKING) < 0) {
+                sleep(EDITOR_DRAG_SCROLL_MS);
+                dragScrollTick();
+                continue;
+            }
+        } else {
+            gfx_get_event(&event, GFX_EVENT_BLOCKING);
+        }
 
         switch (event.event) {
         case GFX_EVENT_KEYBOARD:
             putChar(event.data, event.flags);
+            break;
+
+        case GFX_EVENT_MOUSE_DOWN:
+        case GFX_EVENT_MOUSE_MOVE:
+        case GFX_EVENT_MOUSE_UP:
+            handleMouse(event);
             break;
 
         case GFX_EVENT_MOUSE:
