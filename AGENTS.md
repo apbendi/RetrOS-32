@@ -301,7 +301,8 @@ Syscalls run with interrupts enabled, so they can be preempted.
 
 **In a Terminal** (`kernel/terminal.c`), the selection is the text between `sel_anchor`, -1 for none, and `sel_end`, as indexes into the text buffer. The input line, the prompt and what's being typed, isn't selectable.
 - **The mouse:** `terminal_mouse` handles presses, drags and releases. A press starts a selection, a drag moves its end, and a release without a drag clears it. Shift+press moves the end of the selection there is. `__terminal_index_at` maps a point to a character with the layout `__terminal_draw_all` uses.
-- **Who calls it:** whoever is reading the window's events: the shell's loop, or `__terminal_scan_graphics` while a program reads a line. While a program runs without reading, the events wait in the window's queue.
+- **The keyboard:** `terminal_key` takes the selection's keys before the shell or a reader sees them. Shift with an arrow moves the selection's end a character, or a row on screen, starting a selection at the end of the output if there's none. Ctrl+Shift+A selects all the text kept, and Esc clears. Up and Down without Shift still go through the shell's history.
+- **Who calls them:** whoever is reading the window's events: the shell's loop, or `__terminal_scan_graphics` while a program reads a line. While a program runs without reading, the events wait in the window's queue (#131).
 - **Drawing:** selected characters are drawn with the text and background colors swapped, and a selected newline as a cell. A change to the selection redraws the window in full. New output is never selected, so the drawing that adds only new text is unchanged, and scrolling the window's pixels moves the highlight with its text.
 - **Following the text:** dropping text from the buffer's start moves the selection, which shrinks or goes with what's dropped (`__terminal_selection_dropped`). `clear` and `reset` clear it.
 
