@@ -702,6 +702,36 @@ static void shell_put(struct shell* sh, unsigned char c)
 	__shell_show_line(sh);
 }
 
+/**
+ * Types what was pasted into the terminal, as if it was typed: each newline runs the line so far, as Enter does. A
+ * command that starts a program reading lines leaves the rest for the program, which takes it first. Characters
+ * between newlines go into the line together, and the line is shown once for them.
+ */
+static void __shell_type_pending(struct shell* sh)
+{
+	struct terminal* term = $process->current->term;
+	bool_t shown = true;
+	int c;
+	while(!sh->exiting && (c = terminal_take_pending(term)) >= 0){
+		if(c == newline){
+			shell_put(sh, newline);
+			shown = true;
+			continue;
+		}
+
+		/* Room for the terminating 0 */
+		if(sh->length < SHELL_LINE_MAX - 1){
+			sh->buffer[sh->length++] = c;
+			sh->buffer[sh->length] = 0;
+			shown = false;
+		}
+	}
+
+	if(!shown){
+		__shell_show_line(sh);
+	}
+}
+
 #include <gfx/api.h>
 
 #define CLEANUP_FUNCTION __attribute__((cleanup(cleanup_function)))
@@ -761,8 +791,13 @@ void __kthread_entry shell(int argc, char* argv[])
 
 		switch (event.event){
 		case GFX_EVENT_KEYBOARD:
-			/* Keys that select the terminal's text don't reach the line */
+			/* Keys that select, copy and paste the terminal's text don't reach the line. What's pasted is typed now */
 			if(terminal_key(term, event.data, event.flags)){
+				__shell_type_pending(sh);
+				gfx_commit();
+				if(sh->exiting){
+					kernel_exit();
+				}
 				break;
 			}
 

@@ -23,6 +23,7 @@
 #include <serial.h>
 #include <vbe.h>
 #include <scheduler.h>
+#include <clipboard.h>
 
 #define MAX_FMT_STR_SIZE 50
 #define TERMINAL_TEXTBUFFER_INITIAL_CAPACITY 1024
@@ -334,6 +335,7 @@ void terminal_put(struct terminal* term)
 
 	kfree(term->textbuffer);
 	kfree(term->input);
+	kfree(term->pending);
 	kfree(term);
 }
 
@@ -525,9 +527,17 @@ static int __terminal_scan_graphics(struct terminal* term, ubyte_t* data, int si
 			return 0;
 		}
 
-		/* The window isn't the reader's, so its events don't wake the reader: it looks every 10 ms */
+		/**
+		 * Text pasted comes first, as if typed, so a newline in it ends the line, and the rest waits for the next read.
+		 * The window isn't the reader's, so its events don't wake the reader: it looks every 10 ms.
+		 */
 		struct gfx_event event;
-		if(gfx_window_get_event(screen, &event) < 0){
+		int pasted = terminal_take_pending(term);
+		if(pasted >= 0){
+			event.event = GFX_EVENT_KEYBOARD;
+			event.flags = 0;
+			event.data = pasted;
+		} else if(gfx_window_get_event(screen, &event) < 0){
 			kernel_sleep(10);
 			continue;
 		}
@@ -538,6 +548,7 @@ static int __terminal_scan_graphics(struct terminal* term, ubyte_t* data, int si
 				if(terminal_key(term, c, event.flags)) break;
 
 				if(c == CTRLC){
+					terminal_drop_pending(term);
 					__terminal_end_read(term);
 					return -1;
 				}
@@ -1002,10 +1013,88 @@ static void __terminal_cell_of(struct terminal* term, struct window* screen, int
 }
 
 /**
- * Handles the keys that select a graphics terminal's text, before its shell or a program reading a line sees them. Shift
- * with an arrow moves the selection's end, by a character or a row on screen, starting a selection at the end of the
- * text if there's none. Ctrl+Shift+A selects all the text, and Esc clears the selection.
- * @return 1 if it handled key, 0 to leave it to the caller, as Esc with nothing selected
+ * Adds the clipboard's text to what's pending, for the shell or a program reading a line to take as if it was typed.
+ * Tabs become spaces, and other control characters, all but newlines, are left out, as typing them does nothing.
+ */
+static void __terminal_paste(struct terminal* term)
+{
+	int size = clipboard_get(NULL, 0);
+	if(size <= 0) return;
+
+	char* text = kalloc_try(size);
+	if(text == NULL) return;
+	int got = clipboard_get(text, size);
+	if(got < size) size = got > 0 ? got : 0;
+
+	/* What's still pending, then the new text */
+	int left = term->pending_length - term->pending_position;
+	char* pending = kalloc_try(left + size);
+	if(pending == NULL){
+		kfree(text);
+		return;
+	}
+	if(left > 0) memcpy(pending, term->pending + term->pending_position, left);
+
+	int length = left;
+	for (int i = 0; i < size; i++){
+		char c = text[i] == '\t' ? ' ' : text[i];
+		if(c != '\n' && (c < 32 || c > 126)) continue;
+		pending[length++] = c;
+	}
+	kfree(text);
+
+	kfree(term->pending);
+	term->pending = pending;
+	term->pending_length = length;
+	term->pending_position = 0;
+}
+
+/**
+ * Takes the next character pasted into the terminal and not yet taken: the shell and a program reading a line take
+ * them before new keys, as if they were typed.
+ * @return the character, or -1 if there's none
+ */
+int terminal_take_pending(struct terminal* term)
+{
+	if(term == NULL) return -1;
+
+	int c = -1;
+	terminal_lock(term);
+	if(term->pending_position < term->pending_length){
+		c = (unsigned char) term->pending[term->pending_position++];
+	}
+	if(term->pending != NULL && term->pending_position >= term->pending_length){
+		kfree(term->pending);
+		term->pending = NULL;
+		term->pending_length = 0;
+		term->pending_position = 0;
+	}
+	terminal_unlock(term);
+	return c;
+}
+
+/* Throws away what was pasted and not yet taken, as Ctrl+C does with what's being typed */
+void terminal_drop_pending(struct terminal* term)
+{
+	if(term == NULL) return;
+
+	terminal_lock(term);
+	kfree(term->pending);
+	term->pending = NULL;
+	term->pending_length = 0;
+	term->pending_position = 0;
+	terminal_unlock(term);
+}
+
+/**
+ * Handles the keys that select, copy and paste a graphics terminal's text, before its shell or a program reading a line
+ * sees them:
+ * - Shift with an arrow moves the selection's end, by a character or a row on screen, starting a selection at the end
+ *   of the text if there's none. Ctrl+Shift+A selects all the text, and Esc clears the selection.
+ * - Ctrl+Shift+C copies the selection to the clipboard. So does Ctrl+C when something is selected, which also clears
+ *   it; with nothing selected, Ctrl+C is left to cancel the line.
+ * - Ctrl+V and Ctrl+Shift+V paste: the clipboard's text is added to what's pending (terminal_take_pending).
+ * @return 1 if it handled key, 0 to leave it to the caller, as Esc or Ctrl+C with nothing selected
  */
 int terminal_key(struct terminal* term, unsigned char key, unsigned char modifiers)
 {
@@ -1013,16 +1102,34 @@ int terminal_key(struct terminal* term, unsigned char key, unsigned char modifie
 
 	bool_t shift = (modifiers & KEY_MOD_SHIFT) != 0;
 	bool_t arrow = key == ARROW_LEFT || key == ARROW_RIGHT || key == ARROW_UP || key == ARROW_DOWN;
-	if(!(shift && (arrow || key == CTRLA)) && key != 27) return 0;
+	if(!(shift && (arrow || key == CTRLA)) && key != 27 && key != CTRLC && key != CTRLV) return 0;
 
 	terminal_lock(term);
 	struct window* screen = term->screen;
-	if(screen == NULL || (key == 27 && term->sel_anchor < 0)){
+	int start, end;
+	bool_t selected = __terminal_selection(term, &start, &end);
+	if(screen == NULL || (key == 27 && term->sel_anchor < 0) || (key == CTRLC && !shift && !selected)){
 		terminal_unlock(term);
 		return 0;
 	}
 
-	if(key == 27){
+	if(key == CTRLV){
+		__terminal_paste(term);
+		terminal_unlock(term);
+		return 1;
+	}
+
+	if(key == CTRLC){
+		if(selected){
+			clipboard_set(term->textbuffer + start, end - start);
+		}
+		/* Ctrl+Shift+C leaves the selection, as most terminals do. Ctrl+C clears it, so the next one cancels again */
+		if(shift){
+			terminal_unlock(term);
+			return 1;
+		}
+		term->sel_anchor = -1;
+	} else if(key == 27){
 		term->sel_anchor = -1;
 	} else if(key == CTRLA){
 		term->sel_anchor = 0;
@@ -1033,17 +1140,17 @@ int terminal_key(struct terminal* term, unsigned char key, unsigned char modifie
 			term->sel_end = term->head;
 		}
 
-		int end = term->sel_end < term->head ? term->sel_end : term->head;
+		int moving = term->sel_end < term->head ? term->sel_end : term->head;
 		if(key == ARROW_LEFT){
-			end = end > 0 ? end - 1 : 0;
+			moving = moving > 0 ? moving - 1 : 0;
 		} else if(key == ARROW_RIGHT){
-			end = end < term->head ? end + 1 : term->head;
+			moving = moving < term->head ? moving + 1 : term->head;
 		} else {
 			int col, row;
-			__terminal_cell_of(term, screen, end, &col, &row);
-			end = __terminal_index_at_cell(term, screen, col, key == ARROW_UP ? row - 1 : row + 1);
+			__terminal_cell_of(term, screen, moving, &col, &row);
+			moving = __terminal_index_at_cell(term, screen, col, key == ARROW_UP ? row - 1 : row + 1);
 		}
-		term->sel_end = end;
+		term->sel_end = moving;
 	}
 	term->selecting = false;
 
