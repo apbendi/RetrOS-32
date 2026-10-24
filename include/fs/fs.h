@@ -44,6 +44,8 @@ struct filesystem_ops {
     int (*stat)(struct filesystem* fs, const char* path, struct fs_dirent* out);
     /* The next entry of an open directory, without "." and "..": 1, or 0 when there are no more */
     int (*readdir)(struct filesystem* fs, struct file* file, struct fs_dirent* out);
+    /* Sets a file's or directory's last write time to now */
+    int (*touch)(struct filesystem* fs, const char* path);
 };
 
 /* filesystem flags as enum */
@@ -89,6 +91,7 @@ int fs_unlink(const char* path);
 int fs_rmdir(const char* path);
 int fs_rename(const char* path, const char* new_path);
 int fs_same_entry(const char* path, const char* other);
+int fs_touch(const char* path);
 
 /* The current directory, which relative paths start from. Each process has its own, and a thread uses its
  * process's. A new process or kernel thread starts in its creator's (fs_inherit_cwd). */

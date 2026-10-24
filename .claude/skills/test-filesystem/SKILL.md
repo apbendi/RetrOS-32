@@ -20,7 +20,7 @@ docker compose run --rm --entrypoint tests/fs/run.sh builder -v           # with
 
 - **It rebuilds `fs/` and `fstool` first,** so it always tests the current source.
 - **Some cases use `RetrOS-32-debug.img`:** `read.real-image`, `read.dotdot` and `write.real-image`. They fail with `setup` if there's no image. Run `docker compose up` first.
-- **What it covers:** formatting; reading and writing whole files, in pieces, at an offset, appending and truncating; full directories and disks; delete, mkdir, rmdir, rename and moves; long names with spaces; relative paths; and disks made other ways: partitioned, FAT12 (the virtual disk's size), and with a 16-entry root directory. `fsck.fat` also reports the two FAT copies differing, so every case checks they stay the same.
+- **What it covers:** formatting; reading and writing whole files, in pieces, at an offset, appending and truncating; full directories and disks; delete, mkdir, rmdir, rename, moves and touch; long names with spaces; relative paths; and disks made other ways: partitioned, FAT12 (the virtual disk's size), and with a 16-entry root directory. `fsck.fat` also reports the two FAT copies differing, so every case checks they stay the same.
 
 ## Reading the results
 

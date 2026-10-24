@@ -430,6 +430,20 @@ static int fatfs_readdir(struct filesystem* fs, struct file* file, struct fs_dir
     return 1;
 }
 
+/* Dates a file or directory now, as FatFs dates a write. The root directory has no entry to date, so it's skipped. */
+static int fatfs_touch(struct filesystem* fs, const char* path)
+{
+    FS_VALIDATE(fs);
+    if(__fatfs_is_root(path)) return ERROR_OK;
+
+    DWORD now = get_fattime();
+    FILINFO info;
+    memset(&info, 0, sizeof(info));
+    info.fdate = (WORD)(now >> 16);
+    info.ftime = (WORD)now;
+    return __fatfs_error(f_utime(path, &info));
+}
+
 static struct filesystem_ops fatfs_ops = {
     .write = fatfs_write,
     .read = fatfs_read,
@@ -441,7 +455,8 @@ static struct filesystem_ops fatfs_ops = {
     .rename = fatfs_rename,
     .same = fatfs_same,
     .stat = fatfs_stat,
-    .readdir = fatfs_readdir
+    .readdir = fatfs_readdir,
+    .touch = fatfs_touch
 };
 
 /* --- Mounting and formatting ------------------------------------------------------------------------------------ */

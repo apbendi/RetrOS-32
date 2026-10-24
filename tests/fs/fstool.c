@@ -14,7 +14,8 @@
  *   fstool IMAGE pwrite PATH OFFSET      stdin into an existing PATH at OFFSET, after a seek
  *   fstool IMAGE append PATH             stdin onto the end of an existing PATH
  *   fstool IMAGE truncate PATH           empty an existing PATH, by opening it with the truncate flag
- *   fstool IMAGE new PATH                create an empty file, as the shell's touch does
+ *   fstool IMAGE new PATH                create an empty file, as the shell's touch does where there's nothing
+ *   fstool IMAGE touch PATH              fs_touch: date PATH now, by host.c's clock, 2026-01-02 3:04:06
  *   fstool IMAGE rm|mkdir|rmdir PATH     fs_unlink, fs_mkdir and fs_rmdir, which the syscalls of the same names use
  *   fstool IMAGE mv OLD NEW              fs_rename
  *   fstool IMAGE same-entry PATH OTHER   fs_same_entry: "same" or "different"
@@ -57,6 +58,7 @@ int fs_unlink(const char* path);
 int fs_rmdir(const char* path);
 int fs_rename(const char* path, const char* new_path);
 int fs_same_entry(const char* path, const char* other);
+int fs_touch(const char* path);
 int fs_chdir(const char* path);
 int fs_getcwd(char* buf, int size);
 
@@ -86,7 +88,7 @@ static int usage(void)
     fprintf(stderr, "usage: fstool IMAGE format [RESERVED] | tree | ls PATH | cat PATH [CHUNK] | write PATH |\n"
                     "       writes PATH CHUNK | pwrite PATH OFFSET | append PATH | truncate PATH | new PATH |\n"
                     "       rm PATH | mkdir PATH | rmdir PATH | mv OLD NEW | same-entry PATH OTHER |\n"
-                    "       stat PATH | dir PATH\n");
+                    "       stat PATH | dir PATH | touch PATH\n");
     return 2;
 }
 
@@ -289,6 +291,9 @@ int main(int argc, char* argv[])
         int ret = fs_same_entry(arg, argv[4]);
         status = ret < 0 ? failed("fs_same_entry", ret) : 0;
         if(ret >= 0) printf("%s\n", ret == 1 ? "same" : "different");
+    } else if(strcmp(op, "touch") == 0){
+        int ret = fs_touch(arg);
+        status = ret != 0 ? failed("fs_touch", ret) : 0;
     } else if(strcmp(op, "stat") == 0){
         struct fs_dirent entry;
         int ret = fs_stat(arg, &entry);

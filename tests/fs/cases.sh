@@ -540,6 +540,29 @@ ops_same_entry() {
 }
 add ops.same-entry "RetrOS tells whether two paths are one file or directory, however they spell it" ops_same_entry
 
+# touched NAME: whether mdir shows the root's entry NAME, e.g. "A +TXT +1500", dated by host.c's clock, 2026-01-02 3:04
+touched() {
+    mdir -i "$R" ::/ 2>/dev/null | grep -qE "^$1 +2026-01-02 +3:04"
+}
+
+ops_touch() {
+    begin fresh || return
+    # An older date for the file, so the new one shows. The directory has mmd's, today's.
+    cp "$(data 1500 a)" "$WORK/old.txt"
+    touch -d "2020-05-06 07:08" "$WORK/old.txt"
+    seed mcopy -m "$WORK/old.txt" ::/A.TXT
+    seed mmd ::/SUB
+    ready
+    rfs touch /a.txt
+    rfs touch /sub
+    rfs touch /
+    refused touch /NONE.TXT
+    check
+    touched "A +TXT +1500" || fail entry "/A.TXT wasn't dated 2026-01-02 3:04"
+    touched "SUB +<DIR>" || fail entry "/SUB wasn't dated 2026-01-02 3:04"
+}
+add ops.touch "RetrOS dates a file and a directory now, changing nothing else, and doesn't create a file" ops_touch
+
 # --- The current directory ------------------------------------------------------------------------------------
 
 paths_relative() {

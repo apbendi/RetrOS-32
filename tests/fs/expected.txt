@@ -56,5 +56,6 @@ ops.rmdir-not-empty pass
 ops.mkdir-exists pass
 ops.readdir-long-names pass
 ops.same-entry pass
+ops.touch pass
 paths.relative pass
 paths.chdir-refused pass

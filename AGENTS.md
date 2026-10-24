@@ -273,11 +273,11 @@ Syscalls run with interrupts enabled, so they can be preempted.
 ## File system
 
 **Layers** (`fs/`):
-- **`fs.c`** is what the kernel's commands and the file syscalls call: `fs_open`, `fs_read`, `fs_write`, `fs_seek`, `fs_stat`, `fs_readdir`, `fs_mkdir`, `fs_unlink`, `fs_rmdir`, `fs_rename`, `fs_chdir` and `fs_getcwd`.
+- **`fs.c`** is what the kernel's commands and the file syscalls call: `fs_open`, `fs_read`, `fs_write`, `fs_seek`, `fs_stat`, `fs_readdir`, `fs_mkdir`, `fs_unlink`, `fs_rmdir`, `fs_rename`, `fs_touch`, `fs_chdir` and `fs_getcwd`.
   - **Paths:** it normalizes every path before the file system sees it (`fs_path_normalize`): absolute, without empty, `.` or `..` parts, and without a trailing slash. A relative path starts from the current process's directory. A path is at most `FS_PATH_MAX`, 512 bytes.
   - **Errors:** everything returns a negative code from `include/errors.h`, never a bare -1: e.g. `ERROR_FILE_NOT_FOUND`, `ERROR_PATH_NOT_FOUND` (a directory in the path), `ERROR_IS_DIRECTORY`, `ERROR_NO_SPACE`. `error_get_string` gives the message.
 - **`fatfs_iface.c`** implements `struct filesystem_ops` on FatFs, and **`fatfs_port.c`** gives FatFs its disk, clock, memory and lock hooks.
-- **`fatfs/`** is FatFs R0.16, vendored with its two official patches. `ffconf.h` turns on long names (with a heap buffer), code page 437, `f_mkfs`, labels and reentrancy (one mutex per volume). `FF_FS_RPATH` is 0, since `fs.c` resolves relative paths itself.
+- **`fatfs/`** is FatFs R0.16, vendored with its two official patches. `ffconf.h` turns on long names (with a heap buffer), code page 437, `f_mkfs`, labels, `f_utime` and reentrancy (one mutex per volume). `FF_FS_RPATH` is 0, since `fs.c` resolves relative paths itself.
   - **`FF_FS_LOCK` is 0,** so nothing stops one process deleting, renaming or writing a file another has open, which can corrupt the disk (#109).
 - **Mounting:** any FAT12, FAT16 or FAT32 volume, at sector 0 or in the partition table's first entry.
 
@@ -291,7 +291,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - **Moving:** `fs_rename` also moves between directories. It refuses an existing destination, and a directory moved inside itself, which FatFs would do, losing the directory. Renaming to the same name in another case works, which is how `mv docs Docs` changes only the case.
 - **The current directory** is per process, kept in `fs.c` by PID. A new process or kernel thread starts in its creator's, and a thread shares its process's. Each shell window is a kernel thread with its own.
 
-**In the shell:** `ls`, `cd`, `pwd`, `mkdir`, `rm`, `rmdir`, `mv`, `cp`, `find`, `touch`, `cat` and `xxd`, in `kernel/cmds.c`. `touch` creates an empty file, and leaves one that's already there as it is. `cat` prints files exactly as they are, one after another, and `xxd` prints a file's bytes in hex. `mv` and `cp` put the source inside a destination that's a directory, as on Unix; `cp` copies files, not directories. Quote names with spaces. The prompt shows the current directory, `kernel:/my projects> `. It follows the output, and each command stays on screen after it, as in the log.
+**In the shell:** `ls`, `cd`, `pwd`, `mkdir`, `rm`, `rmdir`, `mv`, `cp`, `find`, `touch`, `cat` and `xxd`, in `kernel/cmds.c`. `touch` dates a file or directory now, and creates an empty file where there's nothing. `cat` prints files exactly as they are, one after another, and `xxd` prints a file's bytes in hex. `mv` and `cp` put the source inside a destination that's a directory, as on Unix; `cp` copies files, not directories. Quote names with spaces. The prompt shows the current directory, `kernel:/my projects> `. It follows the output, and each command stays on screen after it, as in the log.
 
 **In apps:** `open`, `read`, `write`, `seek`, `fclose`, `stat`, `readdir`, `mkdir`, `unlink`, `rmdir`, `rename`, `chdir` and `getcwd` in `lib/syscall.c`. Finder and the tree view (`apps/utils/TreeView.hpp`) list with `readdir`.
 
@@ -371,7 +371,7 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
     The defaults are 12h and mdy.
   - **Changing them:** the settings are read on every call, so `conf load sysutil/default.cfg` applies them right away. The taskbar redraws its clock once a minute.
   - **Screen space:** size buffers and screen space with the `TIME_FORMAT_*_MAX` lengths, which cover every setting. The kernel's printf has no `%02d`, so the formatters pad the numbers themselves.
-- **File dates:** FAT keeps the time of each file's last write. FatFs sets it from `get_fattime` (`fs/fatfs_port.c`), which reads the RTC, and `fs_stat` and `fs_readdir` report it as a `struct time` in `struct fs_dirent`'s `written`, with a `centuary` of 0 for none.
+- **File dates:** FAT keeps the time of each file's last write. FatFs sets it from `get_fattime` (`fs/fatfs_port.c`), which reads the RTC, as does `fs_touch`, which the shell's `touch` uses. `fs_stat` and `fs_readdir` report it as a `struct time` in `struct fs_dirent`'s `written`, with a `centuary` of 0 for none.
   - Files `make img` copies in get the build container's clock, which is UTC. So they look a few hours off from files created in RetrOS, which use the host's local time.
 - **Timers and sleeping:** the timer runs at 1000 Hz, so `sleep(ms)` and ticks are milliseconds. PCB sleep deadlines are `uint32_t`; a 16-bit field used to overflow after ~65 s.
 - **The scheduler's queues:** the scheduler runs from the timer interrupt, with interrupts off, and uses the PCB queues. So each queue operation runs with interrupts off (`QUEUE_CRITICAL` in `kernel/pcb_queue.c`), not under a spinlock. Don't guard anything the scheduler uses with `spin_lock`: if the timer preempts a thread holding the lock, the scheduler waits for it on that thread's stack, yielding into itself until the kernel stack overflows.

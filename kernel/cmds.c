@@ -211,9 +211,12 @@ static int mkdir(int argc, char* argv[])
 }
 EXPORT_KSYMBOL(mkdir);
 
-/* Creates an empty file, or leaves a file that's already there as it is */
+/* Dates a file or directory that's there now, or creates an empty file */
 static int __touch(const char* path)
 {
+    int ret = fs_touch(path);
+    if(ret != -ERROR_FILE_NOT_FOUND) return ret;
+
     int fd = fs_open(path, FS_FILE_FLAG_CREATE);
     if(fd < 0) return fd;
 
@@ -221,7 +224,7 @@ static int __touch(const char* path)
     return 0;
 }
 
-/* Creates empty files. Directories are for mkdir. */
+/* Dates files and directories now, creating empty files where there's nothing. Directories are made with mkdir. */
 static int touch(int argc, char* argv[])
 {
     return __fs_each_path("touch", argc, argv, __touch);

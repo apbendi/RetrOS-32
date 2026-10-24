@@ -25,6 +25,7 @@ Changed from upstream's defaults in `ffconf.h`:
 |---|---|---|
 | `FF_USE_MKFS` | 1 | `f_mkfs` formats the virtual disk and the file system harness's images |
 | `FF_USE_LABEL` | 1 | `f_setlabel` and `f_getlabel`, for the volume label |
+| `FF_USE_CHMOD` | 1 | `f_utime`, which the shell's `touch` uses to date a file that's already there. It also turns on `f_chmod`, which nothing uses |
 | `FF_CODE_PAGE` | 437 | The IBM PC character set, which VGA text mode also uses. Short names are stored in it, and long names are converted to it |
 | `FF_USE_LFN` | 3 | Long file names, with the name buffer taken from the kernel heap (`ff_memalloc`) |
 | `FF_FS_REENTRANT` | 1 | Several threads use the file system at once. FatFs locks the volume with `ff_mutex_*` |

@@ -205,6 +205,13 @@ static int __fs_checked_readdir(struct filesystem* fs, struct file* file, struct
     return fs_backend->ops->readdir(fs_backend, file, out);
 }
 
+static int __fs_checked_touch(struct filesystem* fs, const char* path)
+{
+    char normal[FS_PATH_MAX];
+    if(path == NULL || fs_path_normalize(path, normal) < 0) return -ERROR_INVALID_ARGUMENTS;
+    return fs_backend->ops->touch(fs_backend, normal);
+}
+
 static struct filesystem_ops fs_checked_ops = {
     .write = __fs_checked_write,
     .read = __fs_checked_read,
@@ -216,7 +223,8 @@ static struct filesystem_ops fs_checked_ops = {
     .rename = __fs_checked_rename,
     .same = __fs_checked_same,
     .stat = __fs_checked_stat,
-    .readdir = __fs_checked_readdir
+    .readdir = __fs_checked_readdir,
+    .touch = __fs_checked_touch
 };
 
 /* functions used by filesystem implementations */
@@ -560,6 +568,13 @@ int fs_same_entry(const char* path, const char* other)
 {
     if(fs_current == NULL) return -ERROR_NO_FILESYSTEM;
     return fs_current->ops->same(fs_current, path, other);
+}
+
+/* Sets a file's or directory's last write time to now. It doesn't create one: a missing path is an error. */
+int fs_touch(const char* path)
+{
+    if(fs_current == NULL) return -ERROR_NO_FILESYSTEM;
+    return fs_current->ops->touch(fs_current, path);
 }
 
 /* Changes the current process's current directory to path, which must be a directory */
