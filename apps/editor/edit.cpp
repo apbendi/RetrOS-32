@@ -2522,28 +2522,78 @@ void Editor::FileChooser()
         }
     };
 
+    /**
+     * Draws text from y in rows of at most max_chars, broken at spaces, or inside a word longer than a row, while a
+     * row fits above max_y. @return the y after the last row drawn
+     */
+    auto drawWrapped = [&](int x, int y, int max_chars, int max_y, color_t color, const char* text) {
+        char row[128];
+        if (max_chars > (int)sizeof(row) - 1) {
+            max_chars = sizeof(row) - 1;
+        }
+
+        while (*text != 0 && y + 8 <= max_y) {
+            int take = strlen(text);
+            if (take > max_chars) {
+                /* Up to the last space that fits, when the row has one */
+                int space = max_chars;
+                while (space > 0 && text[space] != ' ') {
+                    space--;
+                }
+                take = space > 0 ? space : max_chars;
+            }
+
+            memcpy(row, text, take);
+            row[take] = 0;
+            gfx_draw_format_text(x, y, color, "%s", row);
+
+            text += take;
+            while (*text == ' ') {
+                text++;
+            }
+            y += 10;
+        }
+        return y;
+    };
+
     auto drawChooserPanel = [&](int panel_x, int panel_y, int panel_w, int panel_h) {
         gfx_draw_rectangle(panel_x, panel_y, panel_w, panel_h, COLOR_BG);
-        gfx_draw_format_text(panel_x + 4, panel_y + 4, COLOR_TEXT, "File Browser");
-        gfx_draw_format_text(panel_x + 4, panel_y + 14, COLOR_TEXT, "Pick file from tree, then Open. New File creates one.");
+        /* No file's text is showing, so neither are its line numbers. The gutter's line stays (#145) */
+        gfx_draw_rectangle(TREE_VIEW_WIDTH, panel_y, panel_x - TEXT_GAP_WIDTH - 1 - TREE_VIEW_WIDTH, panel_h, COLOR_BG);
 
-        char selected_label[160];
-        memset(selected_label, 0, sizeof(selected_label));
+        /* Every row stays inside the panel, with 4 px on each side: the margin past it is painted only by reDraw */
+        int row_chars = (panel_w - 8) / 8;
+        if (row_chars < 1) {
+            row_chars = 1;
+        }
+        int bottom = panel_y + panel_h;
+        int y = drawWrapped(panel_x + 4, panel_y + 4, row_chars, bottom, COLOR_TEXT, "File Browser");
+        y = drawWrapped(panel_x + 4, y, row_chars, bottom, COLOR_TEXT, "Pick file from tree, then Open. New File creates one.");
+
+        /* The name is cut short with "..." so the whole line fits a row */
+        const char* prefix = "Selected: ";
+        int prefix_len = strlen(prefix);
+        char selected_line[160];
+        memset(selected_line, 0, sizeof(selected_line));
+        memcpy(selected_line, prefix, prefix_len);
+        char* selected_label = selected_line + prefix_len;
+        int label_size = sizeof(selected_line) - prefix_len;
+
         if (selected_file[0] == 0) {
-            strncpy(selected_label, "(none)", (uint32_t)(sizeof(selected_label) - 1));
+            strncpy(selected_label, "(none)", (uint32_t)(label_size - 1));
         } else {
-            int max_chars = (panel_w - 12) / 8;
+            int max_chars = row_chars - prefix_len;
             if (max_chars < 1) {
                 max_chars = 1;
             }
 
             int name_len = strlen(selected_file);
             if (name_len <= max_chars) {
-                strncpy(selected_label, selected_file, (uint32_t)(sizeof(selected_label) - 1));
+                strncpy(selected_label, selected_file, (uint32_t)(label_size - 1));
             } else if (max_chars > 3) {
                 int keep = max_chars - 3;
-                if (keep > (int)sizeof(selected_label) - 4) {
-                    keep = (int)sizeof(selected_label) - 4;
+                if (keep > label_size - 4) {
+                    keep = label_size - 4;
                 }
 
                 strncpy(selected_label, selected_file, (uint32_t)keep);
@@ -2552,11 +2602,11 @@ void Editor::FileChooser()
                 selected_label[keep + 2] = '.';
                 selected_label[keep + 3] = 0;
             } else {
-                strncpy(selected_label, "...", (uint32_t)(sizeof(selected_label) - 1));
+                strncpy(selected_label, "...", (uint32_t)(label_size - 1));
             }
         }
 
-        gfx_draw_format_text(panel_x + 4, panel_y + 26, COLOR_VGA_MEDIUM_DARK_GRAY, "Selected: %s", selected_label);
+        drawWrapped(panel_x + 4, y + 2, row_chars, bottom, COLOR_VGA_MEDIUM_DARK_GRAY, selected_line);
     };
 
     reDrawHeader();
