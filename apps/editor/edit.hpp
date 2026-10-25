@@ -36,6 +36,8 @@
 #define EDITOR_MAX_VIEW_ROWS 1024
 /* How often a drag held above or below the text scrolls it a row */
 #define EDITOR_DRAG_SCROLL_MS 50
+/* How many of the } that typing { adds are kept track of, one per block still open; past that, the oldest is dropped */
+#define EDITOR_AUTO_BRACES_MAX 32
 
 struct keyword {
     char word[10];
@@ -129,6 +131,7 @@ private:
     bool ropeLoadFromBuffer(const unsigned char* data, int len);
     bool ropeSyncToBuffer();
     bool ropeInsertChar(int index, unsigned char c);
+    bool ropeAddChar(int index, unsigned char c);
     bool ropeDeleteChar(int index);
     bool ropeDeleteRange(int index, int count);
     bool ropeInsertText(int index, const unsigned char* data, int len);
@@ -136,6 +139,10 @@ private:
     struct rope_node* ropeCreateNode();
     void ropeDetachNode(struct rope_node* node);
     void ropeTryMerge(struct rope_node* node);
+
+    void autoBracesInserted(int index, int len);
+    void autoBracesDeleted(int index, int count);
+    int autoBraceAt(int index) const;
 
     TreeView* treeView;
 
@@ -150,6 +157,9 @@ private:
     int m_dirty;
     /* The file is bigger than the buffer, which holds only its start: a save would cut it short, so it can't be edited */
     bool m_readOnly;
+    /* Where the } are that typing { added and typing } steps over, oldest first. Every insert and delete moves them (#119) */
+    int m_autoBraces[EDITOR_AUTO_BRACES_MAX];
+    int m_autoBraceCount;
     int m_preferredColumn;
     /* Where the selection started, which runs from here to the cursor; -1 for none */
     int m_selAnchor;
