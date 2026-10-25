@@ -438,6 +438,12 @@ Editor::Editor()
     m_dirty = 0;
     m_readOnly = false;
     m_autoBraceCount = 0;
+    m_undo = nullptr;
+    m_undoing = false;
+    m_undoKey = EDITOR_UNDO_CLOSED;
+    m_undoCursor = 0;
+    m_undoAnchor = -1;
+    undoClear();
     m_preferredColumn = -1;
     m_selAnchor = -1;
     m_dragging = false;
@@ -1120,6 +1126,9 @@ void Editor::handleMouse(const struct gfx_event& event)
             return;
         }
 
+        /* Typing after a click is a new undo step, even where the last one ended */
+        m_undoJoin = EDITOR_UNDO_CLOSED;
+
         /* A double click selects the word under the mouse, and a triple its line. It's no drag, so a shaking mouse can't undo it */
         if (GFX_EVENT_CLICKS(event.flags) >= 2) {
             selectAround(indexAtPoint(x - 4, y), GFX_EVENT_CLICKS(event.flags) == 3);
@@ -1439,8 +1448,12 @@ int Editor::countLines() const
     return lines;
 }
 
+/* Whether the text differs from the last save, which undoing or redoing back to it makes it not. Without a history, whether it was edited */
 bool Editor::hasUnsavedChanges() const
 {
+    if (m_undo != nullptr) {
+        return m_undoDone != m_undoSaved;
+    }
     return m_dirty != 0;
 }
 
@@ -1564,6 +1577,28 @@ void Editor::ropeClear()
     m_ropeHead = nullptr;
     m_ropeTail = nullptr;
     m_autoBraceCount = 0;
+    undoClear();
+}
+
+/* Copies count characters from index in the rope to out, which ropeDeleteRange can't do once they're gone */
+void Editor::ropeCopy(int index, int count, unsigned char* out) const
+{
+    struct rope_node* node = nullptr;
+    int offset = 0;
+    if (count <= 0 || !ropeLocate(index, &node, &offset)) {
+        return;
+    }
+
+    while (node != nullptr && count > 0) {
+        int take = minInt(count, node->len - offset);
+        if (take > 0) {
+            memcpy(out, &node->data[offset], take);
+            out += take;
+            count -= take;
+        }
+        node = node->next;
+        offset = 0;
+    }
 }
 
 /* len characters went in at index: the } at or after it move along */
@@ -1688,10 +1723,11 @@ bool Editor::ropeInsertChar(int index, unsigned char c)
     }
 
     autoBracesInserted(index, 1);
+    undoInserted(index, &c, 1);
     return true;
 }
 
-/* Inserts c at index in the rope. ropeInsertChar also moves the } kept in m_autoBraces */
+/* Inserts c at index in the rope. ropeInsertChar also moves the } kept in m_autoBraces, and records the edit for undo */
 bool Editor::ropeAddChar(int index, unsigned char c)
 {
     if (m_bufferHead >= m_bufferSize - 1) {
@@ -1852,6 +1888,7 @@ bool Editor::ropeDeleteChar(int index)
         return false;
     }
 
+    undoDeleting(index, 1);
     memmove(&node->data[offset], &node->data[offset + 1], node->len - offset - 1);
     node->len--;
     m_bufferHead--;
@@ -1885,6 +1922,9 @@ bool Editor::ropeDeleteRange(int index, int count)
     if (!ropeLocate(index, &node, &offset) || node == nullptr) {
         return false;
     }
+
+    /* The check above means they're all there, so they all go */
+    undoDeleting(index, count);
 
     /* At the end of a node, the first character to go is in the next */
     int left = count;
@@ -1923,7 +1963,8 @@ bool Editor::ropeInsertText(int index, const unsigned char* data, int len)
     if (len <= 0) {
         return true;
     }
-    if (index < 0 || index > m_bufferHead || m_bufferHead + len > m_bufferSize - 1) {
+    /* Undo and redo put the new text in before taking the old out, so the rope can hold more than the buffer meanwhile (undoApply) */
+    if (index < 0 || index > m_bufferHead || (!m_undoing && m_bufferHead + len > m_bufferSize - 1)) {
         return false;
     }
 
@@ -2007,6 +2048,7 @@ bool Editor::ropeInsertText(int index, const unsigned char* data, int len)
     }
     m_bufferHead += len;
     autoBracesInserted(index, len);
+    undoInserted(index, data, len);
 
     /* Joins the nodes at either end, if they fit in one */
     if (ropeLocate(index, &node, &offset) && node != nullptr) {
@@ -2146,6 +2188,290 @@ void Editor::paste()
     } else if (len < size) {
         drawStatusLine(COLOR_VGA_RED, "Pasted %d of %d characters: the Editor holds %d.", len, size, m_bufferSize - 1);
     }
+}
+
+/* The bytes a step with text characters, deleted and inserted, takes in the history */
+int Editor::undoStepBytes(int text)
+{
+    return (int)sizeof(struct undo_step) + ((text + 3) & ~3);
+}
+
+/* Empties the undo history and frees it, as the text is replaced. Unsaved changes count from here */
+void Editor::undoClear()
+{
+    if (m_undo != nullptr) {
+        free(m_undo);
+        m_undo = nullptr;
+    }
+
+    m_undoSize = 0;
+    m_undoUsed = 0;
+    m_undoAt = 0;
+    m_undoLast = -1;
+    m_undoDone = 0;
+    m_undoDropped = 0;
+    m_undoSaved = 0;
+    m_undoJoin = EDITOR_UNDO_CLOSED;
+    m_undoFailed = false;
+}
+
+/* Out of memory for the history: edits go on unrecorded until the text is replaced, and m_dirty says they were made */
+void Editor::undoFail()
+{
+    undoClear();
+    m_undoFailed = true;
+    m_dirty = 1;
+}
+
+/**
+ * Makes room for need more bytes after the steps. The history grows, twice the size each time up to EDITOR_UNDO_MAX,
+ * or else drops its oldest steps, but not the one at keep or any after it.
+ * @return false without the memory, having turned the history off
+ */
+bool Editor::undoReserve(int need, int keep)
+{
+    if (m_undoUsed + need <= m_undoSize) {
+        return true;
+    }
+
+    int size = m_undoSize > 0 ? m_undoSize : EDITOR_UNDO_MIN;
+    while (size < m_undoUsed + need && size < EDITOR_UNDO_MAX) {
+        size = minInt(size * 2, EDITOR_UNDO_MAX);
+    }
+    if (size > m_undoSize) {
+        unsigned char* grown = (unsigned char*) malloc(size);
+        if (grown != nullptr) {
+            if (m_undo != nullptr) {
+                memcpy(grown, m_undo, m_undoUsed);
+                free(m_undo);
+            }
+            m_undo = grown;
+            m_undoSize = size;
+        }
+    }
+
+    int drop = 0;
+    int steps = 0;
+    while (m_undoUsed - drop + need > m_undoSize && drop < keep) {
+        struct undo_step* oldest = (struct undo_step*)&m_undo[drop];
+        drop += undoStepBytes(oldest->del + oldest->ins);
+        steps++;
+    }
+    if (m_undoUsed - drop + need > m_undoSize) {
+        undoFail();
+        return false;
+    }
+
+    if (drop > 0) {
+        memmove(m_undo, &m_undo[drop], m_undoUsed - drop);
+        m_undoUsed -= drop;
+        m_undoAt -= drop;
+        m_undoLast = m_undoLast >= drop ? m_undoLast - drop : -1;
+        m_undoDropped += steps;
+        /* The last save was before the oldest step left, so undo can't get back to it */
+        if (m_undoSaved < m_undoDropped) {
+            m_undoSaved = -1;
+        }
+        if (m_undoUsed > 0) {
+            ((struct undo_step*)m_undo)->prev = 0;
+        }
+    }
+    return true;
+}
+
+/**
+ * The step to record an edit of len characters at index in, with room after its text for them, which the caller copies
+ * in: the last step if it's open and the edit joins its text, or else a new one.
+ * @return nullptr if the edit isn't recorded: it's undo's or redo's own, or the history is off or just ran out of memory
+ */
+Editor::undo_step* Editor::undoStepFor(int index, int len, bool inserted)
+{
+    if (len <= 0 || m_undoing || m_undoFailed) {
+        return nullptr;
+    }
+
+    /* A new edit after undoing: the steps undone can't be redone after it */
+    if (m_undoAt < m_undoUsed) {
+        if (m_undoSaved > m_undoDone) {
+            m_undoSaved = -1;
+        }
+        m_undoUsed = m_undoAt;
+    }
+
+    /**
+     * An insert joins anywhere in the step's inserted text, since typing { leaves the cursor before the } it adds. A
+     * delete joins a step that only deletes, at either end of its text, as Backspace and Delete go
+     */
+    struct undo_step* step = nullptr;
+    if (m_undoJoin != EDITOR_UNDO_CLOSED && m_undoLast >= 0) {
+        step = (struct undo_step*)&m_undo[m_undoLast];
+    }
+    bool joins = step != nullptr && (inserted ? index >= step->pos && index <= step->pos + step->ins
+                                              : step->ins == 0 && index <= step->pos && step->pos <= index + len);
+    int text = joins ? step->del + step->ins : 0;
+    if (!undoReserve(undoStepBytes(text + len) - (joins ? undoStepBytes(text) : 0), joins ? m_undoLast : m_undoUsed)) {
+        return nullptr;
+    }
+
+    if (joins) {
+        step = (struct undo_step*)&m_undo[m_undoLast];
+    } else {
+        step = (struct undo_step*)&m_undo[m_undoUsed];
+        step->prev = m_undoLast >= 0 ? m_undoUsed - m_undoLast : 0;
+        step->pos = index;
+        step->del = 0;
+        step->ins = 0;
+        step->cursorBefore = m_undoCursor;
+        step->anchorBefore = m_undoAnchor;
+        m_undoLast = m_undoUsed;
+        m_undoDone++;
+        m_undoJoin = m_undoKey != EDITOR_UNDO_CLOSED ? m_undoKey : EDITOR_UNDO_ALONE;
+    }
+
+    /* Until the key ends, and says where it left the cursor */
+    step->cursorAfter = inserted ? index + len : index;
+    m_undoUsed = m_undoLast + undoStepBytes(text + len);
+    m_undoAt = m_undoUsed;
+    return step;
+}
+
+/* Records for undo that len characters went in at index, from data */
+void Editor::undoInserted(int index, const unsigned char* data, int len)
+{
+    struct undo_step* step = undoStepFor(index, len, true);
+    if (step == nullptr) {
+        return;
+    }
+
+    unsigned char* ins = (unsigned char*)(step + 1) + step->del;
+    int at = index - step->pos;
+    memmove(&ins[at + len], &ins[at], step->ins - at);
+    memcpy(&ins[at], data, len);
+    step->ins += len;
+}
+
+/* Records for undo that len characters are about to go from index, copying them out of the rope while they're there */
+void Editor::undoDeleting(int index, int len)
+{
+    struct undo_step* step = undoStepFor(index, len, false);
+    if (step == nullptr) {
+        return;
+    }
+
+    /* Those before the step's position go in front of its text, as Backspace deletes, and the rest after, as Delete does */
+    unsigned char* del = (unsigned char*)(step + 1);
+    int ahead = step->pos - index;
+    memmove(&del[ahead], del, step->del);
+    ropeCopy(index, ahead, del);
+    ropeCopy(step->pos, len - ahead, &del[ahead + step->del]);
+    step->del += len;
+    step->pos = index;
+}
+
+/**
+ * Before a key: its edits join the last step if both are typing, or both Backspace or both Delete, carrying on from
+ * where the last left the cursor. Otherwise they make a new step, which starts from the cursor and selection now.
+ */
+void Editor::undoKeyStart(int kind)
+{
+    bool joinable = kind == EDITOR_UNDO_TYPING || kind == EDITOR_UNDO_BACKSPACE || kind == EDITOR_UNDO_DELETE;
+    if (!joinable || kind != m_undoJoin || m_undoLast < 0 || m_undoAt != m_undoUsed || hasSelection() ||
+        m_bufferEdit != ((struct undo_step*)&m_undo[m_undoLast])->cursorAfter) {
+        m_undoJoin = EDITOR_UNDO_CLOSED;
+    }
+
+    m_undoKey = kind;
+    m_undoCursor = m_bufferEdit;
+    m_undoAnchor = hasSelection() ? m_selAnchor : -1;
+}
+
+/* After a key: the step it made or joined ends with the cursor where the key left it. Enter, Tab, cut and paste end it */
+void Editor::undoKeyEnd()
+{
+    m_undoKey = EDITOR_UNDO_CLOSED;
+    if (m_undoJoin == EDITOR_UNDO_CLOSED || m_undoLast < 0) {
+        return;
+    }
+
+    ((struct undo_step*)&m_undo[m_undoLast])->cursorAfter = m_bufferEdit;
+    if (m_undoJoin == EDITOR_UNDO_ALONE) {
+        m_undoJoin = EDITOR_UNDO_CLOSED;
+    }
+}
+
+/**
+ * Changes the text as the step did, or back as it was. The text going in goes in after the text coming out, before
+ * that's deleted, so running out of memory changes nothing. Meanwhile the rope can hold both, more than the buffer, so
+ * ropeInsertText lets it while m_undoing, and the buffer is synced after.
+ * @return false without the memory
+ */
+bool Editor::undoApply(const struct undo_step* step, bool redo)
+{
+    const unsigned char* del = (const unsigned char*)(step + 1);
+    const unsigned char* ins = del + step->del;
+    int out = redo ? step->del : step->ins;
+
+    m_undoing = true;
+    bool done = redo ? ropeInsertText(step->pos + out, ins, step->ins) : ropeInsertText(step->pos + out, del, step->del);
+    if (done) {
+        ropeDeleteRange(step->pos, out);
+    }
+    m_undoing = false;
+
+    if (done) {
+        ropeSyncToBuffer();
+    }
+    return done;
+}
+
+/* Ctrl+Z: takes the last step back, and puts back the cursor and selection from before it */
+void Editor::undo()
+{
+    m_undoJoin = EDITOR_UNDO_CLOSED;
+    if (m_undoFailed) {
+        drawStatusLine(COLOR_VGA_RED, "Can't undo: out of memory.");
+        return;
+    }
+    if (m_undoLast < 0) {
+        drawStatusLine(COLOR_VGA_RED, "Nothing to undo.");
+        return;
+    }
+
+    struct undo_step* step = (struct undo_step*)&m_undo[m_undoLast];
+    if (!undoApply(step, false)) {
+        drawStatusLine(COLOR_VGA_RED, "Can't undo: out of memory.");
+        return;
+    }
+
+    m_undoAt = m_undoLast;
+    m_undoLast = step->prev > 0 ? m_undoLast - step->prev : -1;
+    m_undoDone--;
+    m_bufferEdit = clampInt(step->cursorBefore, 0, m_bufferHead);
+    m_selAnchor = step->anchorBefore < 0 ? -1 : clampInt(step->anchorBefore, 0, m_bufferHead);
+    m_preferredColumn = -1;
+}
+
+/* Ctrl+Y or Ctrl+Shift+Z: makes the last step undone again, and puts the cursor after it */
+void Editor::redo()
+{
+    m_undoJoin = EDITOR_UNDO_CLOSED;
+    if (m_undoAt >= m_undoUsed) {
+        drawStatusLine(COLOR_VGA_RED, "Nothing to redo.");
+        return;
+    }
+
+    struct undo_step* step = (struct undo_step*)&m_undo[m_undoAt];
+    if (!undoApply(step, true)) {
+        drawStatusLine(COLOR_VGA_RED, "Can't redo: out of memory.");
+        return;
+    }
+
+    m_undoLast = m_undoAt;
+    m_undoAt += undoStepBytes(step->del + step->ins);
+    m_undoDone++;
+    m_bufferEdit = clampInt(step->cursorAfter, 0, m_bufferHead);
+    clearSelection();
+    m_preferredColumn = -1;
 }
 
 void Editor::scroll(int lines)
@@ -2403,6 +2729,9 @@ bool Editor::Save()
 
     m_fileSize = m_bufferHead;
     m_dirty = 0;
+    /* Typing on after a save starts a new step, so undo can get back to what was saved */
+    m_undoSaved = m_undoDone;
+    m_undoJoin = EDITOR_UNDO_CLOSED;
     if (creates && treeView != nullptr) {
         treeView->refresh();
         treeView->drawTree(this);
@@ -2880,6 +3209,7 @@ static const char* const editor_help[] = {
     "Ctrl+A: Select all",
     "Esc: Clear selection",
     "Ctrl+C/X/V: Copy/cut/paste",
+    "Ctrl+Z/Y: Undo/redo",
     "Backspace: Delete character",
     "Delete: Delete next character",
     "Enter: New line",
@@ -3073,8 +3403,27 @@ static bool isMovementKey(unsigned char c)
     }
 }
 
-/* Handles a key typed, with the modifier keys held, KEY_MOD_* from keyboard.h */
+/* Handles a key typed, with the modifier keys held, KEY_MOD_* from keyboard.h. Its edits make an undo step, or join the last */
 void Editor::putChar(unsigned char c, int modifiers)
+{
+    int kind = EDITOR_UNDO_CLOSED;
+    if (c == '\b') {
+        kind = EDITOR_UNDO_BACKSPACE;
+    } else if (c == KEY_DELETE) {
+        kind = EDITOR_UNDO_DELETE;
+    } else if (c == '\n' || c == '\r' || c == '\t' || c == CTRLX || c == CTRLV) {
+        kind = EDITOR_UNDO_ALONE;
+    } else if (c >= 32 && c <= 126) {
+        kind = EDITOR_UNDO_TYPING;
+    }
+
+    undoKeyStart(kind);
+    handleKey(c, modifiers);
+    undoKeyEnd();
+}
+
+/* What a key does, for putChar */
+void Editor::handleKey(unsigned char c, int modifiers)
 {
     if (c == '\r') {
         c = '\n';
@@ -3146,6 +3495,18 @@ void Editor::putChar(unsigned char c, int modifiers)
 
     case CTRLV:
         paste();
+        break;
+
+    case CTRLZ:
+        if (modifiers & KEY_MOD_SHIFT) {
+            redo();
+        } else {
+            undo();
+        }
+        break;
+
+    case CTRLY:
+        redo();
         break;
 
     case '\b':

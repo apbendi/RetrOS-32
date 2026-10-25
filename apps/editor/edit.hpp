@@ -38,6 +38,22 @@
 #define EDITOR_DRAG_SCROLL_MS 50
 /* How many of the } that typing { adds are kept track of, one per block still open; past that, the oldest is dropped */
 #define EDITOR_AUTO_BRACES_MAX 32
+/**
+ * The undo history's first block, and the most it grows to, doubling, before the oldest steps are dropped. One step can
+ * hold about 128 KB, a 64 KB paste over a 64 KB text
+ */
+#define EDITOR_UNDO_MIN (16 * 1024)
+#define EDITOR_UNDO_MAX (256 * 1024)
+
+/* What kind of key made an undo step: typing, Backspace or Delete join the step the last key of the same kind made */
+enum {
+    EDITOR_UNDO_CLOSED = 0,
+    EDITOR_UNDO_TYPING,
+    EDITOR_UNDO_BACKSPACE,
+    EDITOR_UNDO_DELETE,
+    /* Enter, Tab, cut and paste, a step each */
+    EDITOR_UNDO_ALONE
+};
 
 struct keyword {
     char word[10];
@@ -76,6 +92,23 @@ private:
         unsigned char data[ROPE_CHUNK_SIZE];
     };
 
+    /**
+     * One undo step: del characters at pos became ins characters. The step is followed in the history by the del
+     * characters, then the ins characters, then padding to a multiple of 4, so the next step's ints are aligned
+     */
+    struct undo_step {
+        /* How many bytes the step before it takes, to find that one; 0 for the oldest */
+        int prev;
+        int pos;
+        int del;
+        int ins;
+        /* The cursor and selection anchor (-1 for none) before the step, and the cursor after it */
+        int cursorBefore;
+        int anchorBefore;
+        int cursorAfter;
+    };
+
+    void handleKey(unsigned char c, int modifiers);
     void reDraw(int from, int to);
     void drawSelection(int view_start, int cols, int rows, int text_x);
     void highlightSyntax(unsigned char* start);
@@ -137,6 +170,7 @@ private:
     bool ropeDeleteRange(int index, int count);
     bool ropeInsertText(int index, const unsigned char* data, int len);
     bool ropeLocate(int index, struct rope_node** out_node, int* out_offset) const;
+    void ropeCopy(int index, int count, unsigned char* out) const;
     struct rope_node* ropeCreateNode();
     void ropeDetachNode(struct rope_node* node);
     void ropeTryMerge(struct rope_node* node);
@@ -144,6 +178,19 @@ private:
     void autoBracesInserted(int index, int len);
     void autoBracesDeleted(int index, int count);
     int autoBraceAt(int index) const;
+
+    void undo();
+    void redo();
+    bool undoApply(const struct undo_step* step, bool redo);
+    void undoKeyStart(int kind);
+    void undoKeyEnd();
+    void undoInserted(int index, const unsigned char* data, int len);
+    void undoDeleting(int index, int len);
+    struct undo_step* undoStepFor(int index, int len, bool inserted);
+    bool undoReserve(int need, int keep);
+    static int undoStepBytes(int text);
+    void undoClear();
+    void undoFail();
 
     TreeView* treeView;
 
@@ -155,12 +202,37 @@ private:
     int m_bufferEdit;
     int m_x;
     int m_y;
+    /* An edit was made since the last save or open. Unsaved changes are the undo history's to tell, while there is one */
     int m_dirty;
     /* The file is bigger than the buffer, which holds only its start: a save would cut it short, so it can't be edited */
     bool m_readOnly;
     /* Where the } are that typing { added and typing } steps over, oldest first. Every insert and delete moves them (#119) */
     int m_autoBraces[EDITOR_AUTO_BRACES_MAX];
     int m_autoBraceCount;
+    /**
+     * The undo history (#161): the steps done, oldest first, then those undone, which redo does again. The four rope
+     * functions that edit record into it. Allocated at the first edit, m_undoSize bytes, and freed with the text
+     */
+    unsigned char* m_undo;
+    int m_undoSize;
+    /* The steps take m_undoUsed bytes, of which the first m_undoAt are those done. The last done starts at m_undoLast, -1 for none */
+    int m_undoUsed;
+    int m_undoAt;
+    int m_undoLast;
+    /* How many steps are done, counting the oldest ones dropped, m_undoDropped. m_undoSaved is how many were at the last save, -1 if they can't be again */
+    int m_undoDone;
+    int m_undoDropped;
+    int m_undoSaved;
+    /* The last step takes the edits of the key being handled, and of the next key if it's this kind too; EDITOR_UNDO_CLOSED for none */
+    int m_undoJoin;
+    /* The kind of key being handled, and the cursor and selection anchor (-1 for none) before it, for a step it starts */
+    int m_undoKey;
+    int m_undoCursor;
+    int m_undoAnchor;
+    /* Undo or redo is changing the text, which isn't recorded */
+    bool m_undoing;
+    /* The history ran out of memory, so edits go unrecorded until the text is replaced */
+    bool m_undoFailed;
     int m_preferredColumn;
     /* Where the selection started, which runs from here to the cursor; -1 for none */
     int m_selAnchor;

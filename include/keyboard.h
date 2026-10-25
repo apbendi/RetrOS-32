@@ -47,6 +47,8 @@
 #define CTRLE 229
 #define CTRLV 246
 #define CTRLX 248
+#define CTRLY 249
+#define CTRLZ 250
 
 /* The modifier keys held with a key, in struct kb_key and gfx_event's flags */
 #define KEY_MOD_SHIFT (1 << 0)
