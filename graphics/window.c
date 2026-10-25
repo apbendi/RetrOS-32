@@ -348,7 +348,7 @@ static void gfx_default_click(struct window* window, int x, int y)
     if (x >= window->x + window->width - 46 + 6 && x <= window->x + window->width - 46 + 6 + 10 && y >= window->y - 3 && y <= window->y - 3 + 9 && window->is_resizable) {
         dbgprintf("[GFX WINDOW] Clicked %s full screen button\n", window->name);
         if(window->is_maximized.state == 0){
-            window->is_maximized.width = window->width+4;
+            window->is_maximized.width = window->width;
             window->is_maximized.height = window->height;
 
             /* Without enough memory for the bigger buffer, the window stays as it is */
@@ -365,13 +365,7 @@ static void gfx_default_click(struct window* window, int x, int y)
             window->is_maximized.state = 0;
         }
 
-        struct gfx_event e = {
-            .data = window->inner_width,
-            .data2 = window->inner_height,
-            .event = GFX_EVENT_RESOLUTION
-        };
-        gfx_push_event(window, &e);
-
+        /* gfx_window_resize sent the window its one GFX_EVENT_RESOLUTION */
         window->is_moving.state = GFX_WINDOW_STATIC;
 
         window->resize = 0;
