@@ -167,12 +167,14 @@ static struct user* __authenticate_user(struct usermanager* usrman, const char* 
 		return NULL;
 	}
 
+	/* Logs the result, never the password or its hash: the hash is unsalted, so a string that logs in is quick to find */
 	unsigned int hash = advanced_hash(password);
-	dbgprintf("Authenticating %s with %s: %d %d\n", user->name, password, hash, user->hash);
 	if(hash == user->hash){
+		dbgprintf("Authenticated %s.\n", user->name);
 		return user;
 	}
-	
+
+	dbgprintf("Wrong password for %s.\n", user->name);
 	return NULL;
 }
 
@@ -275,6 +277,10 @@ static int admin(int argc, char** argv)
 			.permissions = 0,
 			.hash = advanced_hash(argv[3])
 		};
+		if(strlen(argv[2]) >= (int)sizeof(user.name)){
+			twritef("A username has at most %d characters.\n", (int)sizeof(user.name) - 1);
+			return -1;
+		}
 		strcpy(user.name, argv[2]);
 
 		usrman->ops->add(usrman, &user);

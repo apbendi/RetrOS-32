@@ -47,13 +47,24 @@ public:
         })), RIGHT);
 
         bottom->addWidget(new Button(50, 14, "Create", Function<void()>([this]() {
-            printf("Username: %s\n", ((Input*)widgets->getByTag("#username"))->getData()); 
-            printf("Password: %s\n", ((Input*)widgets->getByTag("#password"))->getData());
+            char* username = ((Input*)widgets->getByTag("#username"))->getData();
+            char* password = ((Input*)widgets->getByTag("#password"))->getData();
 
-            char buffer[100];
-            sprintf(buffer, "admin create %s %s", ((Input*)widgets->getByTag("#username"))->getData(), ((Input*)widgets->getByTag("#password"))->getData());
+            /* The shell drops double quotes, so a name or password with one can't be passed on as typed */
+            if (strchr(username, '"') != nullptr || strchr(password, '"') != nullptr) {
+                return;
+            }
 
-            system(buffer);
+            /* Quoted, so a space doesn't split them. Sized from the inputs, which hold up to 511 characters each */
+            const char* format = "admin create \"%s\" \"%s\"";
+            char* command = (char*)malloc(strlen(format) + strlen(username) + strlen(password) + 1);
+            if (command == nullptr) {
+                return;
+            }
+            sprintf(command, format, username, password);
+
+            system(command);
+            free(command);
         })), RIGHT);
 
 
