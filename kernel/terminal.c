@@ -527,6 +527,12 @@ static int __terminal_scan_graphics(struct terminal* term, ubyte_t* data, int si
 			return 0;
 		}
 
+		/* A program killed while it reads exits when the read returns (pcb_kill) */
+		if($process->current->kill_pending){
+			__terminal_end_read(term);
+			return -1;
+		}
+
 		/**
 		 * Text pasted comes first, as if typed, so a newline in it ends the line, and the rest waits for the next read.
 		 * The window isn't the reader's, so its events don't wake the reader: it looks every 10 ms.

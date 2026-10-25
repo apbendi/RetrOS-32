@@ -12,6 +12,7 @@
 #include <syscalls.h>
 #include <screen.h>
 #include <pcb.h>
+#include <scheduler.h>
 #include <kutils.h>
 #include <arch/interrupts.h>
 #include <syscall_helper.h>
@@ -109,10 +110,19 @@ int system_call(int index, int arg1, int arg2, int arg3)
 
 	$process->current->in_kernel = true;
 	int ret = fn(arg1, arg2, arg3);
-	$process->current->in_kernel = false;
 	
 	/* Enter critical section again */
 	ENTER_CRITICAL();
+
+	/**
+	 * A kill during the call waited for it to return, with the kernel locks it took released (pcb_kill). With
+	 * interrupts off, a kill from here on finds the program back in user mode, where it's stopped at once.
+	 */
+	if($process->current->kill_pending){
+		LEAVE_CRITICAL();
+		kernel_exit();
+	}
+	$process->current->in_kernel = false;
 
 	return ret;
 }

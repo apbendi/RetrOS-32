@@ -152,6 +152,11 @@ error_t net_sock_read(struct sock* sock, uint8_t* buffer, unsigned int length)
 	dbgprintf(" [SOCK] Waiting for data... %d\n", sock);
 	/* Should be blocking */
     while(!net_sock_data_ready(sock, length)){
+        /* A program killed while it waits exits when the call returns (pcb_kill) */
+        if($process->current->kill_pending){
+            sock->waiting = NULL;
+            return -1;
+        }
         sock->waiting = $process->current;
         $process->current->state = BLOCKED;
 	    kernel_yield();

@@ -204,7 +204,8 @@ struct sock* kernel_accept(struct sock* socket, struct sockaddr *address, sockle
     }
     /* Block until a pending connection exists or the socket is torn down. */
     while(socket->backlog.count <= 0){
-        if(socket->closing || socket->tcp->state == TCP_CLOSED){
+        /* Or a program killed while it waits, which exits when the call returns (pcb_kill) */
+        if(socket->closing || socket->tcp->state == TCP_CLOSED || $process->current->kill_pending){
             return NULL;
         }
         kernel_yield();
