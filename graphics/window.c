@@ -348,6 +348,8 @@ static void gfx_default_click(struct window* window, int x, int y)
     if (x >= window->x + window->width - 46 + 6 && x <= window->x + window->width - 46 + 6 + 10 && y >= window->y - 3 && y <= window->y - 3 + 9 && window->is_resizable) {
         dbgprintf("[GFX WINDOW] Clicked %s full screen button\n", window->name);
         if(window->is_maximized.state == 0){
+            window->is_maximized.x = window->x;
+            window->is_maximized.y = window->y;
             window->is_maximized.width = window->width;
             window->is_maximized.height = window->height;
 
@@ -358,8 +360,16 @@ static void gfx_default_click(struct window* window, int x, int y)
             window->is_maximized.state = 1;
 
         } else {
+            /**
+             * Back where it was, then the size it was, as gfx_window_maximize moves before it resizes: resizing keeps
+             * the window on screen from where it is. Both fitted the screen when they were saved
+             */
+            int x = window->x, y = window->y;
+            window->ops->move(window, window->is_maximized.x, window->is_maximized.y);
+
             /* resize sets width and height, and leaves them alone if it fails */
             if(window->ops->resize(window, window->is_maximized.width-16, window->is_maximized.height-16) < 0){
+                window->ops->move(window, x, y);
                 return;
             }
             window->is_maximized.state = 0;
@@ -568,6 +578,8 @@ struct window* gfx_new_window(int width, int height, window_flag_t flags)
     w->events.tail = 0;
 
     w->is_maximized.state = 0;
+    w->is_maximized.x = 0;
+    w->is_maximized.y = 0;
     w->is_maximized.width = 0;
     w->is_maximized.height = 0;
 
