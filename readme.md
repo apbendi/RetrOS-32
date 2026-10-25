@@ -190,7 +190,62 @@ Use Docker (see MacOS section) or WSL (see Linux section).
 To run RetrOS-32:
   * http://copy.sh/v86/ : Upload .img file as Hard disk image.
   * QEMU: `make qemu` or `qemu-system-i386 <image name>` 
+  * 86Box: emulates a late-90s PC, see below
   * Real hardware: Burn .iso file to USB or CD (Use a GRUB iso)
+
+### 86Box
+
+[86Box](https://86box.net/) emulates real PC hardware with its original BIOSes, so it shows what QEMU's simpler BIOS can hide. RetrOS-32 boots on an emulated ASUS KN97, a Pentium II board from 1997.
+
+1. Install 86Box and the ROM set for its version. On macOS:
+   ```sh
+   brew install --cask 86box
+   curl -L -o /tmp/86box-roms.zip https://github.com/86Box/roms/archive/refs/tags/v6.0.zip
+   unzip -q /tmp/86box-roms.zip -d /tmp
+   mv /tmp/roms-6.0 ~/Library/Application\ Support/net.86box.86Box/roms
+   ```
+   Elsewhere, see [86Box's documentation](https://86box.readthedocs.io/).
+2. Open 86Box once. Its manager shows the folder it keeps virtual machines in, its system directory: on macOS, `~/Library/Application Support/86Box/Virtual Machines/`.
+3. In that folder, make a folder called `RetrOS-32` with this `86box.cfg`, with `hdd_01_fn` set to the image's full path:
+   ```ini
+   [Machine]
+   machine = kn97
+   cpu_family = pentium2_klamath
+   cpu_speed = 266666666
+   cpu_multi = 4
+   cpu_use_dynarec = 1
+   fpu_type = internal
+   mem_size = 32768
+   time_sync = local
+
+   [Video]
+   gfxcard = millennium_ii
+
+   [Input devices]
+   keyboard_type = keyboard_ps2
+   mouse_type = ps2
+
+   [Hard disks]
+   hdd_01_fn = /full/path/to/RetrOS-32/RetrOS-32-debug.img
+   hdd_01_ide_channel = 0:0
+   hdd_01_parameters = 63, 16, 66, 0, ide
+   hdd_01_speed = ramdisk
+
+   [Ports (COM & LPT)]
+   serial1_device = stdio
+
+   [Virtual Console (COM) #1]
+   mode = 3
+   command = exec 2>/dev/null <"$PTY" >serial.log; stty raw -echo; exec cat
+   command_terminal = 0
+   ```
+4. Restart 86Box, start RetrOS-32, and pick a resolution at the boot menu.
+
+Notes:
+  * **Rebuilding:** the VM boots the image the build makes, so a rebuild needs only a restart. Don't rebuild while it runs, or run it alongside `make qemu`: they share the file.
+  * **The image's size:** 86Box lengthens the image to fit the disk's 66 cylinders, a little over 32 MB. That's harmless: each build makes it afresh.
+  * **The serial log** goes to `serial.log` in the VM's folder as it's written, through a pseudoterminal, so it survives 86Box crashing. That's been tried on macOS; Windows has no pseudoterminals.
+  * **No network:** 86Box has no Intel e1000, the only network card RetrOS-32 has a driver for.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

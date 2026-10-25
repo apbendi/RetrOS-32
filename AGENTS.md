@@ -100,6 +100,27 @@ HOSTFWD_PORT=8081 make qemu    # if port 8080 is taken (the default forward to t
   - A program starts in the shell's current directory, so relative paths work: `cd "/my projects"`, then `exec -d /bin/edit.o main.c`, `exec /bin/tcc.o main.c -o main` and `exec main`, or `exec /bin/tcc.o -run main.c`.
 - **Resolution varies:** the screen has been both 640×480 and 1024×768. Don't hard-code a resolution; use `vbe_info->width`/`height`.
 
+## 86Box
+
+86Box emulates real chipsets with their original BIOSes. QEMU's SeaBIOS covers for things those don't: three boot bugs that QEMU never showed were found this way (a722ed5). The README's "86Box" section has the VM's `86box.cfg` and how to install it.
+
+**Why the VM is set up as it is:**
+- **The board, an ASUS KN97 (440FX):** the disk driver attaches only to the PIIX3's IDE controller, `8086:7010` (`kernel/pci.c`). So the board needs a 430HX, 430VX or 440FX chipset, or RetrOS finds no disk.
+- **The CPU, a Pentium II:** the build targets i686, Debian's default for `gcc -m32`, so the kernel uses `cmov`. A Pentium or Pentium MMX faults at the first `memset`, during the first log line. Running on one would take `-march=i586` throughout, the C library and TinyCC included.
+- **The disk's geometry, 63 sectors × 16 heads × 66 cylinders:** with 32 sectors per track, the KN97's BIOS lost the cylinder number in int 13h AH=42h reads. Every read starting at sector 512 or later returned the data 512 sectors earlier, so the kernel's `.data` arrived wrong and it jumped to a garbage address. With 63 sectors, cylinder 0 holds 1,008 sectors, and the kernel loads entirely from it: sectors 4 to 835 at a722ed5. Whether the BIOS gets later cylinders right with 63 sectors is untested, so this may come back once the kernel passes sector 1,007, about 500 KB.
+- **The graphics card, a Matrox Millennium II:**
+  - **Not the Bochs SVGA,** which matches QEMU's: in 86Box 6.0 its framebuffer is never mapped when the BIOS assigns its address before enabling memory decoding, which is the usual order (`bochs_vbe_pci_write` in `src/video/vid_bochs_vbe.c`). The mode is set, but every draw is lost.
+  - **The S3 Trio64V2/DX and ViRGE/GX also work,** but put the framebuffer at `0xE0000000`, which is `VMEM_HEAP`. Kernel threads still see it, but a process's own heap table replaces that mapping in its page directory.
+  - **The Voodoo3, ViRGE/DX, Mach64VT2 and GD5446 don't:** with them the kernel got no mode information for 1024×768, mode 0x105.
+- **No network:** 86Box has no e1000. `netd` runs with loopback only.
+
+**Running it:**
+- **Ask the human first:** there's no headless mode, so `/Applications/86Box.app/Contents/MacOS/86Box -P <VM folder> -N` opens a window on their screen. It ignores SIGTERM, so stop it with SIGKILL. A copy left running rewrites the VM's `86box.cfg` when you're not looking.
+- **No input:** you can't type into it, and screenshots of its window need Screen Recording permission. To boot unattended, use a copy of the image with the boot menu's key wait replaced: the bytes `b4 00 cd 16` (`mov $0, %ah; int $0x16`) in the first 2 KB become `b4 00 b0 33` (`mov $'3', %al`), which picks 1024×768.
+- **A fresh CMOS:** some boards, the Gigabyte GA-686NX among them, stop at "Press F1 to continue" until their NVR is saved. Copying a VM's `nvr/` folder along with its config avoids it.
+- **The serial log:** the VM's COM1 runs a `cat` from a pseudoterminal into `serial.log` (`[Virtual Console (COM) #1]`). Its "File" device buffers its writes, and loses them when 86Box crashes.
+- **When 86Box itself crashes:** exit code 11, with a report in `~/Library/Logs/DiagnosticReports/86Box-*.ips`. A crash in `fastreadl_fetch` meant the guest had jumped to a wild address: look at the guest first.
+
 ## Checking a change without a full build
 
 These were fast and caught real problems. `.claude/skills/check-change/check.sh` automates the first two: the clang check, compared with HEAD, and the runtime-library check for apps.
