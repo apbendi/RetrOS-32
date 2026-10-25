@@ -23,6 +23,8 @@
 #include <syscalls.h>
 #include <syscall_helper.h>
 #include <errors.h>
+#include <kernel.h>
+#include <screen.h>
 
 static char *units[] = {"b ", "kb", "mb"};
 
@@ -36,14 +38,35 @@ void system_reboot()
     HLT();
 }
 
-/* Function to shut down the system */
+/**
+ * Powers the machine off through the ACPI register QEMU has at port 0x604. A machine without one keeps running, like
+ * 86Box's ASUS KN97, whose chipset predates ACPI: it's told it's safe to turn off, as Windows 95 did, and halted.
+ */
 void system_shutdown()
 {
     ENTER_CRITICAL();
     outportw(0x604, 0x2000);
 
-    /* Halt the CPU as a fail-safe in case shutdown does not initiate */
-    HLT();
+    dbgprintf("Power off didn't happen: halting\n");
+    if($kernel->graphic_mode == KERNEL_FLAG_TEXTMODE){
+        scr_clear();
+        scrwrite(20, 12, "It's now safe to turn off your computer.", VGA_COLOR_WHITE);
+    } else {
+        /* Orange on black, color 42 in the standard VGA palette */
+        static const char* lines[] = {"It's now safe to turn off", "your computer."};
+        memset((uint8_t*)vbe_info->framebuffer, 0, vbe_info->pitch * vbe_info->height);
+        for (int l = 0; l < 2; l++){
+            int len = strlen(lines[l]);
+            for (int i = 0; i < len; i++){
+                vesa_put_char16((uint8_t*)vbe_info->framebuffer, lines[l][i], (vbe_info->width - len * 16) / 2 + i * 16, vbe_info->height / 2 - 24 + l * 32, 42);
+            }
+        }
+    }
+
+    /* Interrupts are off, but a non-maskable one would wake the CPU from a single hlt */
+    while (1){
+        HLT();
+    }
 }
 
 /* Function to align a given size to the size of a void* */
