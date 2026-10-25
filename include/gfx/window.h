@@ -134,7 +134,10 @@ struct window {
 
     byte_t in_focus;
     
+    /* Where the window was, and its size, before it was maximized, to restore it to */
     struct {
+        uint16_t x;
+        uint16_t y;
         uint16_t width;
         uint16_t height;
         byte_t state;
