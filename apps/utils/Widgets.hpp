@@ -177,7 +177,6 @@ public:
     }
 
     void Mouse() {
-        printf("Input clicked!\n");
     }
 
     bool focusable() {
@@ -393,8 +392,6 @@ public:
                 break;
         }
 
-        printf("Added widget, new offset %d\n", offset);
-
         return widgetCount;
     }
 
@@ -417,7 +414,6 @@ public:
                     /* Focus the current widget */
                     focusedWidget = i;
                     widget->focused = true;
-                    printf("Focused widget: %d\n", focusedWidget);
                 }
 
                 widget->Mouse();
@@ -487,7 +483,6 @@ public:
     }
 
     Widget* getByTag(char* tag) {
-        printf("Searching for widget with tag %s\n", tag);
         for (int i = 0; i < layoutCount; i++) {
             Widget* widget = layouts[i]->getByTag(tag);
             if (widget != nullptr) {

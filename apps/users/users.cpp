@@ -31,7 +31,6 @@ public:
             
             char buffer[100] = {0};
             sprintf(buffer, "bg 0x%x", color);
-            printf("Executing: %s\n", buffer);
             system(buffer);
         })));
         widgets->addWidget(main, RIGHT, new Button(100, 14, "Create", Function<void()>([this]() {

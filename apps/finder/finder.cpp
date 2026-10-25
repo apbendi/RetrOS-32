@@ -198,7 +198,6 @@ public:
         setHeader(path->getData());
         loadFiles();
         showFiles(0, 0);
-        printf("change directory to %s\n", path->getData());
     }
 
     /* Reads the current directory's entries, with ".." first below the root */

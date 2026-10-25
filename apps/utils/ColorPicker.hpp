@@ -78,14 +78,11 @@ private:
 
 void __color_picker_entry(void* args) {
     int color = 0;
-    volatile int* sig = (signal_t*)args;
 
     ColorPicker* colorPicker = new ColorPicker();
     color = colorPicker->run(); 
 
     selected = color;
-
-    printf("Setting 0x%x to %d\n", sig, selected);
 }
 
 static int __check_ptr(volatile signal_t* ptr) {
@@ -100,9 +97,7 @@ int color_picker_entry() {
     Thread* colorPickerThread = new Thread(__color_picker_entry, 0);
     colorPickerThread->start((void*)&sig);
 
-    printf("Waiting for 0x%x\n", sig_ptr);
     while (__check_ptr(sig_ptr)) {
-        //printf("Waiting for 0x%x -  %d\n", sig_ptr, selected);
         yield();
     }
 

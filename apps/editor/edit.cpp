@@ -184,7 +184,9 @@ enum {
 
 enum {
     EDITOR_NEW_FILE_POPUP_RESULT_CANCEL = 0,
-    EDITOR_NEW_FILE_POPUP_RESULT_CREATE = 1
+    EDITOR_NEW_FILE_POPUP_RESULT_CREATE = 1,
+    /* The window's widgets couldn't be made */
+    EDITOR_NEW_FILE_POPUP_RESULT_ERROR = 2
 };
 
 struct EditorNewFilePopupShared {
@@ -227,9 +229,7 @@ static int trim_copy_path(const char* src, char* dst, int dst_size)
 static void __editor_new_file_popup_thread(void* arg)
 {
     EditorNewFilePopupShared* shared = (EditorNewFilePopupShared*) arg;
-    printf("[editor] popup thread start arg=%x\n", (uint32_t)shared);
     if (shared == nullptr) {
-        printf("[editor] popup thread: null shared\n");
         return;
     }
 
@@ -333,7 +333,7 @@ static void __editor_new_file_popup_thread(void* arg)
     };
 
     if (buildWidgets() < 0) {
-        printf("[editor] popup thread: widget build failed\n");
+        shared->result = EDITOR_NEW_FILE_POPUP_RESULT_ERROR;
         shared->running = 0;
         return;
     }
@@ -405,7 +405,6 @@ static void __editor_new_file_popup_thread(void* arg)
             memset(trimmed, 0, sizeof(trimmed));
             if (path_input == nullptr || trim_copy_path(path_input->getData(), trimmed, sizeof(trimmed)) <= 0) {
                 strncpy(status, "Path is empty.", (uint32_t)(sizeof(status) - 1));
-                printf("[editor] popup create: empty path\n");
                 continue;
             }
 
@@ -413,7 +412,6 @@ static void __editor_new_file_popup_thread(void* arg)
             shared->path[sizeof(shared->path) - 1] = 0;
             shared->result = EDITOR_NEW_FILE_POPUP_RESULT_CREATE;
             shared->running = 0;
-            printf("[editor] popup create: path=%s\n", shared->path);
             freeWidgets();
             return;
         }
@@ -421,7 +419,6 @@ static void __editor_new_file_popup_thread(void* arg)
         if (action == EDITOR_NEW_FILE_POPUP_ACTION_CANCEL) {
             shared->result = EDITOR_NEW_FILE_POPUP_RESULT_CANCEL;
             shared->running = 0;
-            printf("[editor] popup canceled\n");
             freeWidgets();
             return;
         }
@@ -2162,10 +2159,8 @@ bool Editor::Quit()
 bool Editor::Open(char* path)
 {
     if (path == nullptr || path[0] == 0) {
-        printf("[editor] Open: empty path\n");
         return false;
     }
-    printf("[editor] Open: requested %s\n", path);
 
     int old_fd = m_fd;
 
@@ -2178,14 +2173,12 @@ bool Editor::Open(char* path)
 
     static char absolute[FS_PATH_MAX];
     if (editor_absolute_path(path, absolute) < 0) {
-        printf("[editor] Open: path too long %s\n", path);
         drawStatusLine(COLOR_VGA_RED, "Can't open %s: the path is too long.", path);
         return false;
     }
 
     int new_fd = open_editor_file(absolute);
     if (new_fd < 0) {
-        printf("[editor] Open: failed %s: %s\n", absolute, error_get_string(new_fd));
         drawStatusLine(COLOR_VGA_RED, "Can't open %s: %s", absolute, error_get_string(new_fd));
         return false;
     }
@@ -2247,7 +2240,6 @@ bool Editor::Open(char* path)
 
     reDrawHeader();
     reDraw(0, m_bufferHead);
-    printf("[editor] Open: success %s (bytes=%d)\n", m_currentPath, m_bufferHead);
     return true;
 }
 
@@ -2276,7 +2268,6 @@ bool Editor::Save()
 
         int fd = open_editor_file_for_save(m_currentPath);
         if (fd < 0) {
-            printf("[editor] Save: can't open %s: %s\n", m_currentPath, error_get_string(fd));
             drawStatusLine(COLOR_VGA_RED, "Can't save %s: %s", m_currentPath, error_get_string(fd));
             return false;
         }
@@ -2285,17 +2276,14 @@ bool Editor::Save()
 
     int ret = write(m_fd, m_textBuffer, m_bufferHead);
     if (ret < 0) {
-        printf("[editor] Save: can't write %s: %s\n", m_currentPath, error_get_string(ret));
         drawStatusLine(COLOR_VGA_RED, "Can't save %s: %s", m_currentPath, error_get_string(ret));
         return false;
     }
     if (ret != m_bufferHead) {
         /* A short write means the disk is full */
-        printf("[editor] Save: wrote %d of %d bytes to %s\n", ret, m_bufferHead, m_currentPath);
         drawStatusLine(COLOR_VGA_RED, "Saved only %d of %d bytes: %s", ret, m_bufferHead, error_get_string(-ERROR_NO_SPACE));
         return false;
     }
-    printf("[editor] Save: saved %s (bytes=%d)\n", m_currentPath, m_bufferHead);
 
     m_fileSize = m_bufferHead;
     m_dirty = 0;
@@ -2335,7 +2323,6 @@ bool Editor::showNewFileDialog(char* out_path, int out_path_size)
     /* Must live on heap: user threads have separate stacks in this kernel. */
     EditorNewFilePopupShared* shared = (EditorNewFilePopupShared*) malloc(sizeof(EditorNewFilePopupShared));
     if (shared == nullptr) {
-        printf("[editor] showNewFileDialog: alloc failed\n");
         drawStatusLine(COLOR_VGA_RED, "New File: out of memory.");
         return false;
     }
@@ -2348,24 +2335,26 @@ bool Editor::showNewFileDialog(char* out_path, int out_path_size)
     Thread popup_thread(__editor_new_file_popup_thread, 0);
     int thread_id = popup_thread.start((void*)shared);
     if (thread_id < 0) {
-        printf("[editor] showNewFileDialog: thread start failed\n");
         drawStatusLine(COLOR_VGA_RED, "Failed to open New File window.");
         free(shared);
         return false;
     }
-    printf("[editor] showNewFileDialog: thread id=%d\n", thread_id);
 
     int await_ret = invoke_syscall(SYSCALL_AWAIT_PROCESS, thread_id, 0, 0);
     if (await_ret < 0) {
-        printf("[editor] showNewFileDialog: await failed ret=%d\n", await_ret);
         drawStatusLine(COLOR_VGA_RED, "Failed waiting for New File window.");
         free(shared);
         return false;
     }
-    printf("[editor] showNewFileDialog: done result=%d path=%s\n", shared->result, shared->path);
+
+    if (shared->result == EDITOR_NEW_FILE_POPUP_RESULT_ERROR) {
+        drawStatusLine(COLOR_VGA_RED, "New File: out of memory.");
+        free(shared);
+        return false;
+    }
 
     if (shared->result != EDITOR_NEW_FILE_POPUP_RESULT_CREATE || shared->path[0] == 0) {
-        printf("[editor] showNewFileDialog: canceled/invalid\n");
+        drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "New file creation canceled.");
         free(shared);
         return false;
     }
@@ -2730,10 +2719,8 @@ void Editor::FileChooser()
             char new_file[FS_PATH_MAX];
             memset(new_file, 0, sizeof(new_file));
             if (showNewFileDialog(new_file, sizeof(new_file)) && new_file[0] != 0) {
-                printf("[editor] chooser new: trying open %s\n", new_file);
                 if (!Open(new_file)) {
                     /* Open said why on the status line, which the redraw would cover */
-                    printf("[editor] chooser new: open failed %s\n", new_file);
                     continue;
                 }
 
@@ -2747,7 +2734,7 @@ void Editor::FileChooser()
                 return;
             }
 
-            drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "New file creation canceled.");
+            /* showNewFileDialog said why on the status line */
             continue;
         }
 
