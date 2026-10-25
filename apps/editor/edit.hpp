@@ -79,6 +79,7 @@ private:
     void reDraw(int from, int to);
     void drawSelection(int view_start, int cols, int rows, int text_x);
     void highlightSyntax(unsigned char* start);
+    void highlightWordAt(int index);
 
     bool hasSelection() const;
     bool selectionRange(int& start, int& end) const;
