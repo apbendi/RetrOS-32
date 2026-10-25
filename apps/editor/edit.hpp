@@ -148,6 +148,8 @@ private:
     int m_x;
     int m_y;
     int m_dirty;
+    /* The file is bigger than the buffer, which holds only its start: a save would cut it short, so it can't be edited */
+    bool m_readOnly;
     int m_preferredColumn;
     /* Where the selection started, which runs from here to the cursor; -1 for none */
     int m_selAnchor;
