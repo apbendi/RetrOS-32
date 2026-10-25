@@ -1247,9 +1247,10 @@ void Editor::reDraw(int from, int to)
             row_lines[row] = line_no;
         }
 
-        if (isAlpha(ch)) {
-            if (i == 0 || !isAlpha(m_textBuffer[i - 1])) {
-                highlightSyntax(&m_textBuffer[i]);
+        /* A word is letters, digits and _, so a keyword at the start of a longer name, like int32_t, isn't one (#142) */
+        if (isWordChar(ch)) {
+            if (i == view_start || !isWordChar(m_textBuffer[i - 1])) {
+                highlightWordAt(i);
             }
         } else {
             setColor(COLOR_TEXT);
@@ -1279,10 +1280,8 @@ void Editor::reDraw(int from, int to)
             if (m_bufferEdit < m_bufferHead && m_textBuffer[m_bufferEdit] != '\n') {
                 unsigned char ch = m_textBuffer[m_bufferEdit];
                 if (ch >= 32 && ch <= 126) {
-                    if (isAlpha(ch)) {
-                        if (m_bufferEdit == 0 || !isAlpha(m_textBuffer[m_bufferEdit - 1])) {
-                            highlightSyntax(&m_textBuffer[m_bufferEdit]);
-                        }
+                    if (isWordChar(ch)) {
+                        highlightWordAt(m_bufferEdit);
                     } else {
                         setColor(COLOR_TEXT);
                     }
@@ -1377,7 +1376,7 @@ void Editor::highlightSyntax(unsigned char* start)
     }
 
     int tokenLen = 0;
-    while (isAlpha(start[tokenLen])) {
+    while (isWordChar(start[tokenLen])) {
         tokenLen++;
     }
 
@@ -1400,6 +1399,16 @@ void Editor::highlightSyntax(unsigned char* start)
     }
 
     setColor(COLOR_TEXT);
+}
+
+/* Sets the color of the word index is in, from the word's start */
+void Editor::highlightWordAt(int index)
+{
+    int start = index;
+    while (start > 0 && isWordChar(m_textBuffer[start - 1])) {
+        start--;
+    }
+    highlightSyntax(&m_textBuffer[start]);
 }
 
 int Editor::countLines() const
