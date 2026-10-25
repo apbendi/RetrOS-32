@@ -392,17 +392,31 @@ setup_gdt:
      */
     ljmp $0x8, $enter32
 
-/* Set a20 line from: http://www.brokenthorn.com/Resources/OSDev9.html*/
+/**
+ * Enables the A20 line through the keyboard controller: command 0xd1 writes its output port, whose bit 1 is A20,
+ * with the next byte sent to port 0x60. SeaBIOS, QEMU's BIOS, enables A20 itself, but a BIOS may leave it off, and
+ * then every odd megabyte is the one below it: the kernel's heap starts at 1 MB. Without the byte, the controller
+ * would also take the kernel's first write to port 0x60 as its output port.
+ * From: http://www.brokenthorn.com/Resources/OSDev9.html
+ */
 set_a20:
-
-    inb     $0x64,%al               # Wait for not busy
-    testb   $0x2,%al
-    jnz     set_a20
-
-    movb    $0xd1,%al               # 0xd1 -> port 0x64
+    call    a20_wait
+    movb    $0xd1,%al               # 0xd1 -> port 0x64: write the output port
     outb    %al,$0x64
 
-    ret                                                                                
+    call    a20_wait
+    movb    $0xdf,%al               # A20 on, and the reset line, bit 0, left high
+    outb    %al,$0x60
+
+    call    a20_wait
+    ret
+
+/* Waits until the keyboard controller has taken the last byte written to it */
+a20_wait:
+    inb     $0x64,%al
+    testb   $0x2,%al
+    jnz     a20_wait
+    ret
 
 set_video_mode:
     # je set_640x480
@@ -506,16 +520,20 @@ detect_memory_size:
     cmp $0x80, %ah
     je mem_error
 
+    /**
+     * The memory from 1 to 16 MB in KB, and above 16 MB in 64 KB blocks, is in CX and DX, or with CX 0, only in AX
+     * and BX. SeaBIOS fills in both pairs, but other BIOSes may not, and boot_info's 0 would make the kernel's memory
+     * map nonsense.
+     */
     jcxz use_ax
 
     mov %cx, %ax
     mov %dx, %bx
 
+use_ax:
     mov %ax, 0x7E00
     mov %bx, 0x7E04
 
-/* AX/BX already contain the required values */
-use_ax:
 print_memory_size:
     movw $straight_line, %si
     call print

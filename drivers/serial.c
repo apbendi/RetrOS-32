@@ -134,6 +134,13 @@ void init_serial()
 	outportb(PORT + 4, 0x1E);    // Set in loopback mode, test the serial chip
 	outportb(PORT + 0, 0xAE);    // Test serial chip (send byte 0xAE and check if serial returns same byte)
 
+	/**
+	 * The byte comes back at the line's speed, about 260 us at 38400 baud, so wait until it's there (bit 0 of the
+	 * line status). QEMU's loops back at once, but 86Box's, like a real UART's, doesn't, and reading too early
+	 * turned serial debugging off.
+	 */
+	for (int i = 0; i < 100000 && !(inportb(PORT + 5) & 0x01); i++);
+
 	// Check if serial is faulty (i.e: not same byte as sent)
 	if(inportb(PORT + 0) != 0xAE) {
 		return;
