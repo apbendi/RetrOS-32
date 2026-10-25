@@ -65,7 +65,8 @@ reset_screen:
     mov $0x1F, %bh    /* Attribute byte (blue background, white text) */
     int $0x10
 
-    /* Set cursor position to top left */
+    /* Set cursor position to top left, on page 0: BH is the page, and still holds the attribute */
+    xor %bh, %bh
     xor %dx, %dx      /* Row 0, Column 0 */
     mov $0x02, %ah    /* Function to set cursor position */
     int $0x10
@@ -94,22 +95,20 @@ print:
     cmpb $0, %al
     je return
 
-    /* Check for newline character and handle it */
+    /**
+     * A newline is a carriage return, then a line feed, which the BIOS scrolls the screen up for on the last row.
+     * Moving the cursor down a row instead never scrolled, and some BIOSes, like the Matrox Millennium II's in
+     * 86Box, then write below the screen, out of sight
+     */
     cmpb $0x0A, %al
-    je new_line
-
+    jne put_char
+    movb $0x0D, %al
     int $0x10
-    jmp print
+    movb $0x0E, %ah
+    movb $0x0A, %al
 
-new_line:
-    /* Move to the start of the next line */
-    /* Assuming 80 characters per line */
-    mov $0x03, %ah  /* Read cursor position function */
-    int $0x10       /* Get current cursor position in DX */
-    inc %dh         /* Move to the next line */
-    xor %dl, %dl    /* Reset column to 0 */
-    mov $0x02, %ah  /* Set cursor position function */
-    int $0x10       /* Set new cursor position */
+put_char:
+    int $0x10
     jmp print
 
 return:
