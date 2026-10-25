@@ -161,19 +161,17 @@ static int open_editor_file_for_save(const char* path)
     return open(path, FS_FILE_FLAG_CREATE | FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE | FS_FILE_FLAG_TRUNCATE);
 }
 
-/* Opens path to edit, creating it if it doesn't exist. @return the fd, or a negative error code from errors.h */
+/**
+ * Opens path to edit. A file that doesn't exist isn't created: the first save does that (#140).
+ * @return the fd, or a negative error code from errors.h, -ERROR_FILE_NOT_FOUND for a file that isn't there
+ */
 static int open_editor_file(const char* path)
 {
     if (path == nullptr || path[0] == 0) {
         return -ERROR_INVALID_ARGUMENTS;
     }
 
-    int flags_rw = FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE;
-    int fd = open(path, flags_rw);
-    if (fd != -ERROR_FILE_NOT_FOUND) {
-        return fd;
-    }
-    return open(path, FS_FILE_FLAG_CREATE | flags_rw);
+    return open(path, FS_FILE_FLAG_READ | FS_FILE_FLAG_WRITE);
 }
 
 enum {
@@ -1312,8 +1310,8 @@ void Editor::reDraw(int from, int to)
         dots = "...";
     }
 
+    /* A message kept on the status line stays until the next event, a key, a click or a resize (EditorLoop) */
     if (m_keepStatus) {
-        m_keepStatus = 0;
         return;
     }
     if (selected) {
@@ -2162,13 +2160,10 @@ bool Editor::Open(char* path)
         return false;
     }
 
-    int old_fd = m_fd;
-
-    if (m_fd >= 0) {
-        if (!SaveMsg()) {
-            reDraw(0, m_bufferHead);
-            return false;
-        }
+    /* Unsaved changes count whether or not the file is on disk yet. Saving reopens m_fd, so it's closed after this */
+    if (!SaveMsg()) {
+        reDraw(0, m_bufferHead);
+        return false;
     }
 
     static char absolute[FS_PATH_MAX];
@@ -2177,16 +2172,21 @@ bool Editor::Open(char* path)
         return false;
     }
 
+    /**
+     * A name that isn't there is a new file, which the first save creates. Any other error, like a missing directory,
+     * is reported now rather than at the save
+     */
     int new_fd = open_editor_file(absolute);
-    if (new_fd < 0) {
+    bool is_new = new_fd == -ERROR_FILE_NOT_FOUND;
+    if (new_fd < 0 && !is_new) {
         drawStatusLine(COLOR_VGA_RED, "Can't open %s: %s", absolute, error_get_string(new_fd));
         return false;
     }
 
-    if (old_fd >= 0) {
-        fclose(old_fd);
+    if (m_fd >= 0) {
+        fclose(m_fd);
     }
-    m_fd = new_fd;
+    m_fd = is_new ? -1 : new_fd;
 
     char title[EDITOR_TITLE_MAX + 1];
     editor_title(absolute, title, sizeof(title));
@@ -2197,7 +2197,10 @@ bool Editor::Open(char* path)
 
     memset(m_textBuffer, 0, m_bufferSize);
 
-    int read_bytes = read(m_fd, m_textBuffer, m_bufferSize - 1);
+    int read_bytes = 0;
+    if (m_fd >= 0) {
+        read_bytes = read(m_fd, m_textBuffer, m_bufferSize - 1);
+    }
     if (read_bytes < 0) {
         read_bytes = 0;
     }
@@ -2240,6 +2243,10 @@ bool Editor::Open(char* path)
 
     reDrawHeader();
     reDraw(0, m_bufferHead);
+    if (is_new) {
+        drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "New file: F1 saves it to disk.");
+        m_keepStatus = 1;
+    }
     return true;
 }
 
@@ -2259,6 +2266,10 @@ bool Editor::Save()
         drawStatusLine(COLOR_VGA_RED, "Save failed.");
         return false;
     }
+
+    /* A file this save creates is added to the tree. Static, to keep it off the app's stack */
+    static struct fs_dirent existing;
+    bool creates = m_currentPath[0] != 0 && stat(m_currentPath, &existing) == -ERROR_FILE_NOT_FOUND;
 
     if (m_currentPath[0] != 0) {
         if (m_fd >= 0) {
@@ -2287,6 +2298,10 @@ bool Editor::Save()
 
     m_fileSize = m_bufferHead;
     m_dirty = 0;
+    if (creates && treeView != nullptr) {
+        treeView->refresh();
+        treeView->drawTree(this);
+    }
     reDraw(0, m_bufferHead);
     return true;
 }
@@ -2657,6 +2672,7 @@ void Editor::FileChooser()
 
         case GFX_EVENT_RESOLUTION:
             applyResolution(event.data, event.data2);
+            m_keepStatus = 0;
             reDrawHeader();
             treeView->drawTree(this);
             reDraw(0, m_bufferHead);
@@ -2726,10 +2742,6 @@ void Editor::FileChooser()
 
                 freeChooserWidgets();
                 reDrawHeader();
-                if (treeView != nullptr) {
-                    treeView->refresh();
-                    treeView->drawTree(this);
-                }
                 reDraw(0, m_bufferHead);
                 return;
             }
@@ -2847,6 +2859,9 @@ void Editor::EditorLoop()
         } else {
             gfx_get_event(&event, GFX_EVENT_BLOCKING);
         }
+
+        /* What's kept on the status line goes at the next event: a key, a click, or a resize, which moves the line */
+        m_keepStatus = 0;
 
         switch (event.event) {
         case GFX_EVENT_KEYBOARD:
