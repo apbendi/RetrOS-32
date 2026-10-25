@@ -128,8 +128,9 @@ void __int_handler __mouse_handler()
 						if (mouse_device.x < 0) mouse_device.x = 0;
 						if (mouse_device.y < 0) mouse_device.y = 0;
 
-						if (mouse_device.x > vbe_info->width-16) mouse_device.x = vbe_info->width-16;
-						if (mouse_device.y > vbe_info->height-16) mouse_device.y = vbe_info->height-16;
+						/* The arrow's tip, where clicks land, reaches the last pixel. The rest of the icon goes off screen, where drawing is clipped */
+						if (mouse_device.x > vbe_info->width-1-VESA_CURSOR_HOTSPOT_X) mouse_device.x = vbe_info->width-1-VESA_CURSOR_HOTSPOT_X;
+						if (mouse_device.y > vbe_info->height-1-VESA_CURSOR_HOTSPOT_Y) mouse_device.y = vbe_info->height-1-VESA_CURSOR_HOTSPOT_Y;
 
 						mouse_device.received = 0;
 						mouse_device.cycle = 0;
