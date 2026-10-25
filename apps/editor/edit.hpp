@@ -156,7 +156,7 @@ private:
     int m_dragScroll;
     int m_dragX;
     char m_currentPath[FS_PATH_MAX];
-    /* An error is on the status line, which the next redraw leaves in place instead of drawing the file's name */
+    /* A message, like an error, is on the status line, which redraws leave in place of the file's name until the next event */
     int m_keepStatus;
 
     int scrollY;
