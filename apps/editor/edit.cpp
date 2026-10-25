@@ -436,6 +436,7 @@ Editor::Editor()
     m_x = 0;
     m_y = 0;
     m_dirty = 0;
+    m_readOnly = false;
     m_preferredColumn = -1;
     m_selAnchor = -1;
     m_dragging = false;
@@ -1295,15 +1296,19 @@ void Editor::reDraw(int from, int to)
     getCursorLineCol(line, colnum);
 
     const char* file_label = m_currentPath[0] ? m_currentPath : "(untitled)";
-    const char* dirty_tag = hasUnsavedChanges() ? "*" : "";
+    const char* dirty_tag = m_readOnly ? " (read-only)" : hasUnsavedChanges() ? "*" : "";
 
     int sel_start = 0;
     int sel_end = 0;
     bool selected = selectionRange(sel_start, sel_end);
 
-    /* A long path keeps its end, after "...", so the line and column, and how much is selected, stay in view */
+    /**
+     * A long path keeps its end, after "...", so the line and column, and how much is selected, stay in view. Room is
+     * kept for a "*" whether or not there is one, so the path doesn't move when there is
+     */
     const char* dots = "";
-    int room = textClipWidth() / 8 - (int)strlen(selected ? "*  Ln:99999 Col:9999  65535 selected" : "*  Ln:99999 Col:9999");
+    int tag_len = m_readOnly ? (int)strlen(dirty_tag) : 1;
+    int room = textClipWidth() / 8 - tag_len - (int)strlen(selected ? "  Ln:99999 Col:9999  65535 selected" : "  Ln:99999 Col:9999");
     int label_len = strlen(file_label);
     if (room > 4 && label_len > room) {
         file_label += label_len - (room - 3);
@@ -2108,6 +2113,7 @@ void Editor::Reset()
     m_bufferEdit = 0;
     m_fileSize = 0;
     m_dirty = 0;
+    m_readOnly = false;
     m_preferredColumn = -1;
     m_selAnchor = -1;
     scrollY = 0;
@@ -2197,22 +2203,35 @@ bool Editor::Open(char* path)
 
     memset(m_textBuffer, 0, m_bufferSize);
 
+    /* As much as fits. A failed read loads nothing, and leaves no path, so nothing can be saved over the file */
     int read_bytes = 0;
-    if (m_fd >= 0) {
-        read_bytes = read(m_fd, m_textBuffer, m_bufferSize - 1);
-    }
-    if (read_bytes < 0) {
-        read_bytes = 0;
+    int read_error = 0;
+    while (m_fd >= 0 && read_bytes < m_bufferSize - 1) {
+        int ret = read(m_fd, m_textBuffer + read_bytes, m_bufferSize - 1 - read_bytes);
+        if (ret < 0) {
+            read_error = ret;
+        }
+        if (ret <= 0) {
+            break;
+        }
+        read_bytes += ret;
     }
 
-    if (read_bytes >= m_bufferSize) {
-        read_bytes = m_bufferSize - 1;
+    /* A file bigger than the buffer opens read-only, since saving what fits would cut it short (#133) */
+    m_readOnly = false;
+    if (read_error == 0 && m_fd >= 0 && read_bytes == m_bufferSize - 1) {
+        unsigned char more;
+        m_readOnly = read(m_fd, &more, 1) != 0;
+    }
+
+    if (read_error < 0) {
+        read_bytes = 0;
     }
 
     m_textBuffer[read_bytes] = 0;
     m_bufferHead = read_bytes;
 
-    if (!ropeLoadFromBuffer(m_textBuffer, m_bufferHead)) {
+    if (read_error < 0 || !ropeLoadFromBuffer(m_textBuffer, m_bufferHead)) {
         if (m_fd >= 0) {
             fclose(m_fd);
             m_fd = -1;
@@ -2227,9 +2246,14 @@ bool Editor::Open(char* path)
         m_selAnchor = -1;
         scrollY = 0;
         m_scrollWrap = 0;
-        drawStatusLine(COLOR_VGA_RED, "Out of memory while loading file.");
+        m_readOnly = false;
         reDrawHeader();
         reDraw(0, m_bufferHead);
+        if (read_error < 0) {
+            drawStatusLine(COLOR_VGA_RED, "Can't read %s: %s", absolute, error_get_string(read_error));
+        } else {
+            drawStatusLine(COLOR_VGA_RED, "Out of memory while loading file.");
+        }
         return false;
     }
 
@@ -2247,6 +2271,14 @@ bool Editor::Open(char* path)
         drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "New file: F1 saves it to disk.");
         m_keepStatus = 1;
     }
+    if (m_readOnly) {
+        static struct fs_dirent info;
+        if (stat(m_currentPath, &info) >= 0) {
+            drawStatusLine(COLOR_VGA_RED, "Read-only: showing %d of %d bytes.", m_bufferHead, (int)info.size);
+        } else {
+            drawStatusLine(COLOR_VGA_RED, "Read-only: showing the first %d bytes.", m_bufferHead);
+        }
+    }
     return true;
 }
 
@@ -2259,6 +2291,11 @@ bool Editor::Save()
 {
     if (m_fd < 0 && m_currentPath[0] == 0) {
         drawStatusLine(COLOR_VGA_RED, "No open file. Use F4 to open/create one.");
+        return false;
+    }
+
+    if (m_readOnly) {
+        drawStatusLine(COLOR_VGA_RED, "Read-only: too big for the Editor to save.");
         return false;
     }
 
@@ -2999,6 +3036,11 @@ void Editor::putChar(unsigned char c, int modifiers)
 
     /* Typing, Enter, Tab, Backspace and Delete replace or delete the selection */
     bool edits = c == '\b' || c == KEY_DELETE || c == '\n' || c == '\t' || (c >= 32 && c <= 126);
+    if (m_readOnly && (edits || c == CTRLX || c == CTRLV)) {
+        /* Typing into a file that can't be saved would lose the typing */
+        drawStatusLine(COLOR_VGA_RED, "Read-only: too big for the Editor to save.");
+        return;
+    }
     if (edits && deleteSelection()) {
         if (c == '\b' || c == KEY_DELETE) {
             ensureCursorVisible(visibleColumns(), visibleLines());
