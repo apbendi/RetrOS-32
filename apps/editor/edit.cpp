@@ -2314,19 +2314,9 @@ bool Editor::Open(char* path)
             fclose(m_fd);
             m_fd = -1;
         }
-        m_currentPath[0] = 0;
-        m_textBuffer[0] = 0;
-        m_bufferHead = 0;
-        m_bufferEdit = 0;
-        m_fileSize = 0;
-        m_dirty = 0;
-        m_preferredColumn = -1;
-        m_selAnchor = -1;
-        scrollY = 0;
-        m_scrollWrap = 0;
-        m_readOnly = false;
-        reDrawHeader();
-        reDraw(0, m_bufferHead);
+        /* An empty, untitled text. After a failed read the rope still holds the last file, which Reset empties too */
+        setTitle("Editor");
+        Reset();
         if (read_error < 0) {
             drawStatusLine(COLOR_VGA_RED, "Can't read %s: %s", absolute, error_get_string(read_error));
         } else {
