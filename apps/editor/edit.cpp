@@ -644,7 +644,8 @@ int Editor::nextVisualRowStart(int row_start_index, int cols) const
         idx++;
         col++;
         if (col >= cols) {
-            return idx;
+            /* As reDraw lays rows out: a newline after a full row ends it, rather than making a row of its own (#130) */
+            return idx < m_bufferHead && m_textBuffer[idx] == '\n' ? idx + 1 : idx;
         }
     }
 
@@ -705,6 +706,7 @@ void Editor::cursorFromViewStart(int view_start, int cols, int* out_row, int* ou
         return;
     }
 
+    /* As reDraw lays rows out: a full row continues on the next only when a character other than a newline follows */
     int limit = clampInt(m_bufferEdit, 0, m_bufferHead);
     for (int i = view_start; i < limit; i++) {
         unsigned char ch = m_textBuffer[i];
@@ -714,11 +716,20 @@ void Editor::cursorFromViewStart(int view_start, int cols, int* out_row, int* ou
             continue;
         }
 
-        col++;
         if (col >= cols) {
             row++;
             col = 0;
         }
+        col++;
+    }
+
+    /**
+     * After a full row, the cursor is on the next character, at the start of the next row. Before a newline or the
+     * end of the text, it stays past the row's end, at column cols, where reDraw draws it in the right margin
+     */
+    if (col >= cols && limit < m_bufferHead && m_textBuffer[limit] != '\n') {
+        row++;
+        col = 0;
     }
 
     *out_row = row;
@@ -1273,6 +1284,12 @@ void Editor::reDraw(int from, int to)
     if (cursor_row >= 0 && cursor_row < draw_rows) {
         int cx = text_x + (cursor_col * 8);
         int cy = HEADER_HEIGHT + (cursor_row * 8);
+
+        /* At the end of a full row, the cursor is past it, in the right margin, which is narrower than a character */
+        int right = TREE_VIEW_WIDTH + c_width;
+        if (cx > text_x + (cols * 8) - 8 && cx < right) {
+            gfx_draw_rectangle(cx, cy, minInt(8, right - cx), 8, COLOR_VGA_LIGHT_GRAY);
+        }
 
         if (cx <= text_x + (cols * 8) - 8) {
             gfx_draw_rectangle(cx, cy, 8, 8, COLOR_VGA_LIGHT_GRAY);
