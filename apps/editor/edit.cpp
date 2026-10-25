@@ -437,6 +437,7 @@ Editor::Editor()
     m_y = 0;
     m_dirty = 0;
     m_readOnly = false;
+    m_autoBraceCount = 0;
     m_preferredColumn = -1;
     m_selAnchor = -1;
     m_dragging = false;
@@ -1536,6 +1537,42 @@ void Editor::ropeClear()
 
     m_ropeHead = nullptr;
     m_ropeTail = nullptr;
+    m_autoBraceCount = 0;
+}
+
+/* len characters went in at index: the } at or after it move along */
+void Editor::autoBracesInserted(int index, int len)
+{
+    for (int i = 0; i < m_autoBraceCount; i++) {
+        if (m_autoBraces[i] >= index) {
+            m_autoBraces[i] += len;
+        }
+    }
+}
+
+/* count characters went from index: the } among them are forgotten, and those after them move back */
+void Editor::autoBracesDeleted(int index, int count)
+{
+    int kept = 0;
+    for (int i = 0; i < m_autoBraceCount; i++) {
+        int at = m_autoBraces[i];
+        if (at >= index && at < index + count) {
+            continue;
+        }
+        m_autoBraces[kept++] = at >= index + count ? at - count : at;
+    }
+    m_autoBraceCount = kept;
+}
+
+/* @return which of m_autoBraces is the } at index, or -1 if that's not one typing { added */
+int Editor::autoBraceAt(int index) const
+{
+    for (int i = m_autoBraceCount - 1; i >= 0; i--) {
+        if (m_autoBraces[i] == index) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 bool Editor::ropeLoadFromBuffer(const unsigned char* data, int len)
@@ -1619,6 +1656,17 @@ bool Editor::ropeSyncToBuffer()
 }
 
 bool Editor::ropeInsertChar(int index, unsigned char c)
+{
+    if (!ropeAddChar(index, c)) {
+        return false;
+    }
+
+    autoBracesInserted(index, 1);
+    return true;
+}
+
+/* Inserts c at index in the rope. ropeInsertChar also moves the } kept in m_autoBraces */
+bool Editor::ropeAddChar(int index, unsigned char c)
 {
     if (m_bufferHead >= m_bufferSize - 1) {
         return false;
@@ -1781,6 +1829,7 @@ bool Editor::ropeDeleteChar(int index)
     memmove(&node->data[offset], &node->data[offset + 1], node->len - offset - 1);
     node->len--;
     m_bufferHead--;
+    autoBracesDeleted(index, 1);
 
     if (node->len <= 0) {
         ropeDetachNode(node);
@@ -1828,6 +1877,8 @@ bool Editor::ropeDeleteRange(int index, int count)
         node = next;
         offset = 0;
     }
+
+    autoBracesDeleted(index, count - left);
 
     /* Joins the nodes either side of the gap, if they fit in one */
     if (ropeLocate(index, &node, &offset) && node != nullptr) {
@@ -1929,6 +1980,7 @@ bool Editor::ropeInsertText(int index, const unsigned char* data, int len)
         m_ropeTail = last;
     }
     m_bufferHead += len;
+    autoBracesInserted(index, len);
 
     /* Joins the nodes at either end, if they fit in one */
     if (ropeLocate(index, &node, &offset) && node != nullptr) {
@@ -3041,7 +3093,8 @@ void Editor::putChar(unsigned char c, int modifiers)
         drawStatusLine(COLOR_VGA_RED, "Read-only: too big for the Editor to save.");
         return;
     }
-    if (edits && deleteSelection()) {
+    bool replaced = edits && deleteSelection();
+    if (replaced) {
         if (c == '\b' || c == KEY_DELETE) {
             ensureCursorVisible(visibleColumns(), visibleLines());
             reDraw(0, m_bufferHead);
@@ -3082,6 +3135,17 @@ void Editor::putChar(unsigned char c, int modifiers)
     case '\b':
         if (m_bufferEdit <= 0 || m_bufferHead <= 0) {
             return;
+        }
+
+        /* Right after a {, the } that typing it added goes too */
+        if (m_textBuffer[m_bufferEdit - 1] == '{' && autoBraceAt(m_bufferEdit) >= 0) {
+            if (ropeDeleteRange(m_bufferEdit - 1, 2)) {
+                m_bufferEdit--;
+                m_dirty = 1;
+                m_preferredColumn = -1;
+                buffer_changed = true;
+            }
+            break;
         }
 
         if (ropeDeleteChar(m_bufferEdit - 1)) {
@@ -3208,6 +3272,20 @@ void Editor::putChar(unsigned char c, int modifiers)
             return;
         }
 
+        /* A } typed where there's one that typing { added steps over it, so a block typed in full ends with one (#119) */
+        if (c == '}' && !replaced && m_textBuffer[m_bufferEdit] == '}') {
+            int brace = autoBraceAt(m_bufferEdit);
+            if (brace >= 0) {
+                for (int i = brace; i < m_autoBraceCount - 1; i++) {
+                    m_autoBraces[i] = m_autoBraces[i + 1];
+                }
+                m_autoBraceCount--;
+                m_bufferEdit++;
+                m_preferredColumn = -1;
+                break;
+            }
+        }
+
         if (!ropeInsertChar(m_bufferEdit, c)) {
             return;
         }
@@ -3215,9 +3293,13 @@ void Editor::putChar(unsigned char c, int modifiers)
         m_bufferEdit++;
         buffer_changed = true;
 
-        if (c == '{' && m_bufferHead < m_bufferSize - 1) {
-            ropeInsertChar(m_bufferEdit, '}');
-            buffer_changed = true;
+        if (c == '{' && ropeInsertChar(m_bufferEdit, '}')) {
+            /* Kept track of until it's typed over or deleted. With too many blocks open, the oldest is forgotten */
+            if (m_autoBraceCount == EDITOR_AUTO_BRACES_MAX) {
+                memmove(&m_autoBraces[0], &m_autoBraces[1], (EDITOR_AUTO_BRACES_MAX - 1) * sizeof(int));
+                m_autoBraceCount--;
+            }
+            m_autoBraces[m_autoBraceCount++] = m_bufferEdit;
         }
 
         m_dirty = 1;
