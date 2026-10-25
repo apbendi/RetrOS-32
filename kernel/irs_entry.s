@@ -102,6 +102,12 @@ isr_entry:
   call isr_handler
 
   popl	%ds
+  /**
+   * load_data_segments set ES too, so it gets DS back as well. Left with the kernel's, the iret into user mode
+   * would null it, and a program's string instructions, which write through ES, would fault on a real CPU
+   */
+  pushl	%ds
+  popl	%es
 
   popal
   add $8, %esp
@@ -142,8 +148,11 @@ _syscall_entry:
     popl	%ecx	/* Arg 2 */
     popl	%ebx	/* Arg 1 */
     popl	%eax	/* Syscall number */
-    
+
     popl	%ds
+    /* ES gets DS back too, as in isr_entry */
+    pushl	%ds
+    popl	%es
 
     popal 
     popfl
