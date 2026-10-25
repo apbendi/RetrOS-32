@@ -50,7 +50,8 @@ struct process* $process = &__process;
  * Current running PCB, used for context aware
  * functions such as windows drawing to the screen.
  */
-const char* pcb_status[] = {"stopped ", "running ", "new     ", "blocked ", "sleeping", "zombie"};
+/* Each 8 characters, for ps's column */
+const char* pcb_status[] = {"stopped ", "running ", "new     ", "blocked ", "sleeping", "zombie  "};
 static int pcb_count = 0;
 
 static void __pcb_free(struct pcb* pcb)

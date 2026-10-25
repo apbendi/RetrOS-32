@@ -226,6 +226,25 @@ void ifconfig()
 EXPORT_KSYMBOL(ifconfig);
 
 /* Shell commands */
+
+/* ps's header, which __ps_row's columns line up under */
+#define PS_HEADER "PID  USER     USAGE  TYPE     STATE     NAME\n"
+
+/* One row of ps. A PID has at most 2 digits (MAX_NUM_OF_PCBS), and the usage at most 3 */
+static void __ps_row(struct pcb_info* info)
+{
+	char pid[12];
+	itoa(info->pid, pid);
+
+	char usage[12];
+	int len = itoa((int)(info->usage*100), usage);
+	usage[len] = '%';
+	usage[len + 1] = 0;
+
+	twritef("%s%s  %8s %s%s  %s  %s  %s\n", text_padding(pid, 3), pid, info->user, text_padding(usage, 5), usage,
+		info->is_process ? "process" : "kthread", pcb_status[info->state], info->name);
+}
+
 void ps(int argc, char* argv[])
 {
 	ubyte_t spin = 0;
@@ -238,13 +257,12 @@ void ps(int argc, char* argv[])
 	if(spin){
 		while(1){
 			$process->current->term->ops->reset($process->current->term);
-			twritef("\nPID  USER    USAGE    TYPE     STATE    NAME    \n");
+			twritef("\n" PS_HEADER);
 			for (int i = 1; i < MAX_NUM_OF_PCBS; i++){
 				struct pcb_info info;
 				int ret = pcb_get_info(i, &info);
 				if(ret < 0) continue;
-				int usage = (int)(info.usage*100);
-				twritef(" %d   %8s %s%d%      %s  %s  %s\n", info.pid, info.user, usage < 10 ? " ": "", usage, info.is_process ? "process" : "kthread", pcb_status[info.state], info.name);
+				__ps_row(&info);
 			}
 
 			$process->current->term->ops->commit($process->current->term);
@@ -269,14 +287,12 @@ void ps(int argc, char* argv[])
 		}
 	}
 
-	//int usage;
-	twritef("\nPID  USER    USAGE    TYPE     STATE     NAME    \n");
+	twritef("\n" PS_HEADER);
 	for (int i = 1; i < MAX_NUM_OF_PCBS; i++){
 		struct pcb_info info;
 		int ret = pcb_get_info(i, &info);
 		if(ret < 0) continue;
-		int usage = (int)(info.usage*100);
-		twritef(" %d   %8s %s%d%      %s  %s  %s\n", info.pid, info.user, usage < 10 ? " ": "", usage, info.is_process ? "process" : "kthread", pcb_status[info.state], info.name);
+		__ps_row(&info);
 	}
 }
 EXPORT_KSYMBOL(ps);

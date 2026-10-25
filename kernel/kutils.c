@@ -192,6 +192,20 @@ struct unit calculate_size_unit(int bytes)
     return unit;
 }
 
+/**
+ * Spaces that pad text out to width characters, for lining up columns: before it to right-align it, or after it to
+ * left-align it. At most 16. twritef has no field widths, except for %s, which it pads after.
+ */
+const char* text_padding(const char* text, int width)
+{
+    static const char spaces[] = "                ";
+    int pad = width - strlen(text);
+
+    if(pad < 0) pad = 0;
+    if(pad > (int)sizeof(spaces) - 1) pad = sizeof(spaces) - 1;
+    return spaces + (sizeof(spaces) - 1 - pad);
+}
+
 unsigned int advanced_hash(const char *input)
 {
     unsigned int hash = 0;

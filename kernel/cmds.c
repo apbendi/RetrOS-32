@@ -74,16 +74,8 @@ static void __fs_cmd_error(const char* cmd, const char* path, int err)
     twritef("%s: %s: %s\n", cmd, path, error_get_string(err));
 }
 
-/* Spaces that pad text out to width characters, for lining up columns. twritef has no field widths. */
-static const char* __padding(const char* text, int width)
-{
-    static const char spaces[] = "                ";
-    int pad = width - strlen(text);
-
-    if(pad < 0) pad = 0;
-    if(pad > (int)sizeof(spaces) - 1) pad = sizeof(spaces) - 1;
-    return spaces + (sizeof(spaces) - 1 - pad);
-}
+/* The digits of ls's sizes: under 1,024 of each unit, so four, up to 4 GB, FAT's largest file, in mb */
+#define LIST_SIZE_DIGITS 4
 
 /* One line of ls: the entry's size, the date and time it was last written, and its name, with "/" for a directory */
 static void __list_entry(const struct fs_dirent* entry)
@@ -96,13 +88,14 @@ static void __list_entry(const struct fs_dirent* entry)
     }
 
     struct unit size_unit = calculate_size_unit(entry->size);
+    char size[12];
+    itoa(size_unit.size, size);
 
-    /* The time is right-aligned, so 12-hour times line up */
-    twritef("%p%s %s%s %s%s  %s%s\n",
-        size_unit.size,
-        size_unit.unit,
-        date, __padding(date, TIME_FORMAT_NUMERIC_DATE_MAX),
-        __padding(time, TIME_FORMAT_TIME_MAX), time,
+    /* The size and the time are right-aligned, so the numbers and 12-hour times line up */
+    twritef("%s%s%s %s%s %s%s  %s%s\n",
+        text_padding(size, LIST_SIZE_DIGITS), size, size_unit.unit,
+        date, text_padding(date, TIME_FORMAT_NUMERIC_DATE_MAX),
+        text_padding(time, TIME_FORMAT_TIME_MAX), time,
         entry->name,
         entry->attributes & FS_ATTR_DIRECTORY ? "/" : ""
     );
@@ -118,7 +111,9 @@ static int __list_path(const char* path)
         return -1;
     }
 
-    twritef("Size    Date%s %sTime  Name\n", __padding("Date", TIME_FORMAT_NUMERIC_DATE_MAX), __padding("Time", TIME_FORMAT_TIME_MAX));
+    /* The size's digits and its unit, of two characters */
+    twritef("%sSize Date%s %sTime  Name\n", text_padding("Size", LIST_SIZE_DIGITS + 2),
+        text_padding("Date", TIME_FORMAT_NUMERIC_DATE_MAX), text_padding("Time", TIME_FORMAT_TIME_MAX));
     if(!(entry.attributes & FS_ATTR_DIRECTORY)){
         __list_entry(&entry);
         return 0;

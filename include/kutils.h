@@ -173,6 +173,7 @@ struct unit {
     int size;
 };
 struct unit calculate_size_unit(int bytes);
+const char* text_padding(const char* text, int width);
 
 struct kref {
     int refs;
