@@ -246,8 +246,12 @@ static error_t sched_round_robin(struct scheduler* sched)
                  * or has exited. This is where the PCB is cleaned up.
                  * The ZOMBIE pcb will not be scheduled again and a work thread will deal with cleaning up the pcb.
                  * This is because we want to spend as little time as possible in the scheduler.
+                 * With the work pool full, e.g. when a process with many threads exits, it goes back on the queue to
+                 * be tried again once workd has made room, rather than never being cleaned up (#78).
                  */
-                work_queue_add(&pcb_cleanup_routine, (void*)((int)next->pid), NULL);
+                if(work_queue_add(&pcb_cleanup_routine, (void*)((int)next->pid), NULL) < 0){
+                    sched->queue->ops->push(sched->queue, next);
+                }
             }
             break;
         /* If next is sleeping, check if it should be woken up */
