@@ -110,7 +110,7 @@ public:
         gfx_draw_pixel(x, y, color);
     }
 	
-	void setTitle(char* name){
+	void setTitle(const char* name){
 		gfx_set_title(name);
 	}
 
