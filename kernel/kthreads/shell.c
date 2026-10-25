@@ -517,28 +517,45 @@ COMMAND(dns, {
 	twritef("%s IN (A) %i\n", argv[1], val);
 })
 
+/**
+ * A command's one argument, as a number. atoi finds 0 in anything without digits, and overflows on too many.
+ * @return the number, or -1 unless there's exactly one argument, of 1 to 9 digits
+ */
+static int __number_argument(int argc, char* argv[])
+{
+	int length = argc == 2 ? strlen(argv[1]) : 0;
+	bool_t number = length > 0 && length < 10;
+	for (int i = 0; i < length && number; i++){
+		number = isdigit(argv[1][i]);
+	}
+	return number ? atoi(argv[1]) : -1;
+}
+
+/* Sets the theme by the number ths lists */
 void th(int argc, char* argv[])
 {
-	int id = atoi(argv[1]);
-	kernel_gfx_set_theme(id);
+	int total = gfx_total_themes();
+	int id = __number_argument(argc, argv);
+	if(id < 0){
+		twritef("usage: th <theme>, 0 to %d, which ths lists\n", total - 1);
+		return;
+	}
+
+	if(kernel_gfx_set_theme(id) < 0){
+		twritef("There's no theme %d. ths lists them, 0 to %d.\n", id, total - 1);
+	}
 }
 EXPORT_KSYMBOL(th);
 
 /* Kills a thread or program by the pid ps lists */
 void kill(int argc, char* argv[])
 {
-	/* atoi finds 0, idled's pid, in anything without digits, and overflows on too many */
-	int length = argc == 2 ? strlen(argv[1]) : 0;
-	bool_t number = length > 0 && length < 10;
-	for (int i = 0; i < length && number; i++){
-		number = isdigit(argv[1][i]);
-	}
-	if(!number){
+	int pid = __number_argument(argc, argv);
+	if(pid < 0){
 		twritef("usage: kill <pid>\n");
 		return;
 	}
 
-	int pid = atoi(argv[1]);
 	switch (pcb_kill(pid)){
 	case ERROR_OK:
 		break;

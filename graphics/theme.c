@@ -134,7 +134,7 @@ struct gfx_theme* kernel_gfx_default_theme()
 
 int kernel_gfx_set_theme(int index)
 {
-    if(index >= total_themes)
+    if(index < 0 || index >= total_themes)
         return -1;
     current_theme = gfx_themes[index];
     return 0;
@@ -142,7 +142,7 @@ int kernel_gfx_set_theme(int index)
 
 struct gfx_theme* kernel_gfx_get_theme(int index)
 {
-    if(index >= total_themes)
+    if(index < 0 || index >= total_themes)
         return NULL;
     return gfx_themes[index];
 }
