@@ -166,6 +166,7 @@ static struct pcb* __pcb_get_free()
 			pcb->argv = NULL;
 			pcb->yields = 0;
 			pcb->in_kernel = false;
+			pcb->kill_pending = false;
 
 			return pcb;
 		}
@@ -330,7 +331,20 @@ error_t pcb_kill(int pid)
 	} else if(pcb == $process->current){
 		/* It would run on as a zombie until it set its own state again */
 		ret = -ERROR_INVALID_ARGUMENTS;
+	} else if(pcb->is_process != PCB_KTHREAD && pcb->in_kernel){
+		/**
+		 * A program in a system call may hold kernel locks, like the window's buffer_lock a write to its terminal
+		 * takes. It exits when the call returns (system_call), and calls that wait stop waiting (#132). Waking it
+		 * ends a sleep or a wait for an event. One waiting for a mutex isn't in the scheduler's queue until it gets
+		 * the lock, so waking it changes nothing.
+		 */
+		pcb->kill_pending = true;
+		if(pcb->state == SLEEPING || pcb->state == BLOCKED) pcb->state = RUNNING;
 	} else {
+		/**
+		 * A program in user mode holds no kernel locks. A kernel thread is always in the kernel, with no safe point to
+		 * stop at, so one killed holding a lock leaves it taken: only the terminal's is released (terminal_release_window)
+		 */
 		pcb->state = ZOMBIE;
 	}
 	LEAVE_CRITICAL();
@@ -389,6 +403,8 @@ int pcb_await(int pid)
 		pcb_table[pid].state != STOPPED &&
 		pcb_table[pid].state != ZOMBIE
 	){
+		/* A kill waits for the call to return */
+		if($process->current->kill_pending) return -1;
 		kernel_yield();
 	}
 	return 0;

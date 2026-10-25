@@ -172,7 +172,11 @@ int gfx_event_loop(struct gfx_event* event, gfx_event_flag_t flags)
 	 */
 	while(1){
 		if($process->current->gfx_window->events.tail == $process->current->gfx_window->events.head){
-			
+			/* A program killed while it waits exits when the call returns (pcb_kill) */
+			if($process->current->kill_pending){
+				return -1;
+			}
+
 			if(flags & GFX_EVENT_BLOCKING){
 				/* FIXME: Should not global block, perhaps window manager block queue? */
 				$process->current->state = BLOCKED;

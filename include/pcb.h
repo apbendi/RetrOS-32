@@ -84,6 +84,8 @@ struct pcb {
 
     /* PCBs that fault in kernel panic. */
     bool_t in_kernel;
+    /* Killed in a system call, which it finishes first, to release the kernel locks it holds (pcb_kill) */
+    bool_t kill_pending;
 
     /* stats */
     int kallocs;
