@@ -369,7 +369,8 @@ static int wm_default_draw(struct windowmanager* wm, struct window* window)
  */
 static void __wm_push_mouse(struct window* w, uint8_t event, int x, int y, int clicks)
 {
-    int offset = HAS_FLAG(w->flags, GFX_HIDE_HEADER) ? 0 : 8;
+    /* A fullscreen window's content starts at the screen's top left corner, not 8 px into the window */
+    int offset = (w->is_fullscreen || HAS_FLAG(w->flags, GFX_HIDE_HEADER)) ? 0 : 8;
     struct gfx_event e = {
         .data = (uint16_t)(int16_t)(x - (w->x + offset)),
         .data2 = (uint16_t)(int16_t)(y - (w->y + offset)),
@@ -388,6 +389,25 @@ static bool_t __wm_over_content(struct window* w, int x, int y)
     int cx = x - (w->x + offset);
     int cy = y - (w->y + offset);
     return cx >= 0 && cy >= 0 && cx < w->inner_width && cy < w->inner_height;
+}
+
+/**
+ * Counts a press on a window, and returns it: 1, or one more than the last if that was on the same window, soon
+ * after and near it. A fourth starts again. The caller holds interrupts off, so ws_remove can't clear the state
+ * between the check and the update.
+ */
+static int __wm_count_press(struct windowmanager* wm, struct window* window, int x, int y)
+{
+    int now = timer_get_tick();
+    bool_t again = window == wm->click_window && now - wm->click_tick <= WM_MULTI_CLICK_MS
+        && ABS(x - wm->click_x) <= WM_MULTI_CLICK_DISTANCE && ABS(y - wm->click_y) <= WM_MULTI_CLICK_DISTANCE;
+    wm->click_count = again && wm->click_count < 3 ? wm->click_count + 1 : 1;
+    wm->click_window = window;
+    wm->click_tick = now;
+    wm->click_x = x;
+    wm->click_y = y;
+
+    return wm->click_count;
 }
 
 static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char flags)
@@ -511,21 +531,24 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
         window->ops->mousedown(window, x, y);
 
         /* A press on the content, rather than one that grabbed the title bar or the corner, starts a drag for the window */
+        bool_t drag = 0;
+        int clicks = 0;
         if(wm->pressed_window == window && window->is_moving.state != GFX_WINDOW_MOVING && !window->resize && __wm_over_content(window, x, y)){
-            /* Soon after the last press, near it and on the same window, is a double or triple click. A fourth starts again */
-            int now = timer_get_tick();
-            bool_t again = window == wm->click_window && now - wm->click_tick <= WM_MULTI_CLICK_MS
-                && ABS(x - wm->click_x) <= WM_MULTI_CLICK_DISTANCE && ABS(y - wm->click_y) <= WM_MULTI_CLICK_DISTANCE;
-            wm->click_count = again && wm->click_count < 3 ? wm->click_count + 1 : 1;
-            wm->click_window = window;
-            wm->click_tick = now;
-            wm->click_x = x;
-            wm->click_y = y;
+            /* ws_remove may have cleared the press since the check above, so check again with interrupts off */
+            ENTER_CRITICAL();
+            if(wm->pressed_window == window && !window->removed){
+                clicks = __wm_count_press(wm, window, x, y);
 
-            wm->dragging = 1;
-            wm->drag_x = x;
-            wm->drag_y = y;
-            __wm_push_mouse(window, GFX_EVENT_MOUSE_DOWN, x, y, wm->click_count);
+                wm->dragging = 1;
+                wm->drag_x = x;
+                wm->drag_y = y;
+                drag = 1;
+            }
+            LEAVE_CRITICAL();
+        }
+
+        if(drag){
+            __wm_push_mouse(window, GFX_EVENT_MOUSE_DOWN, x, y, clicks);
         }
 
         /* If clicked window is not in front, push it. */
@@ -536,6 +559,119 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
 
     /* always send a hover event */
     window->ops->hover(window, x, y);
+
+    return ERROR_OK;
+}
+
+/**
+ * Clears the mouse state when entering or leaving fullscreen. A press can't carry over from one mode to the other:
+ * a window it was moving stops following the cursor where it is, and a resize outline is dropped. mouse_state is left
+ * set, so the rest of a held press is ignored until its release.
+ *
+ * If the press was a drag on a window's content, returns that window and the coordinates for the MOUSE_UP it still
+ * needs. Otherwise returns NULL.
+ */
+struct window* wm_reset_mouse(struct windowmanager* wm, int x, int y, int* rel_x, int* rel_y)
+{
+    ERR_ON_NULL_PTR(wm);
+
+    struct window* pressed = wm->pressed_window;
+    struct window* drag = NULL;
+
+    if(pressed != NULL && wm->dragging){
+        drag = pressed;
+        if(rel_x != NULL && rel_y != NULL){
+            int offset = (pressed->is_fullscreen || HAS_FLAG(pressed->flags, GFX_HIDE_HEADER)) ? 0 : 8;
+            *rel_x = x - (pressed->x + offset);
+            *rel_y = y - (pressed->y + offset);
+        }
+    }
+
+    if(pressed != NULL){
+        if(pressed->is_moving.state == GFX_WINDOW_MOVING){
+            pressed->is_moving.state = GFX_WINDOW_STATIC;
+            pressed->changed = 1;
+        }
+        if(pressed->resize){
+            pressed->resize = 0;
+            pressed->changed = 1;
+        }
+    }
+
+    wm->pressed_window = NULL;
+    wm->dragging = 0;
+    wm->click_window = NULL;
+    wm->click_count = 0;
+
+    return drag;
+}
+
+/**
+ * Sends the mouse to a fullscreen window. Its content covers the screen from its top left corner, so x and y on the
+ * screen are where they are in the content. It has no title bar or resize corner while fullscreen, so the press, moves
+ * and release go to its app without clicking its buttons, moving it or bringing it to the front.
+ */
+int wm_fullscreen_mouse_event(struct windowmanager* wm, struct window* window, int x, int y, char flags)
+{
+    ERR_ON_NULL(wm);
+    ERR_ON_NULL(window);
+
+    /* The release goes to the window that got the press, and is a click wherever the mouse is: it fills the screen */
+    if(!(flags & MOUSE_LEFT) && wm->mouse_state == 1){
+        struct window* pressed = wm->pressed_window;
+        bool_t dragging = wm->dragging;
+        wm->mouse_state = 0;
+        wm->pressed_window = NULL;
+        wm->dragging = 0;
+
+        if(pressed == window){
+            if(dragging){
+                __wm_push_mouse(window, GFX_EVENT_MOUSE_UP, x, y, 0);
+            }
+
+            struct gfx_event e = {
+                .data = CLAMP(x, 0, window->inner_width),
+                .data2 = CLAMP(y, 0, window->inner_height),
+                .event = GFX_EVENT_MOUSE
+            };
+            gfx_push_event(window, &e);
+        }
+
+        return ERROR_OK;
+    }
+
+    /* Moves go to the window while the button is held after a press on its content */
+    if((flags & MOUSE_LEFT) && wm->dragging && wm->pressed_window == window && (x != wm->drag_x || y != wm->drag_y)){
+        wm->drag_x = x;
+        wm->drag_y = y;
+        __wm_push_mouse(window, GFX_EVENT_MOUSE_MOVE, x, y, 0);
+    }
+
+    if((flags & MOUSE_LEFT) && wm->mouse_state == 0){
+        /**
+         * The window may have been destroyed since ws_draw found it fullscreen. Then it's waiting to be freed (#16),
+         * so don't keep a pointer to it past this frame. ws_remove clears pressed_window and click_window with
+         * interrupts off, so checking and setting with interrupts off sees one or the other.
+         */
+        ENTER_CRITICAL();
+        if(window->removed){
+            LEAVE_CRITICAL();
+            return ERROR_OK;
+        }
+
+        wm->mouse_state = 1;
+        wm->pressed_window = window;
+        int clicks = __wm_count_press(wm, window, x, y);
+
+        /* Every press on the content starts a drag: the window's content is the whole screen */
+        wm->dragging = 1;
+        wm->drag_x = x;
+        wm->drag_y = y;
+
+        LEAVE_CRITICAL();
+
+        __wm_push_mouse(window, GFX_EVENT_MOUSE_DOWN, x, y, clicks);
+    }
 
     return ERROR_OK;
 }

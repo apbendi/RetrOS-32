@@ -24,7 +24,10 @@ static int ws_init(struct windowserver* ws);
 static int ws_add(struct windowserver* ws, struct window* window);
 static int ws_remove(struct windowserver* ws, struct window* window);
 static int ws_fullscreen(struct windowserver* ws, struct window* window);
-static void __ws_leave_fullscreen(struct windowserver* ws);
+static struct window* __ws_enter_fullscreen(struct windowserver* ws, struct window* window,
+                                            int mouse_x, int mouse_y, int* rel_x, int* rel_y);
+static struct window* __ws_leave_fullscreen(struct windowserver* ws, int mouse_x, int mouse_y,
+                                            int* rel_x, int* rel_y);
 static int ws_set_background(struct windowserver* ws, color_t color);
 static int ws_set_background_file(struct windowserver* ws, const char* path);
 static int ws_draw(struct windowserver* ws);
@@ -134,7 +137,8 @@ static int ws_remove(struct windowserver* ws, struct window* window)
         ws->_wm->click_window = NULL;
     }
     if(ws->_fullscreen == window){
-        __ws_leave_fullscreen(ws);
+        int rel_x, rel_y;
+        __ws_leave_fullscreen(ws, ws->m.x+VESA_CURSOR_HOTSPOT_X, ws->m.y+VESA_CURSOR_HOTSPOT_Y, &rel_x, &rel_y);
     }
     LEAVE_CRITICAL();
 
@@ -170,9 +174,15 @@ static void __ws_free_windows(struct windowserver* ws)
     }
 }
 
-/* Points the window at the composition buffer, at screen size, and saves what it had */
-static void __ws_enter_fullscreen(struct windowserver* ws, struct window* window)
+/**
+ * Points the window at the composition buffer, at screen size, and saves what it had. Returns the window to send a
+ * MOUSE_UP to if a drag was in progress, with its coordinates in rel_x and rel_y.
+ */
+static struct window* __ws_enter_fullscreen(struct windowserver* ws, struct window* window,
+                                            int mouse_x, int mouse_y, int* rel_x, int* rel_y)
 {
+    struct window* drag = wm_reset_mouse(ws->_wm, mouse_x, mouse_y, rel_x, rel_y);
+
     ws->_saved.inner = window->inner;
     ws->_saved.inner_width = window->inner_width;
     ws->_saved.inner_height = window->inner_height;
@@ -189,12 +199,19 @@ static void __ws_enter_fullscreen(struct windowserver* ws, struct window* window
     window->is_fullscreen = 1;
 
     ws->_fullscreen = window;
+
+    return drag;
 }
 
-/* Gives the fullscreen window back what it had before, and composites the desktop again */
-static void __ws_leave_fullscreen(struct windowserver* ws)
+/**
+ * Gives the fullscreen window back what it had before, and composites the desktop again. Returns the window to send
+ * a MOUSE_UP to if a drag was in progress, with its coordinates in rel_x and rel_y.
+ */
+static struct window* __ws_leave_fullscreen(struct windowserver* ws, int mouse_x, int mouse_y,
+                                            int* rel_x, int* rel_y)
 {
     struct window* window = ws->_fullscreen;
+    struct window* drag = wm_reset_mouse(ws->_wm, mouse_x, mouse_y, rel_x, rel_y);
 
     window->inner = ws->_saved.inner;
     window->inner_width = ws->_saved.inner_width;
@@ -207,6 +224,8 @@ static void __ws_leave_fullscreen(struct windowserver* ws)
 
     ws->_fullscreen = NULL;
     ws->window_changes = 1;
+
+    return drag;
 }
 
 /**
@@ -231,6 +250,11 @@ static int ws_fullscreen(struct windowserver* ws, struct window* window)
         return -ERROR_INVALID_ARGUMENTS;
     }
 
+    int mouse_x = ws->m.x+VESA_CURSOR_HOTSPOT_X;
+    int mouse_y = ws->m.y+VESA_CURSOR_HOTSPOT_Y;
+    int rel_x = 0, rel_y = 0;
+    struct window* drag = NULL;
+
     /* The window's owner may be drawing into it on its own thread, so swap buffers between its draws */
     spin_lock(&window->buffer_lock);
 
@@ -243,13 +267,24 @@ static int ws_fullscreen(struct windowserver* ws, struct window* window)
         return -ERROR_WINDOW_NOT_FOUND;
     }
     if(ws->_fullscreen == window){
-        __ws_leave_fullscreen(ws);
+        drag = __ws_leave_fullscreen(ws, mouse_x, mouse_y, &rel_x, &rel_y);
     } else {
-        __ws_enter_fullscreen(ws, window);
+        drag = __ws_enter_fullscreen(ws, window, mouse_x, mouse_y, &rel_x, &rel_y);
     }
     LEAVE_CRITICAL();
 
     spin_unlock(&window->buffer_lock);
+
+    /* A drag the swap interrupted still needs its release, before the window gets its resolution event */
+    if(drag != NULL){
+        struct gfx_event e = {
+            .data = (uint16_t)(int16_t)rel_x,
+            .data2 = (uint16_t)(int16_t)rel_y,
+            .flags = kb_get_modifiers(),
+            .event = GFX_EVENT_MOUSE_UP
+        };
+        gfx_push_event(drag, &e);
+    }
 
     return ERROR_OK;
 }
@@ -364,6 +399,11 @@ static int __ws_key_event(struct windowserver* ws, unsigned char key, unsigned c
     case ALT_2:
     case ALT_3:
     case ALT_4:{
+            /* While fullscreen, keys belong to the fullscreen window. F10 is how to leave it. */
+            if(ws->_fullscreen != NULL){
+                break;
+            }
+
             /* Alt+1 to Alt+4 pick a workspace. F4 used to cycle through them, but apps need F4 (#89). */
             int workspace = key - ALT_1;
             if(workspace == ws->workspace || workspace >= WM_MAX_WORKSPACES){
@@ -387,7 +427,7 @@ static int __ws_key_event(struct windowserver* ws, unsigned char key, unsigned c
         break;
     case ALT_F4:{
             /* What the close button does. Windows without one, the taskbar and the login and message boxes, stay. */
-            struct window* w = ws->_wm->windows;
+            struct window* w = ws->_fullscreen != NULL ? ws->_fullscreen : ws->_wm->windows;
             if(w == NULL || HAS_FLAG(w->flags, GFX_HIDE_HEADER) || HAS_FLAG(w->flags, GFX_NO_OPTIONS)){
                 break;
             }
@@ -425,19 +465,23 @@ static int __ws_key_event(struct windowserver* ws, unsigned char key, unsigned c
         wm_log_windows(ws->_wm);
         break;
     case ALT_TAB: {
+            /* While fullscreen, keys belong to the fullscreen window. F10 is how to leave it. */
+            if(ws->_fullscreen != NULL){
+                break;
+            }
             dbgprintf("[WSERVER] Switching focus.\n");
             struct windowmanager* wm = ws->_wm;
             wm->ops->push_back(wm, wm->windows);
         }
         break;
     default: {
-            /* sends keyboard event to userspace */
+            /* sends keyboard event to userspace, to the fullscreen window if there is one */
             struct gfx_event e = {
                 .data = key,
                 .flags = modifiers,
                 .event = GFX_EVENT_KEYBOARD
             };
-            gfx_push_event(ws->_wm->windows, &e);
+            gfx_push_event(ws->_fullscreen != NULL ? ws->_fullscreen : ws->_wm->windows, &e);
         }
         break;
     }
@@ -460,8 +504,11 @@ static int ws_draw(struct windowserver* ws)
     if(kb_get_key(&key)){
         __ws_key_event(ws, key.key, key.modifiers);
     }
-    
-    if((ws->window_changes || mouse_changed ) && ws->_fullscreen == NULL){
+
+    /* Read after the keys, since F10 can change it in this frame */
+    struct window* fullscreen = ws->_fullscreen;
+
+    if((ws->window_changes || mouse_changed ) && fullscreen == NULL){
         memcpy(ws->_wm->composition_buffer, ws->background, ws->_wm->composition_buffer_size);
 
         /* write current workspace at the right bottom of screen, numbered from 1 like Alt+1 to Alt+4 */
@@ -482,7 +529,13 @@ static int ws_draw(struct windowserver* ws)
 
     if(mouse_changed){
         /* internal mouse event for windows, at the cursor's arrow tip */
-        ws->_wm->ops->mouse_event(ws->_wm, ws->m.x+VESA_CURSOR_HOTSPOT_X, ws->m.y+VESA_CURSOR_HOTSPOT_Y, ws->m.flags);
+        int x = ws->m.x+VESA_CURSOR_HOTSPOT_X;
+        int y = ws->m.y+VESA_CURSOR_HOTSPOT_Y;
+        if(fullscreen != NULL){
+            wm_fullscreen_mouse_event(ws->_wm, fullscreen, x, y, ws->m.flags);
+        } else {
+            ws->_wm->ops->mouse_event(ws->_wm, x, y, ws->m.flags);
+        }
     }
     //vesa_put_icon16((uint8_t*)vbe_info->framebuffer, ws->m.x, ws->m.y);
 

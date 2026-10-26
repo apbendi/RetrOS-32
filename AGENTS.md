@@ -188,6 +188,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **No resizing:** while `is_fullscreen` is set, `gfx_window_resize` refuses, since it would free the composition buffer.
   - **Closing it:** `ws_remove` leaves fullscreen before the window's buffer is freed.
   - **The taskbar** (`GFX_IS_IMMUATABLE`) doesn't go fullscreen.
+  - **Input:** while fullscreen, mouse events go straight to the fullscreen window at screen coordinates, without hit-testing other windows or its title-bar buttons. Keys go to it too. Alt+Tab and Alt+1 to Alt+4 are ignored, and Alt+F4 closes the fullscreen window. A press in progress is dropped when entering or leaving, with a `GFX_EVENT_MOUSE_UP` sent to a drag it interrupted.
 - **Moving:** `is_moving.x`/`y` hold where the title bar was grabbed, relative to the window's position. `gfx_default_hover` keeps that point under the cursor, clamping each axis to the screen on its own, so a window pushed against an edge slides along it. The whole window stays on screen. Drawing is clipped (#4), so that's for usability, not safety. #18 covers letting windows hang off the edge.
 
 **Drawing:**

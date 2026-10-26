@@ -112,6 +112,9 @@ struct wm_window_info {
 int wm_get_windows(struct windowmanager* wm, struct wm_window_info* out, int max);
 void wm_log_windows(struct windowmanager* wm);
 
+struct window* wm_reset_mouse(struct windowmanager* wm, int x, int y, int* rel_x, int* rel_y);
+int wm_fullscreen_mouse_event(struct windowmanager* wm, struct window* window, int x, int y, char flags);
+
 int wm_destroy(struct windowmanager* wm);
 
 /* TODO: remove when not needed anymore */
