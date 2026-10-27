@@ -288,11 +288,9 @@ static int vmem_free_page_region(struct pcb* pcb, struct vmem_page_region* regio
 	return 0;
 }
 
+/* Frees a PCB's malloc allocations and its list of them. The heap's page table stays: vmem_cleanup_process frees a process's, and a kernel thread's is the kernel's own (#65). */
 int vmem_free_allocations(struct pcb* pcb)
 {
-	uint32_t heap_table = (uint32_t)pcb->page_dir[DIRECTORY_INDEX(VMEM_HEAP)] & ~PAGE_MASK;
-	assert(heap_table != 0);
-
 	if(pcb->allocations->head == NULL){
 		kfree(pcb->allocations);
 		return 0;
@@ -317,8 +315,6 @@ int vmem_free_allocations(struct pcb* pcb)
 		kfree(old);
 	}
 
-	vmem_default->ops->free(vmem_default, (void*) heap_table);
-	
 	/* Free allocation list */
 	kfree(pcb->allocations);
 
@@ -902,9 +898,15 @@ void vmem_cleanup_process(struct pcb* pcb)
 	dbgprintf("[Memory] Cleaning up stack from pcb [DONE].\n");
 
 	/**
-	 * Free all heap allocated memory.
+	 * Free all heap allocated memory, then the heap's page table,
+	 * which every process has, even one that never allocated (#65).
+	 * Freeing the allocations unmaps their pages through the table, so it goes last.
 	 */
+	uint32_t* heap_table = vmem_get_page_table(pcb, VMEM_HEAP);
+	assert(heap_table != NULL);
 	vmem_free_allocations(pcb);
+	vmem_default->ops->free(vmem_default, heap_table);
+	freed_pages++;
 
 	dbgprintf("[Memory] Cleaning up allocations from pcb [DONE].\n");
 
