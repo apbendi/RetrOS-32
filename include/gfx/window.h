@@ -145,6 +145,15 @@ struct window {
 
     unsigned char flags;
     char changed;
+
+    /**
+     * Set while the window is a terminal's screen. A terminal draws a whole frame in one commit, clearing changed
+     * first and setting it after, so the window server can copy it once changed is set even while its owner runs.
+     */
+    bool_t frames_atomic;
+
+    /* Set while a terminal's commit is drawing into the window, so the window server doesn't copy a half-drawn frame */
+    bool_t drawing;
 };
 
 

@@ -489,6 +489,38 @@ static int __ws_key_event(struct windowserver* ws, unsigned char key, unsigned c
     return ERROR_OK;
 }
 
+/**
+ * Copies a fullscreen frame to the framebuffer, with the cursor in it. The window's owner draws into the composition
+ * buffer itself, so the cursor can't be left there: its pixels are saved, the cursor drawn, the frame copied, and the
+ * pixels put back. Interrupts are off, so the owner can't draw while its buffer has the cursor in it (#165).
+ */
+static void __ws_copy_fullscreen(struct windowserver* ws)
+{
+    uint8_t* buffer = ws->_wm->composition_buffer;
+    int x = ws->m.x;
+    int y = ws->m.y;
+    uint8_t saved[16][16];
+
+    for(int l = 0; l < 16; l++){
+        for(int i = 0; i < 16; i++){
+            if(vesa_on_screen(x+i, y+l)){
+                saved[l][i] = *getpixel(buffer, x+i, y+l, vbe_info->pitch);
+            }
+        }
+    }
+
+    vesa_put_icon16(buffer, x, y);
+    xmemcpy((uint8_t*)vbe_info->framebuffer, buffer, ws->_wm->composition_buffer_size);
+
+    for(int l = 0; l < 16; l++){
+        for(int i = 0; i < 16; i++){
+            if(vesa_on_screen(x+i, y+l)){
+                putpixel(buffer, x+i, y+l, saved[l][i], vbe_info->pitch);
+            }
+        }
+    }
+}
+
 static int ws_draw(struct windowserver* ws)
 {
     ERR_ON_NULL(ws);
@@ -522,9 +554,29 @@ static int ws_draw(struct windowserver* ws)
     kernel_yield();
 
     ENTER_CRITICAL();
-    /* Copy buffer over to framebuffer. */
-    xmemcpy((uint8_t*)vbe_info->framebuffer, ws->_wm->composition_buffer, ws->_wm->composition_buffer_size);
-
+    /* Read again: the window may have been removed during the yield above, which leaves fullscreen */
+    struct window* now = ws->_fullscreen;
+    if(now == NULL){
+        /* Copy buffer over to framebuffer. */
+        xmemcpy((uint8_t*)vbe_info->framebuffer, ws->_wm->composition_buffer, ws->_wm->composition_buffer_size);
+    } else if(now->changed || mouse_changed){
+        /**
+         * A fullscreen window draws into the composition buffer itself, so copy it only once the frame is done.
+         * Copying mid-draw would put half-drawn frames on screen, making a selection drag or a full redraw flicker.
+         *
+         * A terminal draws a whole frame in one commit, with drawing set meanwhile, so it's copied as soon as
+         * changed is set. That's needed when a program draws into a shell's terminal while the shell is running,
+         * waiting for it in pcb_await. Any other window is copied once its owner waits for input or sleeps.
+         *
+         * The cursor goes into the copy, so it doesn't flash (#165).
+         */
+        bool_t ready = now->frames_atomic ? !now->drawing
+                                          : (now->owner == NULL || now->owner->state != RUNNING);
+        if(ready){
+            now->changed = 0;
+            __ws_copy_fullscreen(ws);
+        }
+    }
     LEAVE_CRITICAL();
 
     if(mouse_changed){
@@ -537,7 +589,6 @@ static int ws_draw(struct windowserver* ws)
             ws->_wm->ops->mouse_event(ws->_wm, x, y, ws->m.flags);
         }
     }
-    //vesa_put_icon16((uint8_t*)vbe_info->framebuffer, ws->m.x, ws->m.y);
 
     return ERROR_OK;
 }

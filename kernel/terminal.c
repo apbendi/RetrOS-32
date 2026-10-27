@@ -377,6 +377,8 @@ void terminal_release_window(struct terminal* term, struct pcb* pcb)
 	if(term == NULL) return;
 
 	if(term->lock_owner == pcb){
+		/* A commit killed mid-draw leaves drawing set, which would keep the window server from copying its screen */
+		if(term->screen != NULL) term->screen->drawing = false;
 		term->lock_owner = NULL;
 		term->lock_depth = 0;
 		spin_unlock(&term->lock);
@@ -384,6 +386,7 @@ void terminal_release_window(struct terminal* term, struct pcb* pcb)
 
 	terminal_lock(term);
 	if(term->screen != NULL && term->screen == pcb->gfx_window){
+		term->screen->frames_atomic = false;
 		term->screen = NULL;
 	}
 	terminal_unlock(term);
@@ -1400,6 +1403,10 @@ static int __terminal_attach(struct terminal* term)
 
 	if(term->screen == NULL){
 		term->screen = $process->current->gfx_window;
+		if(term->screen != NULL){
+			/* Its commits draw a whole frame, so the window server can copy it once changed is set (#165) */
+			term->screen->frames_atomic = true;
+		}
 	}
 
 	return 0;
@@ -1410,7 +1417,10 @@ static int __terminal_detach(struct terminal* term)
 	if(term == NULL) return -1;
 
 	$process->current->term = NULL;
-	term->screen = NULL;
+	if(term->screen != NULL){
+		term->screen->frames_atomic = false;
+		term->screen = NULL;
+	}
 
 	terminal_put(term);
 
@@ -1456,10 +1466,19 @@ static int __terminal_commit_graphics(struct terminal* term)
 		return -1;
 	}
 
+	/**
+	 * Clear changed and mark the frame as drawing, so the window server doesn't copy a half-drawn frame: it copies
+	 * once changed is set again, after the draw. A fullscreen window draws straight into the composition buffer, so
+	 * a program selecting text while its shell is blocked would otherwise flicker (#165).
+	 */
+	screen->changed = 0;
+	screen->drawing = true;
+
 	if(__terminal_draw_changes(term, screen) < 0){
 		__terminal_draw_all(term, screen);
 	}
 	screen->changed = 1;
+	screen->drawing = false;
 	terminal_unlock(term);
 
 	return 0;
