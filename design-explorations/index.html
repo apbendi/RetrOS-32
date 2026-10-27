@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OgOs Logo Directions</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="assets/dashboard.css">
+</head>
+<body>
+
+<header class="wrap masthead">
+  <div>
+    <h1 id="title" aria-label="OgOs"></h1>
+    <p class="lede">
+      <b>100 logo and brand directions</b> for the operating system formerly known as RetrOS-32.
+      The name is settled, the capitalization isn't: pick a case in the bar below and every design
+      that can redraws itself in it. Star the ones you like, then copy your shortlist.
+    </p>
+  </div>
+  <div class="risk-meter" id="summary"></div>
+</header>
+
+<div class="bar">
+  <div class="wrap">
+    <label class="search">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 1a5.5 5.5 0 0 1 4.38 8.82l3.65 3.65-1.06 1.06-3.65-3.65A5.5 5.5 0 1 1 6.5 1Zm0 1.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/></svg>
+      <input id="q" type="search" placeholder="Search names, ideas, fonts" autocomplete="off" aria-label="Search directions">
+    </label>
+    <div class="field">
+      <span class="label">Case</span>
+      <div class="seg case" id="case" role="group" aria-label="Capitalization"></div>
+    </div>
+    <div class="field">
+      <span class="label">Ground</span>
+      <div class="seg" id="ground" role="group" aria-label="Background"></div>
+    </div>
+    <span class="spacer"></span>
+    <button class="btn" id="starOnly" aria-pressed="false"><span class="star">★</span> Shortlist <span class="mono" id="starCount">0</span></button>
+    <button class="btn" id="copy">Copy shortlist</button>
+    <span class="count" id="count"></span>
+  </div>
+</div>
+
+<div class="wrap filters" id="filters">
+  <div id="filterbox"></div>
+  <div class="viewopts">
+    <div class="field">
+      <label class="label" for="group">Group</label>
+      <select id="group">
+        <option value="none">None</option>
+        <option value="family">Family</option>
+        <option value="source">Inspiration</option>
+        <option value="risk">Risk</option>
+        <option value="caps">Designed case</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="label" for="sort">Order</label>
+      <select id="sort">
+        <option value="num">Number</option>
+        <option value="name">Name</option>
+        <option value="risk">Safe to wild</option>
+        <option value="shuffle">Shuffled</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="label" for="size">Size</label>
+      <input id="size" type="range" min="200" max="560" step="20" value="300">
+    </div>
+  </div>
+</div>
+
+<main class="wrap" id="main"></main>
+
+<footer class="wrap">
+  <p>
+    Keys: <kbd>/</kbd> search, <kbd>←</kbd> <kbd>→</kbd> previous and next in the open sheet,
+    <kbd>S</kbd> star it, <kbd>Esc</kbd> close. Stars and notes stay in this browser.
+    Every logo is drawn on a 480×300 canvas, VGA's 320×200 shape; mockups in the sheets reuse each
+    direction's own colors.
+  </p>
+</footer>
+
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheetTitle"></div>
+
+<script src="assets/ogos.js"></script>
+<script src="directions/core.js"></script>
+<script src="directions/a-desktops.js"></script>
+<script src="directions/b-machines.js"></script>
+<script src="directions/c-games.js"></script>
+<script src="directions/d-internals.js"></script>
+<script src="directions/e-beyond.js"></script>
+<script src="assets/dashboard.js"></script>
+</body>
+</html>
