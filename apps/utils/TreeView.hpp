@@ -261,7 +261,7 @@ private:
 
     void drawIcon(int x, int y, const unsigned char* icon) {
         for (int i = 0; i < 16*16; i++) {
-            if (icon[i] == 0xff) continue;
+            if (icon[i] == ICON_TRANSPARENT) continue;
             gfx_draw_pixel(x + (i % 16), y + (i / 16), icon[i]);
         }
     }

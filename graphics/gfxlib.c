@@ -129,8 +129,7 @@ int gfx_put_icon16(unsigned char icon[], int x, int y)
 	for (int l = 0; l < 16; l++) {
 
 		for (int i = 0; i < 16; i++) {
-			/* for new icons we use 0xfa for transparent */
-			if (icon[l*16+i] != 0xfa) {
+			if (icon[l*16+i] != ICON_TRANSPARENT) {
 
 				if((x)+i < 0 || (y)+l < 0 || (x)+i >= $process->current->gfx_window->inner_width || (y)+l >= $process->current->gfx_window->inner_height)
 					continue;
@@ -148,8 +147,7 @@ int gfx_put_icon32(unsigned char icon[], int x, int y)
 	for (int l = 0; l < 32; l++) {
 
 		for (int i = 0; i < 32; i++) {
-			/* for new icons we use 0xfa for transparent */
-			if (icon[l*32+i] != 0xfa) {
+			if (icon[l*32+i] != ICON_TRANSPARENT) {
 
 				if((x)+i < 0 || (y)+l < 0 || (x)+i >= $process->current->gfx_window->inner_width || (y)+l >= $process->current->gfx_window->inner_height)
 					continue;

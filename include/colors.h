@@ -21,6 +21,9 @@ enum grays {
 
 #define COLOR_TRANSPARENT 0xFF // 255
 
+/* The byte RGB332 icons use for transparent pixels, since 0xff is white */
+#define ICON_TRANSPARENT 0xfa
+
 #define COLOR_VGA_BG 18
 #define COLOR_VGA_FG 90
 #define COLOR_VGA_MISC 125
