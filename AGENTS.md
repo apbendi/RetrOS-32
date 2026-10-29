@@ -284,6 +284,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 Syscalls run with interrupts enabled, so they can be preempted.
 
 **Mouse:** the window manager remembers which window got the press (`pressed_window`). A release always goes to that window, but it only counts as a click if the cursor is still over it. Clicks are handled at the cursor's arrow tip (`VESA_CURSOR_HOTSPOT_X`/`_Y`).
+- **Reading it:** the driver queues each change of the buttons, folding the moves in between into the newest state, and `ws_draw` handles every queued state each frame (`mouse_get_event`). So a press and release within one long frame still make a click.
 - **Clicks:** `GFX_EVENT_MOUSE` is a click, at `data`, `data2` in the window's content. It's sent on the release.
 - **Dragging:** a press on a window's content, not one that grabs its title bar or resize corner, starts a drag (`wm->dragging`). The window gets:
   - `GFX_EVENT_MOUSE_DOWN` where the press was;
