@@ -129,11 +129,11 @@ int gfx_put_icon16(unsigned char icon[], int x, int y)
 	for (int l = 0; l < 16; l++) {
 
 		for (int i = 0; i < 16; i++) {
-			if (icon[l*16+i] != ICON_TRANSPARENT) {
+			if (icon[l*16+i] != COLOR_TRANSPARENT) {
 
 				if((x)+i < 0 || (y)+l < 0 || (x)+i >= $process->current->gfx_window->inner_width || (y)+l >= $process->current->gfx_window->inner_height)
 					continue;
-				putpixel($process->current->gfx_window->inner, (x)+i, (y)+l, rgb_to_vga(icon[l*16+i]), $process->current->gfx_window->pitch);
+				putpixel($process->current->gfx_window->inner, (x)+i, (y)+l, icon[l*16+i], $process->current->gfx_window->pitch);
 			}
 		}
 	}
@@ -147,11 +147,11 @@ int gfx_put_icon32(unsigned char icon[], int x, int y)
 	for (int l = 0; l < 32; l++) {
 
 		for (int i = 0; i < 32; i++) {
-			if (icon[l*32+i] != ICON_TRANSPARENT) {
+			if (icon[l*32+i] != COLOR_TRANSPARENT) {
 
 				if((x)+i < 0 || (y)+l < 0 || (x)+i >= $process->current->gfx_window->inner_width || (y)+l >= $process->current->gfx_window->inner_height)
 					continue;
-				putpixel($process->current->gfx_window->inner, (x)+i, (y)+l, rgb_to_vga(icon[l*32+i]), $process->current->gfx_window->pitch);
+				putpixel($process->current->gfx_window->inner, (x)+i, (y)+l, icon[l*32+i], $process->current->gfx_window->pitch);
 			}
 		}
 	}
@@ -258,7 +258,7 @@ int kernel_gfx_draw_bitmap(struct window* w, int x, int y, int width, int height
 	int i, j;
 	for (j = y; j < (y+height); j++)
 		for (i = x; i < (x+width); i++)
-			putpixel(w->inner, i, j, rgb_to_vga(bitmap[(j-y)*width+(i-x)]), w->pitch);
+			putpixel(w->inner, i, j, bitmap[(j-y)*width+(i-x)], w->pitch);
 
 	spin_unlock(&w->buffer_lock);
 	return 0;
