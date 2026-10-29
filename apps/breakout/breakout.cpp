@@ -41,14 +41,16 @@
 #define START_LIVES 3
 #define POINTS_PER_BRICK 10
 
-/* Shape colors are 8-bit RGB (RRRGGGBB), the text color is a VGA palette index */
-#define BG_COLOR 0x00
-#define HUD_COLOR 0x49
-#define PADDLE_COLOR 0xDB
-#define BALL_COLOR 0xFF
+/* Colors are palette indexes */
+#define BG_COLOR COLOR_BLACK
+/* Dark gray */
+#define HUD_COLOR 8
+#define PADDLE_COLOR COLOR_WHITE
+#define BALL_COLOR COLOR_WHITE
 #define TEXT_COLOR COLOR_WHITE
 
-static const unsigned char brick_colors[BRICK_ROWS] = { 0xE0, 0xF0, 0xFC, 0x1C };
+/* Red, orange, yellow and green */
+static const unsigned char brick_colors[BRICK_ROWS] = { 39, 43, 44, 48 };
 
 enum GameState {
     STATE_SERVE,    /* ball rests on the paddle until space is pressed */
@@ -371,7 +373,7 @@ private:
         if (right <= left || bottom <= top) {
             return;
         }
-        gfx_draw_rectangle_rgb(left, top, right - left, bottom - top, color);
+        gfx_draw_rectangle(left, top, right - left, bottom - top, color);
     }
 };
 
