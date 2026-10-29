@@ -36,9 +36,10 @@ struct ps2_mouse {
     uint8_t cycle;
     struct ps2_mouse_packet packet;
     short x, y;
-    uint8_t received;
     uint8_t initilized;
 };
+
+#define MOUSE_BUTTONS (MOUSE_LEFT | MOUSE_RIGHT | MOUSE_MIDDLE)
 
 struct mouse {
     int x, y;

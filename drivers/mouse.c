@@ -29,12 +29,39 @@ static struct ps2_mouse mouse_device = {
 	},
 	.x = 0,
 	.y = 0,
-	.received = 0,
 	.initilized = 0,
 	.cycle = 0
 };
 
-#define MAX_MOUSE_EVENTS 15
+/**
+ * The states mouse_get_event hasn't returned yet, oldest first. A new state only moves the newest one when it has the
+ * same buttons, so each press and release is kept: the window server reads the mouse once a frame, and a click that
+ * came and went within one frame used to be lost. Full, it drops the oldest.
+ */
+#define MOUSE_QUEUE_SIZE 16
+static struct mouse __mouse_queue[MOUSE_QUEUE_SIZE];
+static int __mouse_queue_head = 0;
+static int __mouse_queue_count = 0;
+
+/* Called from the interrupt handler, so with interrupts off */
+static void __mouse_queue_push(struct mouse state)
+{
+	if(__mouse_queue_count > 0){
+		struct mouse* newest = &__mouse_queue[(__mouse_queue_head + __mouse_queue_count - 1) % MOUSE_QUEUE_SIZE];
+		if((newest->flags & MOUSE_BUTTONS) == (state.flags & MOUSE_BUTTONS)){
+			*newest = state;
+			return;
+		}
+	}
+
+	if(__mouse_queue_count == MOUSE_QUEUE_SIZE){
+		__mouse_queue_head = (__mouse_queue_head + 1) % MOUSE_QUEUE_SIZE;
+		__mouse_queue_count--;
+	}
+
+	__mouse_queue[(__mouse_queue_head + __mouse_queue_count) % MOUSE_QUEUE_SIZE] = state;
+	__mouse_queue_count++;
+}
 
 /* static helper functions wait / write /read */
 
@@ -74,23 +101,21 @@ static uint8_t mouse_read()
     return inportb(0x60);
 }
 
-/* main API to get a mouse event */
+/* Takes the oldest state not returned yet into m, and returns 1, or returns 0 if the mouse hasn't changed since */
 int mouse_get_event(struct mouse* m)
 {
-	if(mouse_device.received == 1)
-		return 0;
-	
-	struct mouse event = {
-		.flags = mouse_device.packet.flags,
-		.x = mouse_device.x,
-		.y = mouse_device.y
-	};
-	
-	*m = event;
+	int got = 0;
 
-	mouse_device.received = 1;
+	ENTER_CRITICAL();
+	if(__mouse_queue_count > 0){
+		*m = __mouse_queue[__mouse_queue_head];
+		__mouse_queue_head = (__mouse_queue_head + 1) % MOUSE_QUEUE_SIZE;
+		__mouse_queue_count--;
+		got = 1;
+	}
+	LEAVE_CRITICAL();
 
-	return 1;
+	return got;
 }
 
 void __int_handler __mouse_handler()
@@ -132,7 +157,12 @@ void __int_handler __mouse_handler()
 						if (mouse_device.x > vbe_info->width-1-VESA_CURSOR_HOTSPOT_X) mouse_device.x = vbe_info->width-1-VESA_CURSOR_HOTSPOT_X;
 						if (mouse_device.y > vbe_info->height-1-VESA_CURSOR_HOTSPOT_Y) mouse_device.y = vbe_info->height-1-VESA_CURSOR_HOTSPOT_Y;
 
-						mouse_device.received = 0;
+						struct mouse state = {
+							.x = mouse_device.x,
+							.y = mouse_device.y,
+							.flags = mouse_device.packet.flags
+						};
+						__mouse_queue_push(state);
 						mouse_device.cycle = 0;
 					}
 					break;

@@ -541,7 +541,8 @@ static int ws_draw(struct windowserver* ws)
         LEAVE_CRITICAL();
     }
 
-    if(mouse_changed){
+    /* Every state the mouse driver queued, in order, so a click that came and went within this frame isn't lost */
+    while(mouse_changed){
         /* internal mouse event for windows, at the cursor's arrow tip */
         int x = ws->m.x+VESA_CURSOR_HOTSPOT_X;
         int y = ws->m.y+VESA_CURSOR_HOTSPOT_Y;
@@ -550,6 +551,7 @@ static int ws_draw(struct windowserver* ws)
         } else {
             ws->_wm->ops->mouse_event(ws->_wm, x, y, ws->m.flags);
         }
+        mouse_changed = mouse_get_event(&ws->m);
     }
 
     return ERROR_OK;
