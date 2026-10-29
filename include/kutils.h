@@ -184,8 +184,6 @@ int kref_put(struct kref* ref);
 int kref_init(struct kref* ref);
 
 int align_to_pointer_size(int size);
-unsigned char*  encode_run_length(const unsigned char* data, int length, unsigned char* out, int* encodedLength);
-unsigned char* decode_run_length(const unsigned char* encodedData, int encodedLength, unsigned char* out, int* decodedLength);
 int exec_cmd(char* str);
 void kernel_panic(const char* reason);
 void system_reboot();

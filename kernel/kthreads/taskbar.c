@@ -45,14 +45,8 @@ static void __callback taskbar_cube();
 static void __callback taskbar_colors();
 static void __callback taskbar_clock();
 static void __callback taskbar_wolfstein();
-static void __callback taskbar_bg_lotr();
-static void __callback taskbar_bg_lotr2();
-static void __callback taskbar_bg_default();
-static void __callback taskbar_bg_retro();
 static void __callback taskbar_bg_calc();
 static void __callback taskbar_users();
-static void __callback taskbar_bg_default_color();
-static void __callback taskbar_bg_default_color_gray();
 static void __callback taskbar_sysinf();
 static void __callback taskbar_about();
 static void __callback taskbar_readme();
@@ -165,41 +159,6 @@ struct taskbar_options {
                 },
             }
         },
-        // {
-        //     .x = 120,
-        //     .y = 2,
-        //     .w = 100,
-        //     .h = 16,
-        //     .icon = bin_16,
-        //     .name = "Wallpaper",
-        //     .options = {
-        //         {
-        //             .icon = bin_16,
-        //             .name = "Turquoise",
-        //             .callback = &taskbar_bg_default_color
-        //         },
-        //         {
-        //             .icon = bin_16,
-        //             .name = "Gray",
-        //             .callback = &taskbar_bg_default_color_gray
-        //         },
-        //         {
-        //             .icon = bin_16,
-        //             .name = "LOTR 1",
-        //             .callback = &taskbar_bg_lotr
-        //         },
-        //         {
-        //             .icon = bin_16,
-        //             .name = "LOTR 2",
-        //             .callback = &taskbar_bg_lotr2
-        //         },
-        //         {
-        //             .icon = bin_16,
-        //             .name = "Retro",
-        //            .callback = taskbar_bg_retro
-        //         },
-        //     }
-        // },
         {
             .x = 185,
             .y = 2,
@@ -498,42 +457,9 @@ static void __callback taskbar_clock()
     start("kclock", 0, NULL);
 }
 
-static void __attribute__((unused)) __callback taskbar_bg_default()
-{
-    gfx_raw_background("/imgs/snow.bin");
-}
-
-static void __attribute__((unused)) __callback taskbar_bg_lotr()
-{
-    gfx_decode_background_image("/imgs/lotr2.img");
-}
-
-static void __attribute__((unused)) __callback taskbar_bg_lotr2()
-{
-    gfx_decode_background_image("/imgs/lotr3.img");
-}
-
-static void __attribute__((unused)) __callback taskbar_bg_retro()
-{
-    if(vbe_info->height == 480)
-        gfx_raw_background("/imgs/output.bin");
-    else
-        gfx_decode_background_image("/imgs/retro.img");
-}
-
 static void __callback taskbar_users()
 {
     taskbar_start_program("/bin/users.o", "Users");
-}
-
-static void __attribute__((unused)) __callback taskbar_bg_default_color()
-{
-    gfx_set_background_color(3);
-}
-
-static void __attribute__((unused)) __callback taskbar_bg_default_color_gray()
-{
-    gfx_set_background_color(0x17);
 }
 
 static void __callback taskbar_bg_calc()
