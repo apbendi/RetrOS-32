@@ -39,7 +39,7 @@ else
 endif
 
 PROGRAMOBJ := $(addprefix $(BUILD_DIR)/,shell.o networking.o dhcpd.o tcpd.o logd.o taskbar.o about.o)
-GFXOBJ := $(addprefix $(BUILD_DIR)/,window.o component.o composition.o gfxlib.o api.o theme.o core.o)
+GFXOBJ := $(addprefix $(BUILD_DIR)/,window.o component.o composition.o gfxlib.o api.o theme.o core.o icons.o)
 KERNELOBJ := $(addprefix $(BUILD_DIR)/,kernel.o terminal.o helpers.o pci.o virtualdisk.o windowmanager.o images.o vga.o \
 	libc.o interrupts.o irs_entry.o timer.o gdt.o smp.o keyboard.o pcb.o pcb_queue.o memory.o vmem.o kmem.o e1000.o display.o env.o conf.o \
 	sync.o kthreads.o ata.o atapi.o bitmap.o rtc.o tss.o kutils.o login.o cmds.o diskdev.o scheduler.o work.o rbuffer.o errors.o kclock.o tar.o loopback.o \

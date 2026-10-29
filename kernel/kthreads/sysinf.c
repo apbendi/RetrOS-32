@@ -19,6 +19,7 @@
 #include <kutils.h>
 #include <libc.h>
 #include <images.h>
+#include <gfx/icons.h>
 #include <pci.h>
 
 #include <diskdev.h>
@@ -166,7 +167,7 @@ static void sysinf_draw_net(struct window* w, struct tab* tab)
 
     SECTION(w, 24, 48, WIDTH-48, HEIGHT/3-48, "Stats");
 
-    w->draw->image(w, WIDTH/2 + 40, 45+10, &wlan_32);
+    w->draw->image(w, WIDTH/2 + 40, 45+10, icon_get("wlan_32"));
 
     w->draw->textf(w, 30, 45+10, 0,     "TX:        %d", info.sent);
     w->draw->textf(w, 30, 45+20, 0,     "RX:        %d", info.recvd);
@@ -243,13 +244,13 @@ static void sysinf_draw_dev(struct window* w, struct tab* tab)
         const struct image* icon;
         switch (devices[i].class){
         case 0x6:
-            icon = &menu_16;
+            icon = icon_get("menu_16");
             break;
         case 0x2:
-            icon = &wlan_16;
+            icon = icon_get("wlan_16");
             break;
         default:
-            icon = &desktop_16;
+            icon = icon_get("desktop_16");
             break;
         }
 
@@ -291,7 +292,7 @@ static void sysinf_draw_display(struct window* w, struct tab* tab)
     w->draw->textf(w, 30, 45+30, 0,     "Depth:    %d", info.bpp);
 
 
-    w->draw->image(w, WIDTH/2 + 40, 45+10, &screen_32);
+    w->draw->image(w, WIDTH/2 + 40, 45+10, icon_get("screen_32"));
 
     /* Colors */
     SECTION(w, 24, HEIGHT/3+10, WIDTH-48, HEIGHT-48, "Colors - VGA");

@@ -18,8 +18,8 @@ failed=0
 pass() { echo "ok   $1"; }
 fail() { echo "FAIL $1"; failed=1; }
 
-# The reader: files of every layout, damaged files, and every image in images/
-"$OUT/test_bmp" images/*.bmp || failed=1
+# The reader: files of every layout, damaged files, and every image in images/ and rootfs/sysutil/icons/
+"$OUT/test_bmp" images/*.bmp rootfs/sysutil/icons/*.bmp || failed=1
 
 # Round trips: palette indexes to a BMP and back, at widths that need each amount of row padding
 for size in 1x1 2x3 3x5 4x4 16x16 16x21 32x32 85x95 255x2 256x256; do
@@ -51,7 +51,11 @@ refuse "$TOOL" check "$OUT/short.bmp"
 # A color table that isn't the VGA palette, entry 1's blue changed, is read with its colors mapped to the palette
 cp "$OUT/ok.bmp" "$OUT/table.bmp"
 printf '\x00' | dd of="$OUT/table.bmp" bs=1 seek=$((54 + 4)) conv=notrunc 2>/dev/null
-if "$TOOL" check "$OUT/table.bmp" | grep -q "mapped to the palette"; then pass "check: other colors"; else fail "check: other colors"; fi
+if "$TOOL" check "$OUT/table.bmp" | grep -q "mapped to the palette"; then
+    pass "check: other colors"
+else
+    fail "check: other colors"
+fi
 # 24 bits a pixel
 cp "$OUT/ok.bmp" "$OUT/bpp.bmp"
 printf '\x18' | dd of="$OUT/bpp.bmp" bs=1 seek=28 conv=notrunc 2>/dev/null

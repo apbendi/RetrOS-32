@@ -23,7 +23,7 @@
 #include <kutils.h>
 #include <kthreads.h>
 #include <gfx/composition.h>
-#include <images.h>
+#include <gfx/icons.h>
 #include <scheduler.h>
 #include <msgbox.h>
 
@@ -60,14 +60,16 @@ static void __kthread_entry taskbar(void);
 /* taskbar options */
 struct taskbar_option {
     char name[50];
-    const struct image* icon;
+    /* An image in ICONS_DIR */
+    const char* icon;
     void (*callback)(void);
 };
 
 /* taskbar header */
 struct taskbar_header {
     char name[50];
-    const struct image* icon;
+    /* An image in ICONS_DIR */
+    const char* icon;
     int x, y, w, h;
     bool_t extended;
     struct taskbar_option options[TASKBAR_MAX_OPTIONS];
@@ -84,55 +86,55 @@ struct taskbar_options {
             .w = 86,
             .h = 16,
             .name = "Start",
-            .icon = &menu_16,
+            .icon = "menu_16",
             .options = {
                 {
-                    .icon = &terminal_16,
+                    .icon = "terminal_16",
                     .name = "Terminal",
                     .callback = &taskbar_terminal
                 },
                 {
-                    .icon = &finder_16,
+                    .icon = "finder_16",
                     .name = "Finder",
                     .callback = &taskbar_finder
                 },
                 {
-                    .icon = &desktop_16,
+                    .icon = "desktop_16",
                     .name = "SysInfo",
                     .callback = &taskbar_sysinf
                 },
                 {
-                    .icon = &editor_16,
+                    .icon = "editor_16",
                     .name = "Editor",
                     .callback = &taskbar_editor
                 },
                 {
-                    .icon = &bin_16,
+                    .icon = "bin_16",
                     .name = "Cube",
                     .callback = &taskbar_cube
                 },
                 {
-                    .icon = &bin_16,
+                    .icon = "bin_16",
                     .name = "Colors",
                     .callback = &taskbar_colors
                 },
                 {
-                    .icon = &clock_16,
+                    .icon = "clock_16",
                     .name = "Clock",
                     .callback = &taskbar_clock
                 },
                 {
-                    .icon = &calc_16,
+                    .icon = "calc_16",
                     .name = "Calc",
                     .callback = &taskbar_bg_calc
                 },
                 {
-                    .icon = &bin_16,
+                    .icon = "bin_16",
                     .name = "Users",
                     .callback = &taskbar_users
                 },
                 {
-                    .icon = &bin_16,
+                    .icon = "bin_16",
                     .name = "Wolfstein",
                     .callback = &taskbar_wolfstein
                 }
@@ -144,16 +146,16 @@ struct taskbar_options {
             .y = 2,
             .w = 95,
             .h = 16,
-            .icon = &desktop_16,
+            .icon = "desktop_16",
             .name = "RetrOS",
             .options = {
                 {
-                    .icon = &desktop_16,
+                    .icon = "desktop_16",
                     .name = "Reboot",
                     .callback = &taskbar_reboot
                 },
                 {
-                    .icon = &desktop_16,
+                    .icon = "desktop_16",
                     .name = "Shutdown",
                     .callback = &taskbar_shutdown
                 },
@@ -164,32 +166,32 @@ struct taskbar_options {
             .y = 2,
             .w = 60,
             .h = 16,
-            .icon = &bin_16,
+            .icon = "bin_16",
             .name = "Help",
             .options = {
                 {
-                    .icon = &desktop_16,
+                    .icon = "desktop_16",
                     .name = "About",
                     .callback = &taskbar_about
                 },
                 {
-                    .icon = &desktop_16,
+                    .icon = "desktop_16",
                     .name = "Readme",
                     .callback = &taskbar_readme
                 },
                 {
-                    .icon = &desktop_16,
+                    .icon = "desktop_16",
                     .name = "Workspace",
                     .callback = &taskbar_workspaces
                 },
 
                 {
-                    .icon = &desktop_16,
+                    .icon = "desktop_16",
                     .name = "Reboot",
                     .callback = &taskbar_reboot
                 },
                 {
-                    .icon = &desktop_16,
+                    .icon = "desktop_16",
                     .name = "Shutdown",
                     .callback = &taskbar_shutdown
                 }, 
@@ -235,7 +237,8 @@ static void taskbar_hdr_event(struct window* w, struct taskbar_header* header, i
             w->draw->box(w, header->x+4, header->y+20 + (j*TASKBAR_OPTIONS_HEIGHT) + 4, TASKBAR_EXT_OPT_WIDTH-8, 16, 30);
 
             if(header->options[j].icon != NULL){
-                w->draw->image(w, header->x+4, header->y+20 + (j*TASKBAR_OPTIONS_HEIGHT) + 4, header->options[j].icon);
+                w->draw->image(w, header->x+4, header->y+20 + (j*TASKBAR_OPTIONS_HEIGHT) + 4,
+                    icon_get(header->options[j].icon));
             }
             w->draw->text(w, header->x+24, header->y+20 + (j*TASKBAR_OPTIONS_HEIGHT) + 8, header->options[j].name, COLOR_BLACK);
         }
@@ -342,11 +345,12 @@ static void __kthread_entry taskbar(void)
         if(default_taskbar.headers[i].name[0] == 0) continue;
         gfx_button(default_taskbar.headers[i].x + 20, default_taskbar.headers[i].y, default_taskbar.headers[i].w + 16, default_taskbar.headers[i].h, default_taskbar.headers[i].name);
         if(default_taskbar.headers[i].icon != NULL){
-            w->draw->image(w, default_taskbar.headers[i].x+4, default_taskbar.headers[i].y, default_taskbar.headers[i].icon);
+            w->draw->image(w, default_taskbar.headers[i].x+4, default_taskbar.headers[i].y,
+                icon_get(default_taskbar.headers[i].icon));
         }
     }
     
-    w->draw->image(w, timedate_x - 20, 2, &wlan_16);
+    w->draw->image(w, timedate_x - 20, 2, icon_get("wlan_16"));
 
     /* Minute of the last clock redraw, -1 to draw right away */
     int last_minute = -1;
