@@ -26,26 +26,6 @@ static unsigned int get32(const unsigned char* p)
     return p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned int)p[3] << 24);
 }
 
-/* The palette's color nearest red, green and blue from 0 to 255: the lowest index of those equally near */
-static unsigned char nearest(int red, int green, int blue)
-{
-    int best = 0;
-    int best_distance = -1;
-
-    /* 255 is transparent, and the entries before it from 248 are black, which 0 already is */
-    for (int i = 0; i < BMP_TRANSPARENT; i++) {
-        int dr = red - PALETTE_TO_8BIT(vga_palette[i][0]);
-        int dg = green - PALETTE_TO_8BIT(vga_palette[i][1]);
-        int db = blue - PALETTE_TO_8BIT(vga_palette[i][2]);
-        int distance = dr * dr + dg * dg + db * db;
-        if (best_distance < 0 || distance < best_distance) {
-            best = i;
-            best_distance = distance;
-        }
-    }
-    return best;
-}
-
 int bmp_parse(const unsigned char* data, int size, struct bmp_info* info)
 {
     if (data == 0 || info == 0 || size < BMP_FILE_HEADER + BMP_INFO_HEADER || data[0] != 'B' || data[1] != 'M') {
@@ -110,7 +90,7 @@ int bmp_parse(const unsigned char* data, int size, struct bmp_info* info)
         } else {
             const unsigned char* entry = entries + 4 * i;
             int magenta = entry[2] == 255 && entry[1] == 0 && entry[0] == 255;
-            info->colors[i] = magenta ? BMP_TRANSPARENT : nearest(entry[2], entry[1], entry[0]);
+            info->colors[i] = magenta ? BMP_TRANSPARENT : palette_nearest(entry[2], entry[1], entry[0]);
         }
     }
 
