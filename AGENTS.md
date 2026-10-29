@@ -207,15 +207,14 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - `kernel_gfx_draw_line` treats `x` as the **row** and `y` as the column. Kernel callers pass `(row, column)`.
 - The userspace `gfx_draw_line` in `lib/graphics.c` swaps the coordinates first, so apps pass normal `(x, y)`. Don't swap them again in an app.
 
-**Colors** are either a VGA palette index or RGB332, depending on the call:
-
-| Call | Takes |
-|---|---|
-| `gfx_draw_rectangle`, `gfx_draw_line` | VGA (`COLOR_VGA_*`) |
-| `gfx_draw_pixel` | VGA |
-| circles | VGA, passed through unconverted |
-
-The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but not all of them are accurate.
+**Colors** are indexes into the screen's 256-color palette, in every drawing call, the kernel's and apps', and in images. `colors.h` names some: `COLOR_VGA_*`, `COLOR_BLACK` and `COLOR_WHITE`.
+- **The palette** is the standard VGA palette the video BIOS sets up; RetrOS never loads its own.
+  - **0–15:** the 16 EGA colors.
+  - **16–31:** a gray ramp.
+  - **32–247:** 24 hues at three saturations (+0, +24, +48) and three brightnesses (+0, +72, +144). Red is 40, then 112 and 184 darker.
+  - **248–255:** black.
+- **Transparent:** 255, `COLOR_TRANSPARENT`. It isn't drawn in icons, or in the content of a window made with `GFX_IS_TRANSPARENT`, like the taskbar.
+- **Images:** icons (`lib/icons.c`, `apps/utils/TreeView.hpp`, Finder's `rootfs/ico/*.ico`) and the About logo are their pixels' palette indexes, row by row from the top left, with no header.
 
 **Events:**
 - **Reading:** `gfx_get_event(&e, GFX_EVENT_NONBLOCKING)` returns 0 if it got an event and -1 if there was none. On -1 it leaves `e` untouched.
