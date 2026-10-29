@@ -275,6 +275,7 @@ int gfx_draw_format_text(int x, int y, unsigned char color, const char* fmt, ...
 						break;
 					case 's': ;
 						char* str_arg = va_arg(args, char *);
+						if (str_arg == NULL) str_arg = "(null)";
 						gfx_draw_text(x+(x_offset*8), y, str_arg, color);
 						x_offset += strlen(str_arg);
 						break;

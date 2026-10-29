@@ -73,10 +73,16 @@ uint32_t __lz_compress(struct databuffer *input, struct compressed *output) {
     /* Max pointer length */
     max_p_len = 1 << output->ptr_len_width;
 
-    /* Allocate memory for compressed data */
-    output->comp_data = malloc(input->size*2);
+    /*
+     * Worst case is one 3-byte unit per input byte, plus the 5-byte header, since a
+     * unit always writes a pointer and a literal and advances by at least one byte.
+     */
+    if (input->size > (0xFFFFFFFFu - 5) / 3) {
+        return 0;
+    }
+    output->comp_data = malloc(input->size * 3 + 5);
     if (!output->comp_data){
-        return -1;
+        return 0;
     }
     
     *((uint32_t *) output->comp_data) = input->size;  /* Store original size */
@@ -91,9 +97,10 @@ uint32_t __lz_compress(struct databuffer *input, struct compressed *output) {
         for (temp_p_pos = 1; (temp_p_pos < max_p_pos) && (temp_p_pos <= code_pos); temp_p_pos++) {
             look_b = code_pos - temp_p_pos;
             look_a = code_pos;
-            for (temp_p_len = 0; input->data[look_a++] == input->data[look_b++]; ++temp_p_len) {
-                if (temp_p_len == max_p_len)
-                    break;
+            /* Stop at the end of the input, so the match can't read past it */
+            for (temp_p_len = 0; look_a < input->size && temp_p_len < max_p_len && input->data[look_a] == input->data[look_b]; ++temp_p_len) {
+                look_a++;
+                look_b++;
             }
             if (temp_p_len > p_len) {
                 p_pos = temp_p_pos;
@@ -129,38 +136,69 @@ uint32_t __lz_decompress(struct compressed *input, struct databuffer *output) {
     uint16_t in_ptr, p_len, p_pos, len_mask;
     uint32_t comp_pos, code_pos, ptr_offset;
 
+    /* The header is 4 bytes of original size and 1 byte of pointer width */
+    if (input->comp_size < 5) {
+        return 0;
+    }
+
     /* Get original size */
     output->size = *((uint32_t *) input->comp_data);
     /* Get pointer length width */
     ptr_len_width = *(input->comp_data + 4);
+    if (ptr_len_width < 1 || ptr_len_width > 8) {
+        return 0;
+    }
     comp_pos = 5;
     len_mask = (1 << ptr_len_width) - 1;
 
-    /* Allocate memory for decompressed data */
-    output->data = malloc(output->size*2);
+    /* One extra byte, so the result can be printed as a string */
+    output->data = malloc(output->size + 1);
     if (!output->data) {
-        return -1;
+        return 0;
     }
 
     /* Loop to decompress */
     for (code_pos = 0; code_pos < output->size; ++code_pos) {
+        /* A unit is a 2-byte pointer and a literal, so there must be three bytes left */
+        if (comp_pos + 3 > input->comp_size) {
+            free(output->data);
+            output->data = NULL;
+            return 0;
+        }
         in_ptr = *((uint16_t *) (input->comp_data + comp_pos));
         comp_pos += 2;
         p_pos = in_ptr >> ptr_len_width;
         p_len = p_pos ? ((in_ptr & len_mask) + 1) : 0;
-        if (p_pos)
+        if (p_pos) {
+            /* The match has to be inside what's already written, and fit before the literal */
+            if (p_pos > code_pos || p_len > output->size - code_pos) {
+                free(output->data);
+                output->data = NULL;
+                return 0;
+            }
             for (ptr_offset = code_pos - p_pos; p_len > 0; --p_len)
                 output->data[code_pos++] = output->data[ptr_offset++];
-        *(output->data + code_pos) = *(input->comp_data + comp_pos++);
+        }
+        /* There must be room for the literal */
+        if (code_pos >= output->size) {
+            free(output->data);
+            output->data = NULL;
+            return 0;
+        }
+        output->data[code_pos] = input->comp_data[comp_pos++];
     }
 
-    return code_pos;
+    output->data[output->size] = 0;
+
+    return output->size;
 }
 
 /* API for compression */
 uint32_t lz_compress(uint8_t *input, uint32_t input_size, uint8_t **output, int find_best) {
     struct databuffer input_buf = {input, input_size};
     struct compressed output_buf = {0};
+
+    *output = NULL;
 
     if (find_best) {
         output_buf.ptr_len_width = estimate_best_ptr_len_width(&input_buf);
@@ -178,6 +216,8 @@ uint32_t lz_compress(uint8_t *input, uint32_t input_size, uint8_t **output, int 
 uint32_t lz_decompress(uint8_t *input, uint32_t input_size, uint8_t **output) {
     struct compressed input_buf = {input, input_size, 0, 0};
     struct databuffer output_buf = {0};
+
+    *output = NULL;
 
     uint32_t orig_size = __lz_decompress(&input_buf, &output_buf);
     *output = output_buf.data;

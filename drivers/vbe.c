@@ -233,6 +233,7 @@ int vesa_printf(uint8_t* buffer, int32_t x, int32_t y, int color, char* fmt, ...
 						break;
 					case 's': ;
 						char* str_arg = va_arg(args, char *);
+						if (str_arg == NULL) str_arg = "(null)";
 						vesa_write_str(buffer, x+(x_offset*PIXELS_PER_CHAR), y, str_arg, color);
 						x_offset += strlen(str_arg);
 						break;

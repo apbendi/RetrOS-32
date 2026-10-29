@@ -1639,6 +1639,7 @@ static int __terminal_writef(struct terminal* term, char* fmt, ...)
 						break;
 					case 's': ;
 						char* str_arg = va_arg(args, char *);
+						if (str_arg == NULL) str_arg = "(null)";
 						int len = strlen(str_arg);
 						term->ops->write(term, str_arg, len);
 						x_offset += strlen(str_arg);

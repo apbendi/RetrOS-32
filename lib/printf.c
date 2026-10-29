@@ -111,6 +111,7 @@ int printf(const char* fmt, ...)
 						break;
 					case 's': ;
 						char* str_arg = va_arg(args, char *);
+						if (str_arg == NULL) str_arg = "(null)";
 						print(str_arg);
 						x_offset += strlen(str_arg);
 						break;

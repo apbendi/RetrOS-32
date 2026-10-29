@@ -32,6 +32,8 @@
 	EXPORT_KSYMBOL(name);
 
 static int __read_file(char* filename, char** buffer){
+    *buffer = NULL;
+
     int fd = fs_open(filename, FS_FILE_FLAG_READ);
     if(fd < 0){
         twritef("Failed to open file %s\n", filename);
@@ -39,11 +41,25 @@ static int __read_file(char* filename, char** buffer){
     }
 
     int size = fs_size(fd);
-    *buffer = kalloc(size);
+    if(size <= 0){
+        fs_close(fd);
+        twritef("Failed to read file %s\n", filename);
+        return -1;
+    }
+
+    *buffer = kalloc_try(size);
+    if(*buffer == NULL){
+        fs_close(fd);
+        twritef("Not enough memory for %s\n", filename);
+        return -1;
+    }
+
     int len = fs_read(fd, *buffer, size);
     fs_close(fd);
     if(len < 0){
         twritef("Failed to read file %s\n", filename);
+        kfree(*buffer);
+        *buffer = NULL;
         return -1;
     }
 
@@ -384,16 +400,20 @@ EXPORT_KSYMBOL(cp);
 /* prints content of compressed file */
 static int lzcat(int argc, char* argv[]){
     if(argc < 2) {
-        twritef("Usage: lz <file>\n");
+        twritef("Usage: lzcat <file>\n");
         return 1;
     }
-    int8_t* buf;
+    int8_t* buf = NULL;
     int len = __read_file(argv[1], (char**)&buf);
+    if(len < 0) {
+        return -1;
+    }
 
-    int8_t* output;
+    int8_t* output = NULL;
     uint32_t output_size = lz_decompress((uint8_t*)buf, len, (uint8_t**)&output);
-    if(output_size == 0) {
+    if(output_size == 0 || output == NULL) {
         twritef("Failed to decompress file\n");
+        kfree(buf);
         return -1;
     }
 
@@ -411,19 +431,25 @@ static int lz(int argc, char* argv[]){
         twritef("Usage: lz <file> <outfile>\n");
         return 1;
     }
-    int8_t* buf;
+    int8_t* buf = NULL;
     int len = __read_file(argv[1], (char**)&buf);
+    if(len < 0) {
+        return -1;
+    }
 
-    int8_t* output;
+    int8_t* output = NULL;
     uint32_t output_size = lz_compress((uint8_t*)buf, len, (uint8_t**)&output, 0);
-    if(output_size == 0) {
+    if(output_size == 0 || output == NULL) {
         twritef("Failed to compress file\n");
+        kfree(buf);
         return -1;
     }
 
     int ret = __write_file(argv[2], (char *)output, output_size);
     if(ret < 0) {
         twritef("Failed to write compressed file\n");
+        free(output);
+        kfree(buf);
         return -1;
     }
 

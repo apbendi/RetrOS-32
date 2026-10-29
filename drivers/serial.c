@@ -98,6 +98,7 @@ int32_t serial_printf(char* fmt, ...)
 						break;
 					case 's': ;
 						char* str_arg = va_arg(args, char *);
+						if (str_arg == NULL) str_arg = "(null)";
 						serial_write(str_arg);
 						break;
 					case 'c': ;

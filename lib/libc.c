@@ -193,6 +193,7 @@ int32_t csprintf(char *buffer, const char *fmt, va_list args)
                         break;
                     case 's':{
                             char *str_arg = va_arg(args, char*);
+                            if (str_arg == NULL) str_arg = "(null)";
                             while (*str_arg != '\0' && written < MAX_FMT_STR_SIZE - 1) {
                                 buffer[written++] = *str_arg++;
                             }
