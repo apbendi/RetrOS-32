@@ -53,6 +53,15 @@ struct windowserver {
 
     /* Destroyed windows, freed at the start of the next frame, when the window server holds no window pointers */
     struct window* _free;
+
+    /**
+     * What the framebuffer shows: the composition buffer as last copied, with the cursor over it where its top left
+     * corner was then, at _screen_cursor_x and _screen_cursor_y. Copying compares with this rather than reading the
+     * framebuffer back, which is slow on a real card (#163).
+     */
+    uint8_t* _screen;
+    int _screen_cursor_x, _screen_cursor_y;
+
     /* The desktop's color, behind the windows */
     color_t background;
 
@@ -65,6 +74,7 @@ struct windowserver {
 
     /* states */
     struct mouse m;
+    /* Asks for the screen to be composited again, from any thread. ws_draw takes it outside fullscreen. */
     int window_changes;
     
     byte_t flags;

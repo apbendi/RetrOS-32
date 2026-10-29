@@ -109,15 +109,16 @@ void vesa_put_char16(uint8_t* buffer, unsigned char c, int x, int y, int color)
     18, 
 */
 
-void vesa_put_cursor(uint8_t* buffer, int x, int y)
+/**
+ * Draws row l of the mouse cursor, with its left edge at column x, over pixels, which holds the screen's columns from
+ * first up to last. The window server puts the cursor over the screen as it copies it, never into a buffer (#163).
+ */
+void vesa_put_cursor_row(uint8_t* pixels, int first, int last, int x, int l)
 {
-    for (int l = 0; l < VESA_CURSOR_HEIGHT; l++) {
-
-        for (int i = 0; i < VESA_CURSOR_WIDTH; i++) {
-            uint8_t pixel = cursor.pixels[l*VESA_CURSOR_WIDTH + i];
-            if (pixel != COLOR_TRANSPARENT) {
-                vesa_put_pixel(buffer, (x)+i,  (y)+l, pixel);
-            }
+    for (int i = 0; i < VESA_CURSOR_WIDTH; i++) {
+        uint8_t pixel = cursor.pixels[l*VESA_CURSOR_WIDTH + i];
+        if (pixel != COLOR_TRANSPARENT && x+i >= first && x+i < last) {
+            pixels[x+i-first] = pixel;
         }
     }
 }

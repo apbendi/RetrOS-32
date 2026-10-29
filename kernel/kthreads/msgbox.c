@@ -106,6 +106,8 @@ static void __kthread_entry __msgbox(int argc, char* argv[])
         BUTTON(162, 70, "CANCEL");
     }
 
+    /* Kernel drawing doesn't mark the window changed */
+    gfx_commit();
 
     while (1){
         struct gfx_event event;

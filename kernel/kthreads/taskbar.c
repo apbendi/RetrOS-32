@@ -382,7 +382,7 @@ static void __kthread_entry taskbar(void)
             changed = true;
         }
 
-        /* Kernel drawing doesn't mark the window changed, so without this the screen waits for the mouse to move */
+        /* Kernel drawing doesn't mark the window changed, so without this the screen waits for another change */
         if(changed){
             gfx_commit();
         }

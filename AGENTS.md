@@ -191,7 +191,8 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **Copying it:** since the window draws into the composition buffer itself, the window server copies that buffer to the framebuffer only once a frame is complete, and clears the window's `changed` first. Copying mid-draw would put half-drawn frames on screen, so a full redraw or a selection drag would flicker.
     - **A terminal's screen** (`frames_atomic`) draws a whole frame in one commit, with `drawing` set meanwhile, so it's copied as soon as `changed` is set. That covers a program drawing into a shell's terminal while the shell waits in `pcb_await`, where the owner is still `RUNNING`.
     - **Any other window** is copied once its owner waits for input or sleeps (`state != RUNNING`).
-    - **The cursor** is drawn into the copy, with the pixels under it saved and put back, so it can't flash (#165).
+    - **The cursor** goes over the copy, never into the window's buffer, so it can't flash (#165; see "Copying to the screen").
+    - **Interrupts are off** for the copy, so the owner can't start its next frame partway through it.
   - **Terminal commits** clear `screen->changed` and set `screen->drawing` before drawing, then set `changed` and clear `drawing` after, so the window server never copies one mid-redraw.
   - **Input:** while fullscreen, mouse events go straight to the fullscreen window at screen coordinates, without hit-testing other windows or its title-bar buttons. Keys go to it too. Alt+Tab and Alt+1 to Alt+4 are ignored, and Alt+F4 closes the fullscreen window. A press in progress is dropped when entering or leaving, with a `GFX_EVENT_MOUSE_UP` sent to a drag it interrupted.
 - **Moving:** `is_moving.x`/`y` hold where the title bar was grabbed, relative to the window's position. `gfx_default_hover` keeps that point under the cursor, clamping each axis to the screen on its own, so a window pushed against an edge slides along it. The whole window stays on screen. Drawing is clipped (#4), so that's for usability, not safety. #18 covers letting windows hang off the edge.
@@ -247,7 +248,19 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **Modifiers:** the event's `flags` has the modifier keys held when the key was pressed, `KEY_MOD_SHIFT`, `KEY_MOD_CTRL` and `KEY_MOD_ALT`. So Shift+Left is `KEY_LEFT` with `KEY_MOD_SHIFT`, and Ctrl+Shift+C is `CTRLC` with both. The driver queues each key with them (`struct kb_key`), and `kb_get_modifiers()` gives the ones held now.
   - **Fake Shifts:** a real keyboard sends Shift presses and releases prefixed with `0xE0` around the gray arrows, Home, End and the like. The driver ignores them. QEMU doesn't send them.
 
-**Redraws:** the window server only redraws the screen when the mouse moves or a window is marked changed. Every gfx drawing syscall marks the app's window changed. Kernel threads that draw with `w->draw->*` must call `gfx_commit()` themselves, or their updates only appear when the mouse moves.
+**Redraws:** the window server composites the screen only when a window is marked changed, or something sets `ws->window_changes`, as leaving fullscreen, a workspace switch and `bg` do. Moving the mouse alone doesn't composite (#163).
+- **Apps:** every gfx drawing syscall marks the app's window changed, and so does setting a window's title or header.
+- **Kernel threads** that draw with `w->draw->*` must call `gfx_commit()` themselves, or their drawing only appears when something else on screen changes.
+
+**Copying to the screen** (#163): the window server never reads the framebuffer, since reading video memory is slow on a real card, and in 86Box.
+- **The screen copy,** `ws->_screen`, a second screen-sized buffer, holds what the framebuffer shows. `__ws_copy_rows` compares the composition buffer with it a word at a time, and writes each word that differs to both.
+- **The cursor** is never drawn into a buffer. For each of the cursor's rows, the copy takes the words it touches from the composition buffer, draws that row of the cursor over them (`vesa_put_cursor_row`), and compares those instead. It records where it put the cursor (`_screen_cursor_x`/`_y`).
+- **What's copied:**
+  - every row after a composite, and in fullscreen;
+  - when only the cursor moved, just the rows between where it was and where it is;
+  - nothing when nothing changed.
+- **Interrupts:** outside fullscreen the copy runs with them on, since only the window server thread writes the composition buffer then. In fullscreen they're off (see "Fullscreen").
+- **Nothing else may write the framebuffer** once `ws_init` has cleared it and the copy, or the two disagree. Only the panic and shutdown screens do, and they halt.
 
 **Concurrency:** the window server thread replaces a window's buffer on a resize, maximize, restore or F10 fullscreen, while the window's owner may be drawing into it on its own thread. `w->buffer_lock` keeps the two apart (#9):
 - **Drawing:** code that writes a window's pixels holds the lock from its bounds check through its last pixel, as the `kernel_gfx_*` functions in `gfxlib.c` do. Code that replaces `inner` holds it for the swap.
@@ -452,7 +465,7 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
   - `kalloc` panics with "Out of memory!" rather than returning NULL.
   - Use `kalloc_try` for large allocations that are allowed to fail.
   - Starting a program or thread uses `kalloc_try` for the load buffer, the kernel stack and the window buffer. Running out returns `-ERROR_ALLOC`, which `exec` and the Start menu report. Smaller allocations along the way still use `kalloc`. Keeping a reserve, so a launch can't take the last free memory, is #31.
-  - Every window's buffer comes from this heap, apps' included. At 1024×768 a maximized window's buffer is ~715 KB.
+  - Every window's buffer comes from this heap, apps' included. At 1024×768 a maximized window's buffer is ~715 KB, and the window server's composition buffer and screen copy are 768 KB each.
 - **The time of day:** `get_current_time` (`drivers/rtc.c`) returns exactly what the CMOS real-time clock holds; the OS has no time zones. The Makefile starts QEMU with `-rtc base=localtime`, so the clock shows the host's local time (#19). #20 covers keeping the RTC in UTC with an offset setting.
   - It reads the RTC with interrupts off. Selecting a register (port `0x70`) and reading it (`0x71`) are separate accesses, and a thread switch between them lets another thread change which register gets read.
   - `struct time`'s `year` has two digits. `get_current_time` sets `centuary` to 20, so the full year is `centuary * 100 + year`.
