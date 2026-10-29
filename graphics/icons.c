@@ -17,9 +17,6 @@
 #define ICONS_MAX 64
 #define ICON_NAME_MAX 32
 
-/* The largest file the kernel reads as an image: the longest header, a full color table and BMP_MAX_SIDE square rows */
-#define ICON_FILE_MAX (14 + 124 + 256 * 4 + BMP_MAX_SIDE * BMP_MAX_SIDE)
-
 static struct {
     char name[ICON_NAME_MAX];
     const struct image* image;
@@ -43,7 +40,7 @@ static const struct image* icon_read(const char* name)
         warningf("%s: %s\n", path, error_get_string(ret));
         return NULL;
     }
-    if(info.size == 0 || info.size > ICON_FILE_MAX){
+    if(info.size == 0 || info.size > BMP_FILE_MAX){
         warningf("%s: %d bytes is too big or too small for an image\n", path, info.size);
         return NULL;
     }

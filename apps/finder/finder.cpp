@@ -119,14 +119,11 @@ public:
 
         treeView = new TreeView(0, 0, TREE_VIEW_WIDTH, HEIGHT);
 
-        for(int i = 0; i < 5; i++){
-            icon[i] = (unsigned char*)malloc(ICON_SIZE*ICON_SIZE);
-        }
-
-        loadIcon("/ico/folder.ico", 0);
-        loadIcon("/ico/text.ico", 1);
-        loadIcon("/ico/cfile.ico", 2);
-        loadIcon("/ico/bin.ico", 3);
+        /* From /sysutil/icons, shared with the kernel. A file that can't be read gives a placeholder (#169) */
+        gfx_load_icon("folder_32", &icon[0]);
+        gfx_load_icon("text_32", &icon[1]);
+        gfx_load_icon("cfile_32", &icon[2]);
+        gfx_load_icon("bin_32", &icon[3]);
 
         path = new String("/");
         m_cache = new FileCache();
@@ -135,22 +132,15 @@ public:
     }
 
     ~Finder(){
-        for(int i = 0; i < 5; i++){
-            free(icon[i]);
+        for(int i = 0; i < 4; i++){
+            gfx_free_icon(&icon[i]);
         }
         delete path;
         delete m_cache;
     }
 
-    void loadIcon(const char* path, int index){
-        int fd = open(path, FS_FILE_FLAG_READ);
-        read(fd, (void*)icon[index], ICON_SIZE*ICON_SIZE);
-        fclose(fd);
-    }
-
-    void drawIcon(int x, int y, const unsigned char* icon){
-        struct image image = { ICON_SIZE, ICON_SIZE, icon };
-        drawImage(x, y, &image);
+    void drawIcon(int x, int y, const struct image* icon){
+        drawImage(x, y, icon);
     }
 
     /* Whether name ends with suffix, ignoring case */
@@ -261,13 +251,13 @@ public:
             int yOffset = (HEADER_HEIGHT + 4 + i * ICON_SIZE);
 
             if (file->flags & FS_ATTR_DIRECTORY) {
-                drawIcon(xOffset, yOffset, icon[0]);
+                drawIcon(xOffset, yOffset, &icon[0]);
             } else if (endsWith(file->getName(), ".txt")) {
-                drawIcon(xOffset, yOffset, icon[1]);
+                drawIcon(xOffset, yOffset, &icon[1]);
             } else if (endsWith(file->getName(), ".c") || endsWith(file->getName(), ".h")) {
-                drawIcon(xOffset, yOffset, icon[2]);
+                drawIcon(xOffset, yOffset, &icon[2]);
             } else {
-                drawIcon(xOffset, yOffset, icon[3]);
+                drawIcon(xOffset, yOffset, &icon[3]);
             }
 
             /* Position text next to the icon, shortened with "..." to fit its column */
@@ -346,7 +336,8 @@ public:
 private:
     /* The directory's entries, not counting ".." */
     int m_entries = 0;
-    unsigned char* icon[5];
+    /* Folder, text, C and other files' icons */
+    struct image icon[4];
     FileCache* m_cache;
     String* path;
     TreeView* treeView;

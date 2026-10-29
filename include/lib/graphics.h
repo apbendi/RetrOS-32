@@ -90,6 +90,14 @@ int gfx_draw_pixel(int x, int y, unsigned char color);
  */
 int gfx_draw_image(int x, int y, const struct image* image);
 
+/**
+ * Loads ICONS_DIR NAME.bmp, an image the kernel and apps share, into image, with its pixels malloc'd. If it's missing
+ * or can't be read, image is a 16x16 placeholder instead, a box with a red X, which gfx_free_icon leaves alone.
+ * @return 0, or a negative error code, when image is the placeholder
+ */
+int gfx_load_icon(const char* name, struct image* image);
+void gfx_free_icon(struct image* image);
+
 
 #ifdef __cplusplus
 }

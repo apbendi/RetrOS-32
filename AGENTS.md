@@ -222,11 +222,11 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **What's there:** the mouse cursor, the message boxes' icons (`info_32`, `warning_32`, `error_32`), login's `computer_icon`, since login runs before any file system when there's no disk, and `missing_image`, the placeholder for an image that can't be loaded.
   - **How they're built:** the build turns them into C arrays, `bin/gen/images.c`, never committed. `images.h` declares each as `const struct image NAME`, named after its file, with `IMAGE_NAME_WIDTH` and `IMAGE_NAME_HEIGHT`.
   - **To change one,** edit its BMP and rebuild. **To add one,** add a BMP whose name is a C identifier, and include `<images.h>`. Only add one there if it's needed without a disk.
-- **Images the kernel loads** are `rootfs/sysutil/icons/*.bmp`, `/sysutil/icons/` on the disk: the menus' and SysInfo's icons and the About logo.
-  - **How:** `icon_get("NAME")` (`include/gfx/icons.h`, `graphics/icons.c`) reads `NAME.bmp` the first time it's asked for, and keeps it.
+- **Images loaded at run time** are `rootfs/sysutil/icons/*.bmp`, `/sysutil/icons/` on the disk (`ICONS_DIR`), shared by the kernel and apps: the menus' and SysInfo's icons, the About logo, and the file trees' and Finder's icons.
+  - **In the kernel:** `icon_get("NAME")` (`include/gfx/icons.h`, `graphics/icons.c`) reads `NAME.bmp` the first time it's asked for, and keeps it.
   - **When one can't be read:** a missing or bad file gives `missing_image`, with a warning in the log, and that's kept too, so it's read, and warned about, once.
   - **To change one,** edit its BMP; `make img` copies it onto the disk, with no kernel rebuild.
-- **Apps' images aren't there yet:** TreeView's icons are arrays in `apps/utils/TreeView.hpp`, and Finder's are `rootfs/ico/*.ico`, raw 32×32 bytes.
+  - **In apps:** `gfx_load_icon("NAME", &image)` (`libgraphic`) reads it into `malloc`'d pixels, and `gfx_free_icon` frees them. One that can't be read gives a 16×16 placeholder the library draws itself, the same box as `missing_image`, so an app needs no image of its own to fail with.
 - **Image files** (#177) are 8-bit, uncompressed BMPs, at most 256 pixels a side, whose color table is the VGA palette (`palette_file_color` in `include/palette.h`).
   - **Transparency:** entry 255 is listed as magenta, `(255, 0, 255)`, so an image editor shows where it's transparent. The palette's own full magenta, entry 36, is listed as `(254, 0, 254)`, so only exact magenta means transparent.
   - **Reading them:** `bmp_parse` and `bmp_decode` in `lib/bmp.c` (`include/bmp.h`), built into the kernel and `libgraphic`. They never read outside the data they're given, since the kernel reads files from the disk with them, and refuse anything else with `-ERROR_BAD_IMAGE`.
@@ -496,8 +496,9 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
    `apps/breakout`, `apps/bcalc` and `apps/cube` follow this pattern.
 3. **Math:** `libcore` has no libm. `sin_60`/`cos_60` in `lib/libc.c` are 6° tables, offset by 90°: `cos_60[i]` is sin(6i°), and `sin_60[i]` is −cos(6i°). Avoid 64-bit integer division.
 4. **Files:** the file syscalls are in `lib/syscall.c` and `include/lib/syscall.h`; see "File system" for how they behave. They return negative codes from `include/errors.h`, and `error_get_string` (in `libcore`) gives a code's message.
-5. **Input beyond clicks:** for dragging, handle `GFX_EVENT_MOUSE_DOWN`, `GFX_EVENT_MOUSE_MOVE` and `GFX_EVENT_MOUSE_UP`, and read the modifier keys and click counts from `flags` (see "Mouse" and "Key codes" under "Graphics system"). For copy and paste, `clipboard_set` and `clipboard_get` are in `lib/syscall.c` (see "Selection and the clipboard"). The Editor uses all of them.
-6. **Build and launch:** `docker compose up` installs the app into `rootfs/bin`. Launch it with `exec -d /bin/<name>.o`.
+5. **Icons and pictures:** put a BMP in `rootfs/sysutil/icons/` ("Colors", under "Graphics system", has the format), load it with `gfx_load_icon`, and draw it with `drawImage`. Don't compile image data into an app.
+6. **Input beyond clicks:** for dragging, handle `GFX_EVENT_MOUSE_DOWN`, `GFX_EVENT_MOUSE_MOVE` and `GFX_EVENT_MOUSE_UP`, and read the modifier keys and click counts from `flags` (see "Mouse" and "Key codes" under "Graphics system"). For copy and paste, `clipboard_set` and `clipboard_get` are in `lib/syscall.c` (see "Selection and the clipboard"). The Editor uses all of them.
+7. **Build and launch:** `docker compose up` installs the app into `rootfs/bin`. Launch it with `exec -d /bin/<name>.o`.
 
 These apps use RetrOS's own libraries, `libcore` and `libgraphic`, which aren't standard C. A program in standard C uses the C library instead: see "C programs".
 
