@@ -52,6 +52,7 @@ enum errors {
     ERROR_UNTERMINATED_QUOTE,
     ERROR_ARGUMENTS_TOO_LONG,
     ERROR_MOVE_INTO_ITSELF,
+    ERROR_BAD_IMAGE,
 };
 
 #ifdef __cplusplus

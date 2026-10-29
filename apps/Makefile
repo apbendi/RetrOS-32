@@ -15,7 +15,7 @@ UTIL_DEPS := $(UTILS:.o=.d)
 APPS := editor wolfstein colors finder calculator graphs cube users texed webserver breakout bcalc
 
 LIB_CORE_OBJS := ../bin/syscall.o ../bin/libc.o ../bin/printf.o ../bin/errors.o $(BUILD_DIR)/cppUtils.o
-LIB_GRAPHICS_OBJS := ../bin/graphics.o ../bin/libc.o
+LIB_GRAPHICS_OBJS := ../bin/graphics.o ../bin/libc.o ../bin/bmp.o ../bin/palette.o
 LIB_NET_OBJS := ../bin/netlib.o
 LIB_ZLIB_OBJS := ../bin/lz.o ../bin/libc.o
 LIB_HTTP_OBJS := ../bin/http.o ../bin/libc.o ../bin/printf.o ../bin/syscall.o

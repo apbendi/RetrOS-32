@@ -3,14 +3,17 @@
  * @brief bmptool, a host tool for RetrOS's images.
  *
  * The format: an 8-bit, uncompressed BMP whose color table is the standard VGA palette (lib/palette.c), except entry
- * 255, the transparent color (COLOR_TRANSPARENT), which is magenta so an image editor shows it. Each pixel is a
- * palette index.
+ * 255, the transparent color (COLOR_TRANSPARENT), which is magenta so an image editor shows it, and the palette's own
+ * magenta, listed one step darker so it isn't taken for transparent (palette_file_color). Each pixel is a palette
+ * index.
  *
  *   bmptool raw2bmp WIDTH HEIGHT IN.raw OUT.bmp   palette indexes, row by row from the top left, to a BMP
  *   bmptool bmp2raw IN.bmp OUT.raw                a BMP's palette indexes, the same way; prints its size
  *   bmptool bmp2c OUT.c OUT.h IN.bmp...           C arrays for images built into the kernel, named after the files
- *   bmptool check IN.bmp...                       whether each file is in the format
+ *   bmptool check IN.bmp...                       whether RetrOS can read each file, and whether its colors are
+ *                                                 the palette's or have to be mapped to it
  *
+ * Files are read with lib/bmp.c, as the kernel and apps read them.
  * It's built with the host's compiler, like bin/build, so it reads palette.h after the system's headers: the kernel's
  * own stdint.h mustn't replace the system's.
  */
@@ -21,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <bmp.h>
 #include <palette.h>
 
 #define BMP_FILE_HEADER 14
@@ -29,9 +33,8 @@
 #define BMP_PIXELS_OFFSET (BMP_FILE_HEADER + BMP_INFO_HEADER + BMP_COLORS * 4)
 
 /* The largest width or height an image may have */
-#define IMAGE_MAX_SIDE 256
+#define IMAGE_MAX_SIDE BMP_MAX_SIDE
 
-#define TRANSPARENT 255
 
 /* An image: width x height palette indexes, top row first */
 struct raw_image {
@@ -67,20 +70,6 @@ static uint32_t get32(const uint8_t* p)
 static int bmp_stride(int width)
 {
     return (width + 3) & ~3;
-}
-
-/* The color the format's table gives an index, as red, green and blue from 0 to 255 */
-static void table_color(int index, uint8_t rgb[3])
-{
-    if (index == TRANSPARENT) {
-        rgb[0] = 255;
-        rgb[1] = 0;
-        rgb[2] = 255;
-        return;
-    }
-    for (int c = 0; c < 3; c++) {
-        rgb[c] = PALETTE_TO_8BIT(vga_palette[index][c]);
-    }
 }
 
 /* A whole file, malloc'd. Read in pieces until its end, so a pipe works too */
@@ -172,7 +161,7 @@ static uint8_t* bmp_encode(const struct raw_image* image, long* size)
     uint8_t* table = info + BMP_INFO_HEADER;
     for (int i = 0; i < BMP_COLORS; i++) {
         uint8_t rgb[3];
-        table_color(i, rgb);
+        palette_file_color(i, rgb);
         table[4 * i + 0] = rgb[2];
         table[4 * i + 1] = rgb[1];
         table[4 * i + 2] = rgb[0];
@@ -185,94 +174,64 @@ static uint8_t* bmp_encode(const struct raw_image* image, long* size)
     return bmp;
 }
 
-/**
- * Reads a BMP in the format, into a malloc'd image. Anything else is refused, with the reason on stderr.
- * @return 0, or -1
- */
-static int bmp_decode(const char* path, const uint8_t* data, long size, struct raw_image* image)
+/* Why a file bmp_parse refused isn't one RetrOS reads, from the fields most often wrong */
+static void explain(const char* path, const uint8_t* data, long size)
 {
     if (size < BMP_FILE_HEADER + BMP_INFO_HEADER || data[0] != 'B' || data[1] != 'M') {
         fprintf(stderr, "%s: not a BMP\n", path);
-        return -1;
+        return;
     }
-
     const uint8_t* info = data + BMP_FILE_HEADER;
-    uint32_t header = get32(info + 0);
-    int32_t width = (int32_t)get32(info + 4);
-    int32_t height = (int32_t)get32(info + 8);
-    uint32_t offset = get32(data + 10);
-    uint32_t colors = get32(info + 32);
+    int width = (int32_t)get32(info + 4);
+    int height = (int32_t)get32(info + 8);
+    if (get16(info + 14) != 8) {
+        fprintf(stderr, "%s: %d bits a pixel; only 8 are read\n", path, get16(info + 14));
+    } else if (get32(info + 16) != 0) {
+        fprintf(stderr, "%s: compressed; only uncompressed BMPs are read\n", path);
+    } else if (width < 1 || width > IMAGE_MAX_SIDE || height == 0 || height < -IMAGE_MAX_SIDE ||
+        height > IMAGE_MAX_SIDE) {
+        fprintf(stderr, "%s: %dx%d; each side must be 1 to %d\n", path, width, height < 0 ? -height : height,
+            IMAGE_MAX_SIDE);
+    } else {
+        fprintf(stderr, "%s: its headers, color table or pixels don't fit in the file\n", path);
+    }
+}
 
-    if (header < BMP_INFO_HEADER || header > (uint32_t)size) {
-        fprintf(stderr, "%s: unknown header size %u\n", path, header);
-        return -1;
-    }
-    if (get16(info + 12) != 1 || get16(info + 14) != 8) {
-        fprintf(stderr, "%s: %d bits a pixel; only 8 are supported\n", path, get16(info + 14));
-        return -1;
-    }
-    if (get32(info + 16) != 0) {
-        fprintf(stderr, "%s: compressed; only uncompressed BMPs are supported\n", path);
-        return -1;
-    }
-
-    /* A negative height means the rows are stored top-down */
-    int top_down = height < 0;
-    if (top_down) {
-        height = -height;
-    }
-    if (width < 1 || width > IMAGE_MAX_SIDE || height < 1 || height > IMAGE_MAX_SIDE) {
-        fprintf(stderr, "%s: %dx%d; each side must be 1 to %d\n", path, width, height, IMAGE_MAX_SIDE);
-        return -1;
-    }
-
-    if (colors == 0) {
-        colors = BMP_COLORS;
-    }
-    long table = BMP_FILE_HEADER + (long)header;
-    if (colors != BMP_COLORS || table + BMP_COLORS * 4 > size) {
-        fprintf(stderr, "%s: its color table isn't the 256 colors of the VGA palette\n", path);
-        return -1;
-    }
-    for (int i = 0; i < BMP_COLORS; i++) {
-        uint8_t rgb[3];
-        table_color(i, rgb);
-        const uint8_t* entry = data + table + 4 * i;
-        if (entry[0] != rgb[2] || entry[1] != rgb[1] || entry[2] != rgb[0]) {
-            fprintf(stderr, "%s: color %d is (%d, %d, %d), not the VGA palette's (%d, %d, %d)\n", path, i,
-                entry[2], entry[1], entry[0], rgb[0], rgb[1], rgb[2]);
-            return -1;
-        }
-    }
-
-    int stride = bmp_stride(width);
-    if (offset < table + BMP_COLORS * 4 || offset > (uint32_t)size || (long)stride * height > size - (long)offset) {
-        fprintf(stderr, "%s: its pixels don't fit in the file\n", path);
+/**
+ * Reads an image file with lib/bmp.c, the kernel's and apps' reader, into a malloc'd image. remapped says whether its
+ * colors weren't the palette's.
+ * @return 0, or -1, with the reason on stderr
+ */
+static int bmp_read(const char* path, const uint8_t* data, long size, struct raw_image* image, int* remapped)
+{
+    struct bmp_info info;
+    if (size > 0x7fffffff || bmp_parse(data, (int)size, &info) < 0) {
+        explain(path, data, size);
         return -1;
     }
 
-    image->width = width;
-    image->height = height;
-    image->pixels = malloc((long)width * height);
+    image->width = info.width;
+    image->height = info.height;
+    image->pixels = malloc((long)info.width * info.height);
     if (image->pixels == NULL) {
         fprintf(stderr, "%s: out of memory\n", path);
         return -1;
     }
-    for (int y = 0; y < height; y++) {
-        int stored = top_down ? y : height - 1 - y;
-        memcpy(image->pixels + (long)y * width, data + offset + (long)stored * stride, width);
+    bmp_decode(data, &info, image->pixels);
+    if (remapped != NULL) {
+        *remapped = info.remapped;
     }
     return 0;
 }
 
-static int load(const char* path, struct raw_image* image)
+static int load(const char* path, struct raw_image* image, int* remapped)
 {
     long size;
     uint8_t* data = read_file(path, &size);
     if (data == NULL) {
         return -1;
     }
-    int ret = bmp_decode(path, data, size, image);
+    int ret = bmp_read(path, data, size, image, remapped);
     free(data);
     return ret;
 }
@@ -337,7 +296,7 @@ static int cmd_bmp2raw(int argc, char* argv[])
     }
 
     struct raw_image image;
-    if (load(argv[2], &image) < 0 || write_file(argv[3], image.pixels, (long)image.width * image.height) < 0) {
+    if (load(argv[2], &image, NULL) < 0 || write_file(argv[3], image.pixels, (long)image.width * image.height) < 0) {
         return 1;
     }
     printf("%d %d\n", image.width, image.height);
@@ -360,7 +319,7 @@ static int cmd_bmp2c(int argc, char* argv[])
 
     /* All of them are read before anything is written, so a bad image leaves no half-written output */
     for (int i = 0; i < count; i++) {
-        if (image_name(argv[4 + i], names[i], 64) < 0 || load(argv[4 + i], &images[i]) < 0) {
+        if (image_name(argv[4 + i], names[i], 64) < 0 || load(argv[4 + i], &images[i], NULL) < 0) {
             return 1;
         }
     }
@@ -390,7 +349,8 @@ static int cmd_bmp2c(int argc, char* argv[])
         fprintf(h, "#define IMAGE_%s_HEIGHT %d\n", upper, images[i].height);
         fprintf(h, "extern const struct image %s;\n", names[i]);
 
-        fprintf(c, "\nstatic const unsigned char %s_pixels[%d * %d] = {\n", names[i], images[i].width, images[i].height);
+        fprintf(c, "\nstatic const unsigned char %s_pixels[%d * %d] = {\n", names[i], images[i].width,
+            images[i].height);
         for (int y = 0; y < images[i].height; y++) {
             fprintf(c, "    ");
             for (int x = 0; x < images[i].width; x++) {
@@ -419,11 +379,14 @@ static int cmd_check(int argc, char* argv[])
     int failed = 0;
     for (int i = 2; i < argc; i++) {
         struct raw_image image;
-        if (load(argv[i], &image) < 0) {
+        int remapped;
+        if (load(argv[i], &image, &remapped) < 0) {
             failed = 1;
             continue;
         }
-        printf("%s: %dx%d\n", argv[i], image.width, image.height);
+        /* A file with other colors is read, but bmptool's own files have the palette's */
+        printf("%s: %dx%d%s\n", argv[i], image.width, image.height,
+            remapped ? ", its colors mapped to the palette's nearest" : "");
         free(image.pixels);
     }
     return failed;

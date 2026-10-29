@@ -44,7 +44,7 @@ KERNELOBJ := $(addprefix $(BUILD_DIR)/,kernel.o terminal.o helpers.o pci.o virtu
 	libc.o interrupts.o irs_entry.o timer.o gdt.o smp.o keyboard.o pcb.o pcb_queue.o memory.o vmem.o kmem.o e1000.o display.o env.o conf.o \
 	sync.o kthreads.o ata.o atapi.o bitmap.o rtc.o tss.o kutils.o login.o cmds.o diskdev.o scheduler.o work.o rbuffer.o errors.o kclock.o tar.o loopback.o \
 	serial.o io.o syscalls.o list.o hashmap.o vbe.o ksyms.o windowserver.o mouse.o ipc.o sysinf.o font8.o net.o fs.o fatfs.o partition.o \
-	admin.o usermanager.o user.o group.o snake.o msgbox.o kevents.o textmode.o lz.o timefmt.o clipboard.o palette.o)
+	admin.o usermanager.o user.o group.o snake.o msgbox.o kevents.o textmode.o lz.o timefmt.o clipboard.o palette.o bmp.o)
 KERNELOBJ += $(PROGRAMOBJ) $(GFXOBJ)
 
 BOOTOBJ := $(BUILD_DIR)/bootloader.o
@@ -89,11 +89,11 @@ bin/build: tools/build.c
 	$(QUIET)$(HOST_CC) tools/build.c -O2 -Wall -o $(BUILD_DIR)/build
 	@echo "[host] built $(BUILD_DIR)/build"
 
-# Reads and writes images (tools/bmp.c). A host tool like bin/build, so it compiles lib/palette.c for the host, with
-# include/ searched after the system's headers, whose stdint.h it mustn't replace
-bin/bmptool: tools/bmp.c lib/palette.c include/palette.h
+# Reads and writes images (tools/bmp.c). A host tool like bin/build, so it compiles lib/bmp.c and lib/palette.c for
+# the host, with include/ searched after the system's headers, whose stdint.h it mustn't replace
+bin/bmptool: tools/bmp.c lib/bmp.c lib/palette.c include/bmp.h include/palette.h
 	$(call make_dir,$(BUILD_DIR))
-	$(QUIET)$(HOST_CC) tools/bmp.c lib/palette.c -idirafter include -O2 -Wall -o $(BUILD_DIR)/bmptool
+	$(QUIET)$(HOST_CC) tools/bmp.c lib/bmp.c lib/palette.c -idirafter include -O2 -Wall -o $(BUILD_DIR)/bmptool
 	@echo "[host] built $(BUILD_DIR)/bmptool"
 
 tools: bin/build bin/bmptool
