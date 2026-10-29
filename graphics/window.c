@@ -72,18 +72,17 @@ struct gfx_rect gfx_window_extent(struct window* window)
         rect = (struct gfx_rect){ window->x, window->y, window->x+width, window->y+height };
     } else {
         /**
-         * The frame fits within the window's width and height, from GFX_WINDOW_HEADER_OVERHANG above it, except:
-         * - the title is centered, so one wider than the window reaches past both sides;
-         * - on a window too small for its frame, apps can make one, the buttons, from width-40, reach past its left
-         *   side, the bottom border, from height-8, past its top, and the title bar's 9 rows past its bottom.
+         * The frame fits within the window's width and height, from GFX_WINDOW_HEADER_OVERHANG above it, since no
+         * window is smaller than GFX_WINDOW_MIN_WIDTH by GFX_WINDOW_MIN_HEIGHT (gfx_new_window, gfx_window_clamp_size).
+         * The title is centered, though, so one wider than the window reaches past both sides.
          */
         int padding = HAS_FLAG(window->flags, GFX_HIDE_HEADER) ? 0 : 8;
         int title_start = (window->width/2) - ((strlen(window->name)*8)/2);
         int title_end = title_start + strlen(window->name)*8 + 4;
-        rect.x0 = window->x + MIN(MIN(title_start, window->width-40), 0);
-        rect.y0 = window->y + MIN(window->height-8, -GFX_WINDOW_HEADER_OVERHANG);
+        rect.x0 = window->x + MIN(title_start, 0);
+        rect.y0 = window->y - GFX_WINDOW_HEADER_OVERHANG;
         rect.x1 = window->x + MAX(MAX(window->width, padding+window->inner_width), title_end);
-        rect.y1 = window->y + MAX(MAX(window->height, padding+window->inner_height), 9);
+        rect.y1 = window->y + MAX(window->height, padding+window->inner_height);
     }
 
     rect.x0 = MAX(rect.x0, 0);
@@ -557,6 +556,22 @@ struct window* gfx_new_window(int width, int height, window_flag_t flags)
     if($process->current->gfx_window != NULL)
         return $process->current->gfx_window;
 
+    /**
+     * Apps ask for their size through a system call, which is this function, so it's checked here. A size that isn't
+     * positive is refused. Any other is kept between the smallest a resize allows, which the frame fits in, and the
+     * screen: so a window never draws outside its own edges, and width*height can't overflow into a buffer smaller
+     * than the window, which the drawing functions would then write past. The owner gets a GFX_EVENT_RESOLUTION
+     * with the size it got, if that's not the size it asked for.
+     */
+    if(width <= 0 || height <= 0){
+        warningf("%s asked for a window of %dx%d\n", $process->current->name, width, height);
+        return NULL;
+    }
+    int frame = HAS_FLAG(flags, GFX_HIDE_HEADER) ? 0 : 16;
+    int asked_width = width, asked_height = height;
+    width = MIN(MAX(width, GFX_WINDOW_MIN_WIDTH - frame), vbe_info->width - frame);
+    height = MIN(MAX(height, GFX_WINDOW_MIN_HEIGHT - frame), vbe_info->height - frame);
+
     struct window* w = create(struct window);
     if(w == NULL){
         warningf("window is NULL\n");
@@ -636,6 +651,16 @@ struct window* gfx_new_window(int width, int height, window_flag_t flags)
 
     $process->current->gfx_window = w;
     gfx_composition_add_window(w);
+
+    if(width != asked_width || height != asked_height){
+        warningf("%s asked for a window of %dx%d, and got %dx%d\n", $process->current->name, asked_width, asked_height, width, height);
+        struct gfx_event e = {
+            .data = width,
+            .data2 = height,
+            .event = GFX_EVENT_RESOLUTION
+        };
+        gfx_push_event(w, &e);
+    }
 
     return w;
 }
