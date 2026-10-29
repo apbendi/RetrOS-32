@@ -29,8 +29,8 @@ struct windowmanager_ops {
     int (*add)(struct windowmanager *wm, struct window *window);
     /* remove window */
     int (*remove)(struct windowmanager *wm, struct window *window);
-    /* draw all windows */
-    int (*draw)(struct windowmanager *wm, struct window *window);
+    /* draw window and every window behind it into buffer, back to front, clipped to the vesa_* clip rectangle */
+    int (*draw)(struct windowmanager *wm, uint8_t* buffer, struct window *window);
     int (*push_front)(struct windowmanager *wm, struct window *window);
     int (*push_back)(struct windowmanager *wm, struct window *window);
     int (*mouse_event)(struct windowmanager *wm, int x, int y, char flags);
@@ -40,7 +40,8 @@ struct windowmanager_ops {
     int (*init)(struct windowmanager *wm, int flags);
     int (*destroy)(struct windowmanager *wm);
 
-    int (*changes)(struct windowmanager *wm);
+    /* whether any window is marked changed, clearing every window's changed */
+    int (*take_changes)(struct windowmanager *wm);
 };
 
 /* Window manager struct */

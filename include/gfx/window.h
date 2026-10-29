@@ -23,6 +23,11 @@ struct window;
 
 #define WINDOW_GET_PIXEL(w, x, y) w->inner[x + y * w->pitch]
 
+/* A rectangle of the screen, from x0, y0 up to x1, y1, not including them. Empty when x1 <= x0 or y1 <= y0. */
+struct gfx_rect {
+    int x0, y0, x1, y1;
+};
+
 typedef enum window_states {
     GFX_WINDOW_MOVING,
     GFX_WINDOW_STATIC
@@ -160,6 +165,7 @@ struct window {
 struct window* gfx_new_window(int width, int height, window_flag_t flags);
 
 void gfx_draw_window(uint8_t* buffer, struct window* window);
+struct gfx_rect gfx_window_extent(struct window* window);
 int gfx_destroy_window(struct window* w);
 void gfx_window_set_resizable();
 

@@ -198,9 +198,10 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - **Moving:** `is_moving.x`/`y` hold where the title bar was grabbed, relative to the window's position. `gfx_default_hover` keeps that point under the cursor, clamping each axis to the screen on its own, so a window pushed against an edge slides along it. The whole window stays on screen. Drawing is clipped (#4), so that's for usability, not safety. #18 covers letting windows hang off the edge.
 
 **Drawing:**
-- **The `vesa_*` helpers are clipped to the screen** (`include/vbe.h`, `drivers/vbe.c`; #4). They draw only into screen-sized buffers: the composition buffer and the framebuffer. Whatever falls off screen is skipped.
+- **The `vesa_*` helpers are clipped** (`include/vbe.h`, `drivers/vbe.c`; #4). They draw only into screen-sized buffers: the composition buffer and the framebuffer. Whatever falls outside the clip rectangle is skipped.
+  - **The clip rectangle** is the screen, unless the window server is redrawing part of it (`vesa_set_clip`, `vesa_reset_clip`; #180). Only the window server thread narrows it, and the panic and shutdown screens reset it first.
   - **Lines and filled rectangles** clamp their range before looping. **Characters, icons and single pixels** check each pixel with `vesa_on_screen`.
-  - **`gfx_draw_window`** copies only the on-screen part of a window's content.
+  - **`gfx_draw_window`** copies only the part of a window's content inside the clip rectangle, and skips a window outside it. `gfx_window_extent` gives the rectangle a window can draw into, which is never smaller than what it draws.
   - **`putpixel` isn't clipped,** because it also draws into windows' own buffers. Use it only with a size check of your own, as the `kernel_gfx_*` functions do.
 - **The window drawing functions** in `gfxlib.c` (`kernel_gfx_*`) check against the window's content size. Lines and circles clip every pixel.
 - **Images:** `kernel_gfx_draw_image` (`w->draw->image`) draws a `struct image` into a window, clipped to its content, leaving it as it is where the image is `COLOR_TRANSPARENT`.
@@ -267,7 +268,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - **No nesting:** the lock isn't reentrant, so don't call a function that takes it while holding it.
 - **Interrupts:** `spin_lock` waits by yielding to other threads (`WAIT` → `kernel_yield`), so don't take it inside `ENTER_CRITICAL`.
 - **Compositing** reads buffers without the lock. That's safe only because every swap also runs on the window server thread. Moving a swap to another thread would mean the compositor has to take the lock too.
-  - So it can copy a window halfway through a redraw, which then shows on screen until the next composite. `gfx_draw_window` clears `changed` before copying, not after, so a commit made during the copy still gets the finished frame composited.
+  - So it can copy a window halfway through a redraw, which then shows on screen until the next composite. The window manager clears `changed` as the window server takes the changes, before it draws (`take_changes`), not after, so a commit made during the copy still gets the finished frame composited.
 - **The event queue** has its own lock, `w->spinlock`.
 
 **Window lifetime:** when a thread or process with a window exits, the cleanup worker calls `gfx_destroy_window`. The window server may be in the middle of a frame that uses that window, so the window isn't freed right away (#16).

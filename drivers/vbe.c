@@ -22,6 +22,27 @@
 static struct vbe_mode_info_structure __vbe_info;
 struct vbe_mode_info_structure* vbe_info = &__vbe_info;
 
+/* No narrower than the screen, whatever its size: the helpers clamp to the screen as well */
+#define VESA_CLIP_NONE 0x7FFFFFFF
+struct vesa_clip vesa_clip = { 0, 0, VESA_CLIP_NONE, VESA_CLIP_NONE };
+
+/* Narrows where the vesa_* helpers draw to x0, y0 up to x1, y1, clamped to the screen */
+void vesa_set_clip(int x0, int y0, int x1, int y1)
+{
+    vesa_clip.x0 = x0 < 0 ? 0 : x0;
+    vesa_clip.y0 = y0 < 0 ? 0 : y0;
+    vesa_clip.x1 = x1;
+    vesa_clip.y1 = y1;
+}
+
+void vesa_reset_clip(void)
+{
+    vesa_clip.x0 = 0;
+    vesa_clip.y0 = 0;
+    vesa_clip.x1 = VESA_CLIP_NONE;
+    vesa_clip.y1 = VESA_CLIP_NONE;
+}
+
 /* The mouse cursor is images/cursor.bmp, whose size vbe.h gives so the window server can size buffers with it */
 _Static_assert(IMAGE_CURSOR_WIDTH == VESA_CURSOR_WIDTH && IMAGE_CURSOR_HEIGHT == VESA_CURSOR_HEIGHT,
     "VESA_CURSOR_WIDTH and VESA_CURSOR_HEIGHT must match images/cursor.bmp");
@@ -152,14 +173,14 @@ void vesa_fill(uint8_t* buffer, unsigned char color)
             putpixel(buffer, j, i, color, vbe_info->pitch);
 }
 
-/* Clamps its range to the screen once, since compositing fills rectangles constantly */
+/* Clamps its range to the clip rectangle once, and fills a row at a time, since compositing fills rectangles constantly */
 void vesa_fillrect(uint8_t* buffer, int x, int y, int w, int h, int color){
-    int i, j;
-    int x_end = vesa_clip_end(x+w, vbe_info->width);
-    int y_end = vesa_clip_end(y+h, vbe_info->height);
-    for (j = vesa_clip_start(y); j < y_end; j++)
-        for (i = vesa_clip_start(x); i < x_end; i++)
-            putpixel(buffer, i, j, color, vbe_info->pitch);
+    int x_start = vesa_clip_x_start(x);
+    int x_end = vesa_clip_x_end(x+w);
+    int y_end = vesa_clip_y_end(y+h);
+    if (x_end <= x_start) return;
+    for (int j = vesa_clip_y_start(y); j < y_end; j++)
+        memset(buffer + j*vbe_info->pitch + x_start, color, x_end - x_start);
 }
 
 #define GFX_MAX_FMT_STR_SIZE 50
