@@ -87,7 +87,7 @@ error_t start(char* name, int argc, char* argv[])
     ERR_ON_NULL(name);
 
     for (int i = 0; i < total_kthreads; i++){
-        if(memcmp(name, kthread_table[i].name, strlen(kthread_table[i].name)) == 0){
+        if(strcmp(name, kthread_table[i].name) == 0){
             return pcb_create_kthread(kthread_table[i].entry, kthread_table[i].name, argc, argv);
         }
     }
