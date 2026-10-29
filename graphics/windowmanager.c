@@ -424,10 +424,10 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
         }
 
         if(gfx_point_in_rectangle(i->x, top, i->x+i->width, bottom, x, y)){
-            /* get coordinates inside of the window */
+            /* get coordinates inside of the window, within its content */
             int offset = HAS_FLAG(i->flags, GFX_HIDE_HEADER) ? 0 : 8;
-            x2 = CLAMP( (x - (i->x+offset)), 0,  i->inner_width);
-            y2 = CLAMP( (y - (i->y+offset)), 0,  i->inner_height);
+            x2 = CLAMP( (x - (i->x+offset)), 0,  i->inner_width - 1);
+            y2 = CLAMP( (y - (i->y+offset)), 0,  i->inner_height - 1);
 
             /* check if the pixel is transparent (255) */
             if(WINDOW_GET_PIXEL(i, x2, y2) == 255 && HAS_FLAG(i->flags, GFX_IS_TRANSPARENT)){
