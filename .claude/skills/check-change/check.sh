@@ -71,10 +71,10 @@ for f in "${files[@]}"; do
             cmd=(clang "${FREESTANDING[@]}" -std=gnu11 -O2 -I include -I apps -I "$app_dir" -I "$dir" "${WARNINGS[@]}") ;;
         lib/*.c)
             lang=c
-            cmd=(clang "${FREESTANDING[@]}" -std=gnu11 -O1 -I include -I "$dir" "${WARNINGS[@]}") ;;
+            cmd=(clang "${FREESTANDING[@]}" -std=gnu11 -O1 -I include -I bin/gen -I "$dir" "${WARNINGS[@]}") ;;
         *.c)
             lang=c
-            cmd=(clang "${FREESTANDING[@]}" -std=gnu11 -O1 -D__KERNEL -I include -I "$dir" "${WARNINGS[@]}") ;;
+            cmd=(clang "${FREESTANDING[@]}" -std=gnu11 -O1 -D__KERNEL -I include -I bin/gen -I "$dir" "${WARNINGS[@]}") ;;
         *)
             echo "$f: not a .c, .cpp or .s file, skipped"; continue ;;
     esac

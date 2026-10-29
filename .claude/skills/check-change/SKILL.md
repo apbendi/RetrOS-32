@@ -16,6 +16,7 @@ The real build runs GCC in Docker, and testing means booting QEMU. Both are slow
 
 - **What it does:** it compiles each file with clang, using the flags the build uses for that kind of file (kernel, `lib/`, or app). It reports only diagnostics that HEAD's version of the same file doesn't have, because many files already have warnings.
 - **For apps,** it also lists the runtime-library (libgcc) helpers the object needs. Apps don't link libgcc, so any helper there is a link error waiting to happen. It's usually 64-bit `/` or `%`.
+- **Generated headers:** kernel sources that include `images.h` need `bin/gen/images.h`, which the build writes from `images/`. Run a build first, or they stop at that include.
 - **What it can't catch:** clang isn't GCC, and GCC warns about some things clang doesn't (e.g. `?:` mixing an enum with a non-enum operand). It also doesn't link the kernel.
 - **Fix every new diagnostic,** or explain why it's expected.
 

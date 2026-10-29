@@ -3,7 +3,7 @@
 
 /**
  * An image in memory: width x height palette indexes, row by row from the top left, with COLOR_TRANSPARENT (255) where
- * nothing is drawn. Images built into the kernel are generated from images/*.bmp (tools/bmp.c, bmp2c)
+ * nothing is drawn. Images built into the kernel are generated from the BMPs in images/ (tools/bmp.c, bmp2c)
  */
 struct image {
     int width;

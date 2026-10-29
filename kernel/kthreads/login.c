@@ -30,7 +30,7 @@
 
 #include <user.h>
 #include <usermanager.h>
-#include <lib/icons.h>
+#include <images.h>
 #include <conf.h>
 
 struct gfx_input_manager input_manager = {0};
@@ -147,7 +147,7 @@ void __kthread_entry login()
     gfx_button(10+10+120, 10+10+10+10, 50, 20, "OK");
 
     /* icon to the right middle 32x32 */
-    gfx_put_icon32(computer_icon, 275-64-16, 10+20+5);
+    gfx_put_icon32(computer_icon.pixels, 275-64-16, 10+20+5);
 
     /* draw memory info */
     w->draw->textf(w, 10+10, 10+10+10+10+20+10,0x0,"Memory: %d %s", unit.size, unit.unit);

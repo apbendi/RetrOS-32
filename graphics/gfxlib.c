@@ -123,7 +123,7 @@ int gfx_button_ext(int x, int y, int width, int height, char* name, color_t colo
 	return 0;
 }
 
-int gfx_put_icon16(unsigned char icon[], int x, int y)
+int gfx_put_icon16(const unsigned char icon[], int x, int y)
 {
 	spin_lock(&$process->current->gfx_window->buffer_lock);
 	for (int l = 0; l < 16; l++) {
@@ -141,7 +141,7 @@ int gfx_put_icon16(unsigned char icon[], int x, int y)
 	return 0;
 }
 
-int gfx_put_icon32(unsigned char icon[], int x, int y)
+int gfx_put_icon32(const unsigned char icon[], int x, int y)
 {
 	spin_lock(&$process->current->gfx_window->buffer_lock);
 	for (int l = 0; l < 32; l++) {
@@ -243,7 +243,7 @@ int kernel_gfx_draw_pixel(struct window* w, int x, int y, color_t color)
 	return 0;
 }
 
-int kernel_gfx_draw_bitmap(struct window* w, int x, int y, int width, int height, uint8_t* bitmap)
+int kernel_gfx_draw_bitmap(struct window* w, int x, int y, int width, int height, const uint8_t* bitmap)
 {
 	ERR_ON_NULL(w);
 

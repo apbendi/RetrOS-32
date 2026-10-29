@@ -214,7 +214,11 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **32–247:** 24 hues at three saturations (+0, +24, +48) and three brightnesses (+0, +72, +144). Red is 40, then 112 and 184 darker.
   - **248–255:** black.
 - **Transparent:** 255, `COLOR_TRANSPARENT`. It isn't drawn in icons, or in the content of a window made with `GFX_IS_TRANSPARENT`, like the taskbar.
-- **Images in memory:** icons (`lib/icons.c`, `apps/utils/TreeView.hpp`, Finder's `rootfs/ico/*.ico`), the About logo and the cursor are their pixels' palette indexes, row by row from the top left, with no header. `struct image` (`include/image.h`) holds one with its size.
+- **Images in memory** are their pixels' palette indexes, row by row from the top left, with no header. `struct image` (`include/image.h`) holds one with its size.
+- **Images built into the kernel** are `images/*.bmp`: the menus' and SysInfo's icons, the message boxes', login's computer, the About logo and the mouse cursor.
+  - **How they're built:** the build turns them into C arrays, `bin/gen/images.c`, never committed. `images.h` declares each as `const struct image NAME`, named after its file, with `IMAGE_NAME_WIDTH` and `IMAGE_NAME_HEIGHT`.
+  - **To change one,** edit its BMP and rebuild. **To add one,** add a BMP whose name is a C identifier, and include `<images.h>`.
+  - **Apps' images aren't there yet:** TreeView's icons are arrays in `apps/utils/TreeView.hpp`, and Finder's are `rootfs/ico/*.ico`, raw 32×32 bytes.
 - **Image files** (#177) are 8-bit, uncompressed BMPs whose color table is the VGA palette, except entry 255, which is magenta so an image editor shows where it's transparent.
   - **`bin/bmptool`** (`tools/bmp.c`) converts palette indexes to a BMP and back (`raw2bmp`, `bmp2raw`), writes C arrays from BMPs (`bmp2c`), and checks that a file is in the format (`check`).
   - **Its tests:** `tests/images/run.sh`, on the Mac, under AddressSanitizer.

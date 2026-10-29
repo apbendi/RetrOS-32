@@ -19,7 +19,6 @@
 #include <vbe.h>
 #include <errors.h>
 #include <kutils.h>
-#include <lib/icons.h>
 #include <math.h>
 
 //#define __WINDOWS_95

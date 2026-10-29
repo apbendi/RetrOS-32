@@ -140,7 +140,7 @@ void vesa_put_cursor(uint8_t* buffer, int x, int y);
 void vesa_put_icon32(uint8_t* buffer, int x, int y);
 void vga_load_palette(void);
 
-/* The mouse cursor's size, and the position of the arrow's tip within it, where clicks land */
+/* The mouse cursor's size, images/cursor.bmp's, and the position of the arrow's tip within it, where clicks land */
 #define VESA_CURSOR_WIDTH 16
 #define VESA_CURSOR_HEIGHT 21
 #define VESA_CURSOR_HOTSPOT_X 1
