@@ -102,21 +102,29 @@ void gfx_draw_window(uint8_t* buffer, struct window* window)
      * Copy the window's content into the screen buffer, if it isn't minimized. Only the part on screen is copied,
      * so a window partly off screen is cut off instead of writing past the buffer (#4). The source is indexed by
      * the window's own row and column, so the visible part stays aligned.
+     *
+     * A row at a time, since a pixel is a byte in both, and the window server copies every window whenever one
+     * changes. A transparent window still goes pixel by pixel, leaving what's under its transparent pixels.
      */
     if(window->inner != NULL && !HAS_FLAG(window->flags, GFX_IS_HIDDEN)){
         int left = window->x+padding;
         int top = window->y+padding;
         int x_start = vesa_clip_start(left), x_end = vesa_clip_end(left+window->inner_width, vbe_info->width);
         int y_start = vesa_clip_start(top), y_end = vesa_clip_end(top+window->inner_height, vbe_info->height);
+        int width = x_end - x_start;
         bool_t transparent = HAS_FLAG(window->flags, GFX_IS_TRANSPARENT);
 
-        for (int j = y_start; j < y_end; j++){
+        for (int j = y_start; j < y_end && width > 0; j++){
             uint8_t* source = window->inner + (j-top)*window->pitch + (x_start-left);
-            for (int i = x_start; i < x_end; i++, source++){
-                if(transparent && *source == 255){
-                    continue;
+            uint8_t* dest = buffer + j*vbe_info->pitch + x_start;
+            if(!transparent){
+                memcpy(dest, source, width);
+                continue;
+            }
+            for (int i = 0; i < width; i++){
+                if(source[i] != COLOR_TRANSPARENT){
+                    dest[i] = source[i];
                 }
-                putpixel(buffer, i, j, *source, vbe_info->pitch);
             }
         }
     }
