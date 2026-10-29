@@ -47,7 +47,7 @@ int gfx_syscall_hook(int option, void* data, int flags)
     
     case GFX_DRAW_PIXEL:;
         struct gfx_pixel* pixel = (struct gfx_pixel*)data;
-        kernel_gfx_draw_pixel($process->current->gfx_window, pixel->x, pixel->y, rgb_to_vga(pixel->color));
+        kernel_gfx_draw_pixel($process->current->gfx_window, pixel->x, pixel->y, pixel->color);
         break;
 
     case GFX_EVEN_LOOP_OPT:

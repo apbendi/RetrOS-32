@@ -19,10 +19,11 @@ enum grays {
     COLOR_VGA_LIGHTEST_GRAY = 31
 };
 
-#define COLOR_TRANSPARENT 0xFF // 255
-
-/* The byte RGB332 icons use for transparent pixels, since 0xff is white */
-#define ICON_TRANSPARENT 0xfa
+/**
+ * Transparent: not drawn in icons, or in a GFX_IS_TRANSPARENT window's content. Like the palette's other entries from
+ * 248, it's black otherwise, which index 0 already gives
+ */
+#define COLOR_TRANSPARENT 0xFF
 
 #define COLOR_VGA_BG 18
 #define COLOR_VGA_FG 90
