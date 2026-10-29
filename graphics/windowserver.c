@@ -382,21 +382,21 @@ static void __ws_copy_fullscreen(struct windowserver* ws)
     uint8_t* buffer = ws->_wm->composition_buffer;
     int x = ws->m.x;
     int y = ws->m.y;
-    uint8_t saved[16][16];
+    uint8_t saved[VESA_CURSOR_HEIGHT][VESA_CURSOR_WIDTH];
 
-    for(int l = 0; l < 16; l++){
-        for(int i = 0; i < 16; i++){
+    for(int l = 0; l < VESA_CURSOR_HEIGHT; l++){
+        for(int i = 0; i < VESA_CURSOR_WIDTH; i++){
             if(vesa_on_screen(x+i, y+l)){
                 saved[l][i] = *getpixel(buffer, x+i, y+l, vbe_info->pitch);
             }
         }
     }
 
-    vesa_put_icon16(buffer, x, y);
+    vesa_put_cursor(buffer, x, y);
     xmemcpy((uint8_t*)vbe_info->framebuffer, buffer, ws->_wm->composition_buffer_size);
 
-    for(int l = 0; l < 16; l++){
-        for(int i = 0; i < 16; i++){
+    for(int l = 0; l < VESA_CURSOR_HEIGHT; l++){
+        for(int i = 0; i < VESA_CURSOR_WIDTH; i++){
             if(vesa_on_screen(x+i, y+l)){
                 putpixel(buffer, x+i, y+l, saved[l][i], vbe_info->pitch);
             }
@@ -430,7 +430,7 @@ static int ws_draw(struct windowserver* ws)
         vesa_printf(ws->_wm->composition_buffer, 8, vbe_info->height -8, 0x1F, "Workspace %d", ws->workspace + 1);
 
         ws->_wm->ops->draw(ws->_wm, ws->_wm->windows);
-        vesa_put_icon16(ws->_wm->composition_buffer, ws->m.x, ws->m.y);
+        vesa_put_cursor(ws->_wm->composition_buffer, ws->m.x, ws->m.y);
     }
 
     /* Move out of this module */

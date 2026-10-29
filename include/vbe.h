@@ -136,11 +136,13 @@ int vesa_printf(uint8_t* buffer, int32_t x, int32_t y, int color, char* fmt, ...
 void vesa_inner_box(uint8_t* buffer, int x, int y, int w, int h, color_t color);
 void vesa_init();
 
-void vesa_put_icon16(uint8_t* buffer, int x, int y);
+void vesa_put_cursor(uint8_t* buffer, int x, int y);
 void vesa_put_icon32(uint8_t* buffer, int x, int y);
 void vga_load_palette(void);
 
-/* Position of the arrow's tip within the 16x16 cursor icon, where clicks land */
+/* The mouse cursor's size, and the position of the arrow's tip within it, where clicks land */
+#define VESA_CURSOR_WIDTH 16
+#define VESA_CURSOR_HEIGHT 21
 #define VESA_CURSOR_HOTSPOT_X 1
 #define VESA_CURSOR_HOTSPOT_Y 2
 
