@@ -409,16 +409,52 @@ static void __ws_copy_words(uint32_t* framebuffer, uint32_t* screen, const uint3
     }
 }
 
+/* The words a row of the cursor touches, first up to end, with the cursor drawn over them. Empty off screen. */
+struct ws_cursor_row {
+    int first, end;
+    uint32_t words[WS_CURSOR_WORDS];
+};
+
 /**
- * Copies the composition buffer's rows from top up to bottom to the framebuffer, with the cursor over them, writing
- * only the words that differ from the screen copy. The framebuffer is never read, since reading video memory is slow
- * on a real card (#163). The cursor is drawn over the words its rows touch as they're copied, so it never goes into
- * the composition buffer, which in fullscreen is the window's own.
- *
- * The cursor is drawn over whatever part of it falls in these rows. When it has moved, the caller copies the rows it
- * left and the rows it's on now too, and then records where it put it (__ws_copy_damage).
+ * Takes the words each row of the cursor touches from the composition buffer, with the cursor drawn over them, for
+ * copying in their place. The cursor never goes into the composition buffer, which in fullscreen is the window's own.
  */
-static void __ws_copy_rows(struct windowserver* ws, int top, int bottom)
+static void __ws_cursor_rows(struct windowserver* ws, struct ws_cursor_row cursor[VESA_CURSOR_HEIGHT])
+{
+    uint32_t* source = (uint32_t*)ws->_wm->composition_buffer;
+    int pitch = vbe_info->pitch;
+    int words = ws->_wm->composition_buffer_size / 4;
+    int x = ws->m.x, y = ws->m.y;
+    int left = MAX(x, 0), right = MIN(x + VESA_CURSOR_WIDTH, vbe_info->width);
+
+    for(int l = 0; l < VESA_CURSOR_HEIGHT; l++){
+        struct ws_cursor_row* row = &cursor[l];
+        row->first = row->end = 0;
+        if(left >= right || y + l < 0 || y + l >= vbe_info->height){
+            continue;
+        }
+
+        row->first = ((y+l)*pitch + left) / 4;
+        row->end = MIN(((y+l)*pitch + right + 3) / 4, words);
+        for(int i = row->first; i < row->end; i++){
+            row->words[i - row->first] = source[i];
+        }
+        vesa_put_cursor_row((uint8_t*)row->words + ((y+l)*pitch + left - row->first*4), left, right, x, l);
+    }
+}
+
+/**
+ * Copies rect of the composition buffer to the framebuffer, with the cursor over it, writing only the words that
+ * differ from the screen copy. The framebuffer is never read, since reading video memory is slow on a real card
+ * (#163). The rect's columns are widened to whole words, so the pixels next to it are written as they are, which is
+ * harmless: the composition buffer is up to date everywhere once a frame's redraws are done (#180).
+ *
+ * Wherever a word the cursor touches is copied, the word with the cursor over it is copied instead. Those are the
+ * cursor's own row's words, and when the pitch isn't a multiple of 4, a word at the end of a row can hold the next
+ * row's first pixels, so the rows above and below are checked too. Two of the cursor's rows never share a word on a
+ * screen at least VESA_CURSOR_WIDTH + 4 pixels wide, which every mode is.
+ */
+static void __ws_copy_rect(struct windowserver* ws, struct gfx_rect rect, struct ws_cursor_row cursor[VESA_CURSOR_HEIGHT])
 {
     uint32_t* framebuffer = (uint32_t*)vbe_info->framebuffer;
     uint32_t* screen = (uint32_t*)ws->_screen;
@@ -427,33 +463,34 @@ static void __ws_copy_rows(struct windowserver* ws, int top, int bottom)
 
     /* VBE_SIZE() is the screen and a byte more, so this is every pixel when the screen's size is a multiple of 4 */
     int words = ws->_wm->composition_buffer_size / 4;
-    int next = top*pitch / 4;
-    int last = MIN((bottom*pitch + 3) / 4, words);
 
-    /* The cursor's columns on screen */
-    int x = ws->m.x, y = ws->m.y;
-    int left = MAX(x, 0), right = MIN(x + VESA_CURSOR_WIDTH, vbe_info->width);
-
-    for(int l = 0; l < VESA_CURSOR_HEIGHT && left < right; l++){
-        int row = y + l;
-        if(row < top || row >= bottom){
-            continue;
-        }
-
-        /* The words this row of the cursor touches, with the cursor drawn over them */
-        int first = (row*pitch + left) / 4;
-        int end = MIN((row*pitch + right + 3) / 4, last);
-        uint32_t with_cursor[WS_CURSOR_WORDS];
-        for(int i = first; i < end; i++){
-            with_cursor[i-first] = source[i];
-        }
-        vesa_put_cursor_row((uint8_t*)with_cursor + (row*pitch + left - first*4), left, right, x, l);
-
-        __ws_copy_words(framebuffer+next, screen+next, source+next, first-next);
-        __ws_copy_words(framebuffer+first, screen+first, with_cursor, end-first);
-        next = end;
+    rect.x0 = MAX(rect.x0, 0);
+    rect.y0 = MAX(rect.y0, 0);
+    rect.x1 = MIN(rect.x1, vbe_info->width);
+    rect.y1 = MIN(rect.y1, vbe_info->height);
+    if(rect.x1 <= rect.x0){
+        return;
     }
-    __ws_copy_words(framebuffer+next, screen+next, source+next, last-next);
+
+    for(int y = rect.y0; y < rect.y1; y++){
+        int next = (y*pitch + rect.x0) / 4;
+        int last = MIN((y*pitch + rect.x1 + 3) / 4, words);
+
+        for(int l = y - 1 - ws->m.y; l <= y + 1 - ws->m.y; l++){
+            if(l < 0 || l >= VESA_CURSOR_HEIGHT){
+                continue;
+            }
+            int first = MAX(cursor[l].first, next);
+            int end = MIN(cursor[l].end, last);
+            if(first >= end){
+                continue;
+            }
+            __ws_copy_words(framebuffer+next, screen+next, source+next, first-next);
+            __ws_copy_words(framebuffer+first, screen+first, cursor[l].words + (first - cursor[l].first), end-first);
+            next = end;
+        }
+        __ws_copy_words(framebuffer+next, screen+next, source+next, last-next);
+    }
 }
 
 /* The rectangle around both a and b */
@@ -496,48 +533,29 @@ static void __ws_damage(struct gfx_rect* list, int* count, struct gfx_rect rect)
     list[(*count)++] = rect;
 }
 
-/* A range of the screen's rows, from top up to bottom */
-struct ws_rows {
-    int top, bottom;
-};
-
 /**
- * Copies the rows of the redrawn rectangles to the framebuffer, and if the cursor moved, the rows it left and the
- * rows it's on now, then records where the copy put the cursor (#180). Rows are copied in order from the top, with
- * ranges that overlap or touch merged, so none is copied twice.
+ * Copies the redrawn rectangles to the framebuffer, and if the cursor moved, the rectangle it left and the one it's on
+ * now, then records where the copy put the cursor (#180).
  */
 static void __ws_copy_damage(struct windowserver* ws, struct gfx_rect* damage, int damaged, bool_t cursor_moved)
 {
-    struct ws_rows rows[WS_DAMAGE_MAX + 2];
-    int count = 0;
+    /* Most frames have nothing to copy, and the window server runs them back to back */
+    if(damaged == 0 && !cursor_moved){
+        return;
+    }
+
+    struct ws_cursor_row cursor[VESA_CURSOR_HEIGHT];
+    __ws_cursor_rows(ws, cursor);
+
     for(int i = 0; i < damaged; i++){
-        rows[count++] = (struct ws_rows){ damage[i].y0, damage[i].y1 };
+        __ws_copy_rect(ws, damage[i], cursor);
     }
     if(cursor_moved){
-        rows[count++] = (struct ws_rows){ ws->_screen_cursor_y, ws->_screen_cursor_y + VESA_CURSOR_HEIGHT };
-        rows[count++] = (struct ws_rows){ ws->m.y, ws->m.y + VESA_CURSOR_HEIGHT };
-    }
-
-    for(int i = 1; i < count; i++){
-        struct ws_rows range = rows[i];
-        int j = i;
-        for(; j > 0 && rows[j-1].top > range.top; j--){
-            rows[j] = rows[j-1];
-        }
-        rows[j] = range;
-    }
-
-    for(int i = 0; i < count; i++){
-        int top = rows[i].top, bottom = rows[i].bottom;
-        while(i + 1 < count && rows[i+1].top <= bottom){
-            i++;
-            bottom = MAX(bottom, rows[i].bottom);
-        }
-        top = MAX(top, 0);
-        bottom = MIN(bottom, vbe_info->height);
-        if(top < bottom){
-            __ws_copy_rows(ws, top, bottom);
-        }
+        int x = ws->_screen_cursor_x, y = ws->_screen_cursor_y;
+        __ws_copy_rect(ws, (struct gfx_rect){ x, y, x + VESA_CURSOR_WIDTH, y + VESA_CURSOR_HEIGHT }, cursor);
+        x = ws->m.x;
+        y = ws->m.y;
+        __ws_copy_rect(ws, (struct gfx_rect){ x, y, x + VESA_CURSOR_WIDTH, y + VESA_CURSOR_HEIGHT }, cursor);
     }
 
     ws->_screen_cursor_x = ws->m.x;

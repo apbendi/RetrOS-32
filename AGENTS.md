@@ -261,9 +261,9 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **The window manager** marks a window whose focus or position in the stack changes, including the one that loses focus.
 
 **Copying to the screen** (#163): the window server never reads the framebuffer, since reading video memory is slow on a real card, and in 86Box.
-- **The screen copy,** `ws->_screen`, a second screen-sized buffer, holds what the framebuffer shows. `__ws_copy_rows` compares the composition buffer with it a word at a time, and writes each word that differs to both.
-- **The cursor** is never drawn into a buffer. For each of the cursor's rows, the copy takes the words it touches from the composition buffer, draws that row of the cursor over them (`vesa_put_cursor_row`), and compares those instead. It records where it put the cursor (`_screen_cursor_x`/`_y`).
-- **What's copied** (`__ws_copy_damage`): the rows of each redrawn rectangle, every row in fullscreen, and when the cursor moved, the rows it left and the rows it's on. Ranges are merged and copied from the top, once each.
+- **The screen copy,** `ws->_screen`, a second screen-sized buffer, holds what the framebuffer shows. `__ws_copy_rect` compares the composition buffer with it a word at a time, and writes each word that differs to both.
+- **The cursor** is never drawn into a buffer. For each of the cursor's rows, the copy takes the words it touches from the composition buffer, draws that row of the cursor over them (`__ws_cursor_rows`, `vesa_put_cursor_row`), and compares those instead. It records where it put the cursor (`_screen_cursor_x`/`_y`).
+- **What's copied** (`__ws_copy_damage`): each redrawn rectangle, with its columns widened to whole 4-byte words; the whole screen in fullscreen; and when the cursor moved, the rectangle it left and the one it's on. A Clock tick compares 160 rows of 32 words, and a mouse move two cursor-sized rectangles.
 - **Interrupts:** outside fullscreen the copy runs with them on, since only the window server thread writes the composition buffer then. In fullscreen they're off (see "Fullscreen").
 - **Nothing else may write the framebuffer** once `ws_init` has cleared it and the copy, or the two disagree. Only the panic and shutdown screens do, and they halt.
 - **Checking it:** the shell's `screencheck` (`ws_check_screen`, #180) has the window server composite the whole screen from scratch into a spare buffer, with the cursor, and compare that with the screen copy. It prints "Screen matches." or the rectangle that differs.
