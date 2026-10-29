@@ -62,6 +62,14 @@ struct windowserver {
     uint8_t* _screen;
     int _screen_cursor_x, _screen_cursor_y;
 
+    /* A screencheck asked for (ws_check_screen): the buffer to composite into, and the result once done is set */
+    struct {
+        uint8_t* buffer;
+        int done;
+        int result;
+        struct gfx_rect diff;
+    } _check;
+
     /* The desktop's color, behind the windows */
     color_t background;
 
@@ -82,6 +90,7 @@ struct windowserver {
 
 /* window server functions */
 struct windowserver* ws_new();
+int ws_check_screen(struct windowserver* ws, struct gfx_rect* diff);
 
 
 
