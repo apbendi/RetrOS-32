@@ -150,7 +150,7 @@ public:
 
     void drawIcon(int x, int y, const unsigned char* icon){
         for (int i = 0; i < ICON_SIZE*ICON_SIZE; i++){
-            if(icon[i] == 0xff) continue;
+            if(icon[i] == COLOR_TRANSPARENT) continue;
             drawPixel(x + i%ICON_SIZE, y + i/ICON_SIZE, icon[i]);
         }
     }

@@ -213,7 +213,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 |---|---|
 | `gfx_draw_rectangle`, `gfx_draw_line` | VGA (`COLOR_VGA_*`) |
 | `gfx_draw_rectangle_rgb`, `gfx_draw_line_rgb` | RGB332 |
-| `gfx_draw_pixel` | RGB332, for icons |
+| `gfx_draw_pixel` | VGA |
 | circles | VGA, passed through unconverted |
 
 The `COLOR_*` constants without `VGA_` in `colors.h` are meant as RGB332, but not all of them are accurate.
