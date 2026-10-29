@@ -62,7 +62,6 @@ extern uint8_t forman[76800];
 
 void vesa_init();
 
-void vga_set_palette();
 
 void vesa_put_pixel(uint8_t* buffer, int x,int y, unsigned char color);
 

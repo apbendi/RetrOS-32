@@ -39,55 +39,6 @@ uint8_t cursor[16][16] = {
     ,{0x00,0x00,0x00,0x00,0x00,0x00,0x92,0x92,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}
 };
 
-#define VESA_BG_COLOR COLOR_BOX_DARK_CYAN
-
-#define PALETTE_MASK 0x3C6
-#define PALETTE_READ 0x3C7
-#define PALETTE_WRITE 0x3C8
-#define PALETTE_DATA 0x3C9
-
-#define VGA_INDEX_REGISTER 0x3C0
-#define VGA_DATA_REGISTER 0x3C1
-#define PALETTE_SIZE 768
-
-static unsigned char originalPalette[PALETTE_SIZE];
-
-void reset_vga_palette() {
-    int i;
-    
-    // Initialize VGA adapter
-    outportb(VGA_INDEX_REGISTER, (uint8_t)0x03C0);
-    
-    // Write original VGA palette values
-    for (i = 0; i < PALETTE_SIZE; i++) {
-        outportb(VGA_DATA_REGISTER, originalPalette[i]);
-    }
-}
-
-void vga_set_palette()
-{
-    int i;
-    outportb(VGA_INDEX_REGISTER, (uint8_t)0x03C0);
-    for (i = 0; i < PALETTE_SIZE; i++) {
-        originalPalette[i] = inportb(VGA_DATA_REGISTER);
-    }
-
-    /* Currently only supports EDIM1 (RRRGGGBB) palette. */
-    outportb(PALETTE_MASK, 0xFF);
-    outportb(PALETTE_WRITE, 0);
-    for (uint8_t i = 0; i < 255; i++) {
-        outportb(PALETTE_DATA, (((i >> 5) & 0x7) * (256 / 8)) / 4);
-        outportb(PALETTE_DATA, (((i >> 2) & 0x7) * (256 / 8)) / 4);
-        outportb(PALETTE_DATA, (((i >> 0) & 0x3) * (256 / 4)) / 4);
-    }
-
-    // set color 255 = white
-    outportb(PALETTE_DATA, 0x3F);
-    outportb(PALETTE_DATA, 0x3F);
-    outportb(PALETTE_DATA, 0x3F);
-    
-}
-
 /* http://www.piclist.com/tecHREF/datafile/charset/extractor/charset_extractor.html */
 
 unsigned short b8to16(unsigned char c)
@@ -154,8 +105,6 @@ void vesa_put_icon16(uint8_t* buffer, int x, int y)
         for (int i = 0; i < 16; i++) {
             if (cursor[l][i] != 0x0) {
                 vesa_put_pixel(buffer, (x)+i,  (y)+l, cursor[l][i]);
-            } else {
-                //putpixel((x)+i,  (y)+l, VESA_BG_COLOR);
             }
         }
     }
