@@ -197,7 +197,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - **Moving:** `is_moving.x`/`y` hold where the title bar was grabbed, relative to the window's position. `gfx_default_hover` keeps that point under the cursor, clamping each axis to the screen on its own, so a window pushed against an edge slides along it. The whole window stays on screen. Drawing is clipped (#4), so that's for usability, not safety. #18 covers letting windows hang off the edge.
 
 **Drawing:**
-- **The `vesa_*` helpers are clipped to the screen** (`include/vbe.h`, `drivers/vbe.c`; #4). They draw only into screen-sized buffers: the composition buffer, the framebuffer and the window server's background. Whatever falls off screen is skipped.
+- **The `vesa_*` helpers are clipped to the screen** (`include/vbe.h`, `drivers/vbe.c`; #4). They draw only into screen-sized buffers: the composition buffer and the framebuffer. Whatever falls off screen is skipped.
   - **Lines and filled rectangles** clamp their range before looping. **Characters, icons and single pixels** check each pixel with `vesa_on_screen`.
   - **`gfx_draw_window`** copies only the on-screen part of a window's content.
   - **`putpixel` isn't clipped,** because it also draws into windows' own buffers. Use it only with a size check of your own, as the `kernel_gfx_*` functions do.
@@ -419,7 +419,7 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
 
 - **How memory is divided:** `memory_map_init` (`kernel/memory.c`) divides the memory between 1 MB and 16 MB. With `-m 32m` that's 15 MB:
   - **1–11 MB, the kernel heap (`kalloc`):** whatever the other regions leave, 10 MB (#11).
-  - **11–12 MB, permanent memory (`palloc`, never freed):** a fixed 1 MB. It holds the wallpaper buffer, the network card's buffers and the heap's bitmap, about 834 KB at 1024×768.
+  - **11–12 MB, permanent memory (`palloc`, never freed):** a fixed 1 MB. It holds the network card's buffers and the heap's bitmap, 69 KB, so most of it is unused.
   - **12–16 MB, pages:** a quarter of the memory. The first 256 KB is the page-table pool for the kernel's own tables (`vmem_manager`, 6 pages used); the rest is pages for processes (`vmem_default`: page tables, code, stacks, `malloc`).
   - **The memory above 16 MB isn't used.** The kernel's 1:1 mapping ends at 16 MB, where process code is mapped (`VMEM_DATA`). #56 covers moving it and using all of memory.
   - The sizes are in `include/memory.h`. The shell's `meminfo` shows each region's use.

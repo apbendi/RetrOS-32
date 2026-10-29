@@ -53,8 +53,8 @@ struct windowserver {
 
     /* Destroyed windows, freed at the start of the next frame, when the window server holds no window pointers */
     struct window* _free;
-    /* frame buffers */
-    ubyte_t* background;
+    /* The desktop's color, behind the windows */
+    color_t background;
 
     int buffer_size;
 

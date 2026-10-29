@@ -60,13 +60,6 @@ static int ws_init(struct windowserver* ws)
     ws->_wm = wm;
     ws->workspace = 0;
 
-    ws->background = palloc(VBE_SIZE());
-    if(ws->background == NULL){
-        wm->ops->destroy(wm);
-        ws->ops->destroy(ws);
-        return -ERROR_ALLOC;
-    }
-
     SET_FlAG(ws->flags, WINDOW_SERVER_INITIALIZED);
     return ERROR_OK;
 }
@@ -266,39 +259,13 @@ static int ws_fullscreen(struct windowserver* ws, struct window* window)
     return ERROR_OK;
 }
 
-#define DIAMONDS() int color = (((i / (size + spacing)) + (j / (size + spacing))) % 2 == 0 &&\
-            (i % (size + spacing) < size) && (j % (size + spacing) < size) &&\
-            (ABS(i % (size + spacing) - size/2) + ABS(j % (size + spacing) - size/2) <= size/2)\
-            ) ? 19 :\
-            (\
-                ((i % (size + spacing) == size/2) || (i % (size + spacing) == size/2 + 1)) &&\
-                ((j % (size + spacing) == size/2) || (j % (size + spacing) == size/2 + 1)) &&\
-                ((i / (size + spacing)) + (j / (size + spacing))) % 2 == 1\
-            ) ? 18 : 20;\
-
-
 static int ws_set_background(struct windowserver* ws, color_t color)
 {
     ERR_ON_NULL(ws);
     WS_VALIDATE(ws);
 
-    memset(ws->background, color, VBE_SIZE());
-    // int j, i;
-    // for (i = 0; i < 640; i++) {
-    //     for (j = 0; j < 480; j++) {
-    //         /* Checkered pattern */
-    //         int size = 30;
-    //         int spacing = 10;
-    //         int dot_size = 2;
-
-    //         DIAMONDS();
-            
-    //         vesa_put_pixel(ws->background, i, j, color);
-    //     }
-    // }
-
-
-
+    /* Shown from the next frame that composites the screen */
+    ws->background = color;
     return ERROR_OK;
 }
 
@@ -457,7 +424,7 @@ static int ws_draw(struct windowserver* ws)
     struct window* fullscreen = ws->_fullscreen;
 
     if((ws->window_changes || mouse_changed ) && fullscreen == NULL){
-        memcpy(ws->_wm->composition_buffer, ws->background, ws->_wm->composition_buffer_size);
+        memset(ws->_wm->composition_buffer, ws->background, ws->_wm->composition_buffer_size);
 
         /* write current workspace at the right bottom of screen, numbered from 1 like Alt+1 to Alt+4 */
         vesa_printf(ws->_wm->composition_buffer, 8, vbe_info->height -8, 0x1F, "Workspace %d", ws->workspace + 1);
