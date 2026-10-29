@@ -44,6 +44,7 @@ versions.txt
 image
 bin/build
 bin/bmptool
+bin/gen/
 bin/mkfs
 bin/bootblock
 bin/kernel*

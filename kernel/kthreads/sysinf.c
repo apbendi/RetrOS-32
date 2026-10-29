@@ -18,7 +18,7 @@
 #include <gfx/gfxlib.h>
 #include <kutils.h>
 #include <libc.h>
-#include <lib/icons.h>
+#include <images.h>
 #include <pci.h>
 
 #include <diskdev.h>
@@ -149,7 +149,7 @@ static void sysinf_draw_mem(struct window* w, struct tab* tab)
     w->draw->rect(w, 31, HEIGHT/2+10+10+10+10+10+11, permanent_usage, 8, COLOR_VGA_GREEN);
     w->draw->textf(w, 30, HEIGHT/2+10+10+10+10+10+10+12, 0, "Permanent: %d%", permanent_usage);
 
-    gfx_put_icon32(computer_icon, 175, HEIGHT/2+10+10+10+5);
+    gfx_put_icon32(computer_icon.pixels, 175, HEIGHT/2+10+10+10+5);
 }
 
 static void sysinf_draw_net(struct window* w, struct tab* tab)
@@ -166,7 +166,7 @@ static void sysinf_draw_net(struct window* w, struct tab* tab)
 
     SECTION(w, 24, 48, WIDTH-48, HEIGHT/3-48, "Stats");
 
-    gfx_put_icon32(wlan_32, WIDTH/2 + 40, 45+10);
+    gfx_put_icon32(wlan_32.pixels, WIDTH/2 + 40, 45+10);
 
     w->draw->textf(w, 30, 45+10, 0,     "TX:        %d", info.sent);
     w->draw->textf(w, 30, 45+20, 0,     "RX:        %d", info.recvd);
@@ -240,16 +240,16 @@ static void sysinf_draw_dev(struct window* w, struct tab* tab)
     for(int i = 0; i < 25; i++) {
         if(devices[i].vendor == 0) continue;
 
-        unsigned char* icon;
+        const struct image* icon;
         switch (devices[i].class){
         case 0x6:
-            icon = menu_16;
+            icon = &menu_16;
             break;
         case 0x2:
-            icon = wlan_16;
+            icon = &wlan_16;
             break;
         default:
-            icon = desktop_16;
+            icon = &desktop_16;
             break;
         }
 
@@ -258,7 +258,7 @@ static void sysinf_draw_dev(struct window* w, struct tab* tab)
 
         /* Draw the device name */
         w->draw->textf(w, 35+18, y_device, 0, "%s (%s)", pci_get_class_name(&devices[i]), pci_get_vendor_name(&devices[i]));
-        gfx_put_icon16(icon, 35, y_device-4);
+        gfx_put_icon16(icon->pixels, 35, y_device-4);
 
         /* Draw additional device information */
         w->draw->textf(w, 53, y_device_info, 0, "%s", pci_get_device_name(&devices[i]));
@@ -291,7 +291,7 @@ static void sysinf_draw_display(struct window* w, struct tab* tab)
     w->draw->textf(w, 30, 45+30, 0,     "Depth:    %d", info.bpp);
 
 
-    gfx_put_icon32(screen_32, WIDTH/2 + 40, 45+10);
+    gfx_put_icon32(screen_32.pixels, WIDTH/2 + 40, 45+10);
 
     /* Colors */
     SECTION(w, 24, HEIGHT/3+10, WIDTH-48, HEIGHT-48, "Colors - VGA");

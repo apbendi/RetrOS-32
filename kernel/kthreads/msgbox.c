@@ -16,7 +16,7 @@
 #include <gfx/window.h>
 #include <gfx/events.h>
 #include <gfx/gfxlib.h>
-#include <lib/icons.h>
+#include <images.h>
 #include <vbe.h>
 #include <lib/display.h>
 
@@ -83,13 +83,13 @@ static void __kthread_entry __msgbox(int argc, char* argv[])
 
     switch (box->type){
     case MSGBOX_TYPE_INFO:
-        gfx_put_icon32(info_32, 10, 20);
+        gfx_put_icon32(info_32.pixels, 10, 20);
         break;
     case MSGBOX_TYPE_WARNING:
-        gfx_put_icon32(warning_32, 10, 20);
+        gfx_put_icon32(warning_32.pixels, 10, 20);
         break;
     case MSGBOX_TYPE_ERROR:
-        gfx_put_icon32(error_32, 10, 20);
+        gfx_put_icon32(error_32.pixels, 10, 20);
         break;
     }
 

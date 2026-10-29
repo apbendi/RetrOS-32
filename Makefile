@@ -5,7 +5,7 @@ BUILD_DIR := bin
 INCLUDE_DIR := $(ROOT_DIR)/include
 HOST_CC ?= gcc
 
-CFLAGS := $(FREESTANDING_CFLAGS) $(KERNEL_DEBUG_CFLAGS) -std=gnu11 -O1 -D__KERNEL -I $(INCLUDE_DIR)
+CFLAGS := $(FREESTANDING_CFLAGS) $(KERNEL_DEBUG_CFLAGS) -std=gnu11 -O1 -D__KERNEL -I $(INCLUDE_DIR) -I $(BUILD_DIR)/gen
 ASFLAGS := $(ARCH_ASFLAGS)
 LDFLAGS := $(ARCH_LDFLAGS)
 
@@ -40,7 +40,7 @@ endif
 
 PROGRAMOBJ := $(addprefix $(BUILD_DIR)/,shell.o networking.o dhcpd.o tcpd.o logd.o taskbar.o about.o)
 GFXOBJ := $(addprefix $(BUILD_DIR)/,window.o component.o composition.o gfxlib.o api.o theme.o core.o)
-KERNELOBJ := $(addprefix $(BUILD_DIR)/,kernel.o terminal.o helpers.o pci.o virtualdisk.o windowmanager.o icons.o vga.o \
+KERNELOBJ := $(addprefix $(BUILD_DIR)/,kernel.o terminal.o helpers.o pci.o virtualdisk.o windowmanager.o images.o vga.o \
 	libc.o interrupts.o irs_entry.o timer.o gdt.o smp.o keyboard.o pcb.o pcb_queue.o memory.o vmem.o kmem.o e1000.o display.o env.o conf.o \
 	sync.o kthreads.o ata.o atapi.o bitmap.o rtc.o tss.o kutils.o login.o cmds.o diskdev.o scheduler.o work.o rbuffer.o errors.o kclock.o tar.o loopback.o \
 	serial.o io.o syscalls.o list.o hashmap.o vbe.o ksyms.o windowserver.o mouse.o ipc.o sysinf.o font8.o net.o fs.o fatfs.o partition.o \
@@ -99,6 +99,26 @@ bin/bmptool: tools/bmp.c lib/palette.c include/palette.h
 tools: bin/build bin/bmptool
 	$(MAKE) -C tools
 
+# The images built into the kernel: C arrays that bmptool writes from images/*.bmp, declared in images.h. They're
+# generated into bin/gen and never committed, so an image is changed by editing its BMP
+IMAGES := $(sort $(wildcard images/*.bmp))
+
+$(BUILD_DIR)/gen/images.h: $(BUILD_DIR)/gen/images.c ;
+
+$(BUILD_DIR)/gen/images.c: $(IMAGES) bin/bmptool
+	$(call make_dir,$(BUILD_DIR)/gen)
+	$(QUIET)$(BUILD_DIR)/bmptool bmp2c $(BUILD_DIR)/gen/images.c $(BUILD_DIR)/gen/images.h $(IMAGES)
+	$(QUIET)echo "[GEN] $(BUILD_DIR)/gen/images.c from $(words $(IMAGES)) images"
+
+$(BUILD_DIR)/images.o: $(BUILD_DIR)/gen/images.c
+	$(call make_dir,$(BUILD_DIR))
+	$(QUIET)$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(QUIET)echo "[CC ] $<"
+
+# A kernel source may include images.h, so it's generated before any is compiled. After that, each object's .d file
+# says whether it depends on it
+$(KERNELOBJ) $(BUILD_DIR)/kcrt0.o: | $(BUILD_DIR)/gen/images.h
+
 tests: compile
 	$(MAKE) -C tests
 
@@ -140,6 +160,7 @@ clean:
 	$(MAKE) -C libc clean
 	$(MAKE) -C tests clean
 	$(QUIET)$(RM_F) $(BUILD_DIR)/*.o $(BUILD_DIR)/*.d $(BUILD_DIR)/bootblock $(BUILD_DIR)/kernelout $(BUILD_DIR)/symbols $(BUILD_DIR)/build $(BUILD_DIR)/bmptool
+	$(QUIET)$(RM_RF) $(BUILD_DIR)/gen
 	$(QUIET)$(RM_F) .depend filesystem.image filesystem.test
 	@echo "Cleaned kernel outputs."
 
