@@ -18,6 +18,7 @@ extern "C" {
 #endif
 
 #include <gfx/events.h>
+#include <image.h>
 
 enum gfx_lib_api_options {
     GFX_DRAW_CHAR_OPT,
@@ -28,7 +29,17 @@ enum gfx_lib_api_options {
     GFX_DRAW_LINE_OPT,
     GFX_EVEN_LOOP_OPT,
     GFX_DRAW_PIXEL,
+    GFX_DRAW_IMAGE,
     GFX_DRAW_UNUSED,
+};
+
+/* The largest width or height of an image an app draws */
+#define GFX_IMAGE_MAX_SIDE 1024
+
+/* An image to draw at x, y: its pixels are in the app's memory */
+struct gfx_image {
+    int x, y;
+    struct image image;
 };
 
 struct gfx_pixel {
@@ -73,6 +84,11 @@ int gfx_draw_circle(int x, int y, int r, unsigned char color, char fill);
 int gfx_draw_line(int x0, int y0, int x1, int y1, unsigned char color);
 int gfx_get_event(struct gfx_event*, gfx_event_flag_t flags);
 int gfx_draw_pixel(int x, int y, unsigned char color);
+/**
+ * Draws an image in one call, leaving the window as it is where the image is COLOR_TRANSPARENT.
+ * @return 0, or a negative error code
+ */
+int gfx_draw_image(int x, int y, const struct image* image);
 
 
 #ifdef __cplusplus

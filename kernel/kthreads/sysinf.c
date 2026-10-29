@@ -149,7 +149,7 @@ static void sysinf_draw_mem(struct window* w, struct tab* tab)
     w->draw->rect(w, 31, HEIGHT/2+10+10+10+10+10+11, permanent_usage, 8, COLOR_VGA_GREEN);
     w->draw->textf(w, 30, HEIGHT/2+10+10+10+10+10+10+12, 0, "Permanent: %d%", permanent_usage);
 
-    gfx_put_icon32(computer_icon.pixels, 175, HEIGHT/2+10+10+10+5);
+    w->draw->image(w, 175, HEIGHT/2+10+10+10+5, &computer_icon);
 }
 
 static void sysinf_draw_net(struct window* w, struct tab* tab)
@@ -166,7 +166,7 @@ static void sysinf_draw_net(struct window* w, struct tab* tab)
 
     SECTION(w, 24, 48, WIDTH-48, HEIGHT/3-48, "Stats");
 
-    gfx_put_icon32(wlan_32.pixels, WIDTH/2 + 40, 45+10);
+    w->draw->image(w, WIDTH/2 + 40, 45+10, &wlan_32);
 
     w->draw->textf(w, 30, 45+10, 0,     "TX:        %d", info.sent);
     w->draw->textf(w, 30, 45+20, 0,     "RX:        %d", info.recvd);
@@ -258,7 +258,7 @@ static void sysinf_draw_dev(struct window* w, struct tab* tab)
 
         /* Draw the device name */
         w->draw->textf(w, 35+18, y_device, 0, "%s (%s)", pci_get_class_name(&devices[i]), pci_get_vendor_name(&devices[i]));
-        gfx_put_icon16(icon->pixels, 35, y_device-4);
+        w->draw->image(w, 35, y_device-4, icon);
 
         /* Draw additional device information */
         w->draw->textf(w, 53, y_device_info, 0, "%s", pci_get_device_name(&devices[i]));
@@ -291,7 +291,7 @@ static void sysinf_draw_display(struct window* w, struct tab* tab)
     w->draw->textf(w, 30, 45+30, 0,     "Depth:    %d", info.bpp);
 
 
-    gfx_put_icon32(screen_32.pixels, WIDTH/2 + 40, 45+10);
+    w->draw->image(w, WIDTH/2 + 40, 45+10, &screen_32);
 
     /* Colors */
     SECTION(w, 24, HEIGHT/3+10, WIDTH-48, HEIGHT-48, "Colors - VGA");

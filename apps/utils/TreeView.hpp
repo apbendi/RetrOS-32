@@ -260,10 +260,8 @@ private:
     }
 
     void drawIcon(int x, int y, const unsigned char* icon) {
-        for (int i = 0; i < 16*16; i++) {
-            if (icon[i] == COLOR_TRANSPARENT) continue;
-            gfx_draw_pixel(x + (i % 16), y + (i / 16), icon[i]);
-        }
+        struct image image = { 16, 16, icon };
+        gfx_draw_image(x, y, &image);
     }
 
     void clearNodeRecursive(struct TreeNode* node)

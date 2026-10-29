@@ -83,13 +83,13 @@ static void __kthread_entry __msgbox(int argc, char* argv[])
 
     switch (box->type){
     case MSGBOX_TYPE_INFO:
-        gfx_put_icon32(info_32.pixels, 10, 20);
+        w->draw->image(w, 10, 20, &info_32);
         break;
     case MSGBOX_TYPE_WARNING:
-        gfx_put_icon32(warning_32.pixels, 10, 20);
+        w->draw->image(w, 10, 20, &warning_32);
         break;
     case MSGBOX_TYPE_ERROR:
-        gfx_put_icon32(error_32.pixels, 10, 20);
+        w->draw->image(w, 10, 20, &error_32);
         break;
     }
 
