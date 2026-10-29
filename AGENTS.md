@@ -212,7 +212,6 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 | Call | Takes |
 |---|---|
 | `gfx_draw_rectangle`, `gfx_draw_line` | VGA (`COLOR_VGA_*`) |
-| `gfx_draw_rectangle_rgb`, `gfx_draw_line_rgb` | RGB332 |
 | `gfx_draw_pixel` | VGA |
 | circles | VGA, passed through unconverted |
 
