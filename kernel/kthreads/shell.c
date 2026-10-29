@@ -268,20 +268,21 @@ void ps(int argc, char* argv[])
 			$process->current->term->ops->commit($process->current->term);
 			
 			struct gfx_event event;
-			gfx_event_loop(&event, GFX_EVENT_NONBLOCKING);
-
-			switch (event.event){
-			case GFX_EVENT_KEYBOARD:
-				switch (event.data){
-				case CTRLC:
+			/* Drain the queue, so a Ctrl+C isn't delayed a frame, and a windowless thread reads nothing */
+			while(gfx_event_loop(&event, GFX_EVENT_NONBLOCKING) == 0){
+				switch (event.event){
+				case GFX_EVENT_KEYBOARD:
+					switch (event.data){
+					case CTRLC:
+						return;
+					}
+					break;
+				case GFX_EVENT_EXIT:
+					kernel_exit();
 					return;
+				default:
+					break;
 				}
-				break;
-			case GFX_EVENT_EXIT:
-				kernel_exit();
-				return;
-			default:
-				break;
 			}
 			kernel_sleep(1000);
 		}
