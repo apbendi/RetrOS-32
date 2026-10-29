@@ -76,7 +76,7 @@ docker compose up
   - You don't need `make clean`, except after changing compile flags, which make doesn't track: run `docker compose run --rm builder clean`, then `docker compose up`.
 - **Toolchain:** the host (macOS) has no i386 cross toolchain. Use the container for real builds, and clang for quick checks (below).
 - **A first build is slow:** the host is arm64 and the container `linux/amd64`, so gcc runs emulated, one file at a time. The C library alone is ~550 files and takes a few minutes. Once they're built, later builds skip them.
-- **`bin/build` must be the container's:** it's a host tool (`HOST_CC`), and the repo is shared with the container, so a `make tools`, `make img` or `make create_fs` run on the Mac leaves a macOS binary there. The container's make sees it's newer than `tools/build.c`, tries to run it, and fails with `create_fs] Error 127`. `rm bin/build`, then `docker compose up` again.
+- **`bin/build` and `bin/bmptool` must be the container's:** they're host tools (`HOST_CC`), and the repo is shared with the container, so a `make tools`, `make img` or `make create_fs` run on the Mac leaves macOS binaries there. The container's make sees they're newer than their sources, tries to run them, and fails with `Error 127`. `rm bin/build bin/bmptool`, then `docker compose up` again. To run a host tool on the Mac, build it somewhere else, as `tests/images/run.sh` does.
 - **GCC catches more than clang:** the build uses GCC with `-Wall -Wextra -Wpedantic`, and GCC warns about things clang doesn't. One example from this repo: a `?:` mixing an enum value with a non-enum operand.
 
 ## Run
@@ -208,13 +208,16 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - The userspace `gfx_draw_line` in `lib/graphics.c` swaps the coordinates first, so apps pass normal `(x, y)`. Don't swap them again in an app.
 
 **Colors** are indexes into the screen's 256-color palette, in every drawing call, the kernel's and apps', and in images. `colors.h` names some: `COLOR_VGA_*`, `COLOR_BLACK` and `COLOR_WHITE`.
-- **The palette** is the standard VGA palette. The kernel loads it in graphics modes, from `vga_palette` in `drivers/vbe.c` (`vga_load_palette`, called from `gfx_init_framebuffer`), so colors don't depend on the video BIOS or GRUB. Text mode keeps the BIOS's.
+- **The palette** is the standard VGA palette, `vga_palette` in `lib/palette.c`. The kernel loads it in graphics modes (`vga_load_palette` in `drivers/vbe.c`, called from `gfx_init_framebuffer`), so colors don't depend on the video BIOS or GRUB. Text mode keeps the BIOS's. Host tools compile `lib/palette.c` too.
   - **0–15:** the 16 EGA colors.
   - **16–31:** a gray ramp.
   - **32–247:** 24 hues at three saturations (+0, +24, +48) and three brightnesses (+0, +72, +144). Red is 40, then 112 and 184 darker.
   - **248–255:** black.
 - **Transparent:** 255, `COLOR_TRANSPARENT`. It isn't drawn in icons, or in the content of a window made with `GFX_IS_TRANSPARENT`, like the taskbar.
-- **Images:** icons (`lib/icons.c`, `apps/utils/TreeView.hpp`, Finder's `rootfs/ico/*.ico`) and the About logo are their pixels' palette indexes, row by row from the top left, with no header.
+- **Images in memory:** icons (`lib/icons.c`, `apps/utils/TreeView.hpp`, Finder's `rootfs/ico/*.ico`), the About logo and the cursor are their pixels' palette indexes, row by row from the top left, with no header. `struct image` (`include/image.h`) holds one with its size.
+- **Image files** (#177) are 8-bit, uncompressed BMPs whose color table is the VGA palette, except entry 255, which is magenta so an image editor shows where it's transparent.
+  - **`bin/bmptool`** (`tools/bmp.c`) converts palette indexes to a BMP and back (`raw2bmp`, `bmp2raw`), writes C arrays from BMPs (`bmp2c`), and checks that a file is in the format (`check`).
+  - **Its tests:** `tests/images/run.sh`, on the Mac, under AddressSanitizer.
 
 **Events:**
 - **Reading:** `gfx_get_event(&e, GFX_EVENT_NONBLOCKING)` returns 0 if it got an event and -1 if there was none. On -1 it leaves `e` untouched.

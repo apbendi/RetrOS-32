@@ -1,8 +1,8 @@
 include ../make/common.mk
 
 BUILD_DIR := bin
-# build.c is compiled by the root Makefile into a host tool; skip it here.
-SOURCES := $(filter-out build.c,$(wildcard *.c))
+# build.c and bmp.c are compiled by the root Makefile into host tools; skip them here.
+SOURCES := $(filter-out build.c bmp.c,$(wildcard *.c))
 OBJECTS := $(SOURCES:%.c=$(BUILD_DIR)/%.o)
 
 .PHONY: all clean
