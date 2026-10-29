@@ -49,6 +49,8 @@ int gfx_init_framebuffer(struct graphic_context* ctx, struct vbe_mode_info_struc
     /* memory map */
     vmem_map_driver_region(vbe_info->framebuffer, (((vbe_info->width*vbe_info->height*(vbe_info->bpp/8))+1)/PAGE_SIZE)+1);
 
+    vga_load_palette();
+
 
     return 0;
 }

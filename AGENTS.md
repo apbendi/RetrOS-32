@@ -208,7 +208,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - The userspace `gfx_draw_line` in `lib/graphics.c` swaps the coordinates first, so apps pass normal `(x, y)`. Don't swap them again in an app.
 
 **Colors** are indexes into the screen's 256-color palette, in every drawing call, the kernel's and apps', and in images. `colors.h` names some: `COLOR_VGA_*`, `COLOR_BLACK` and `COLOR_WHITE`.
-- **The palette** is the standard VGA palette the video BIOS sets up; RetrOS never loads its own.
+- **The palette** is the standard VGA palette. The kernel loads it in graphics modes, from `vga_palette` in `drivers/vbe.c` (`vga_load_palette`, called from `gfx_init_framebuffer`), so colors don't depend on the video BIOS or GRUB. Text mode keeps the BIOS's.
   - **0–15:** the 16 EGA colors.
   - **16–31:** a gray ramp.
   - **32–247:** 24 hues at three saturations (+0, +24, +48) and three brightnesses (+0, +72, +144). Red is 40, then 112 and 184 darker.
