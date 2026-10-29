@@ -504,7 +504,7 @@ void exec(int argc, char* argv[])
 
 	pid = pcb_create_kthread(ptr, argv[idx], argc-idx, &argv[idx]);
 	if(pid > 0){
-		if(kthread_as_deamon) pcb_await(pid);
+		if(!kthread_as_deamon) pcb_await(pid);
 		return;
 	}
 	if(pid < 0){
