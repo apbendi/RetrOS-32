@@ -43,6 +43,7 @@ kernelout
 versions.txt
 image
 bin/build
+bin/bmptool
 bin/mkfs
 bin/bootblock
 bin/kernel*
