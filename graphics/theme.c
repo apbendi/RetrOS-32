@@ -11,6 +11,7 @@
 
 #include <gfx/theme.h>
 #include <libc.h>
+#include <gfx/composition.h>
 
 struct gfx_theme default1 = {
     .os = {
@@ -137,6 +138,8 @@ int kernel_gfx_set_theme(int index)
     if(index < 0 || index >= total_themes)
         return -1;
     current_theme = gfx_themes[index];
+    /* Every window's frame is drawn in the new theme's colors */
+    gfx_composition_redraw();
     return 0;
 }
 

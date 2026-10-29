@@ -55,6 +55,14 @@ int gfx_set_background_color(color_t color)
     return ERROR_OK;
 }
 
+/* Asks the window server to redraw the whole screen, for a change that affects every window, like the theme (#180) */
+void gfx_composition_redraw(void)
+{
+    if(ws != NULL){
+        ws->window_changes = 1;
+    }
+}
+
 int gfx_set_taskbar(pid_t pid)
 {
     ERR_ON_NULL(ws);

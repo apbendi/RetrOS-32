@@ -152,6 +152,13 @@ struct window {
     char changed;
 
     /**
+     * Where the window server last drew the window, its extent then (#180). When the window changes, that's redrawn
+     * along with its extent now, so a moved or shrunk window leaves nothing behind. Empty until it's first drawn.
+     * Only the window server writes it, with interrupts off.
+     */
+    struct gfx_rect drawn;
+
+    /**
      * Set while the window is a terminal's screen. A terminal draws a whole frame in one commit, clearing changed
      * first and setting it after, so the window server can copy it once changed is set even while its owner runs.
      */

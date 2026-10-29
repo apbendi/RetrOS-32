@@ -249,17 +249,21 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **Modifiers:** the event's `flags` has the modifier keys held when the key was pressed, `KEY_MOD_SHIFT`, `KEY_MOD_CTRL` and `KEY_MOD_ALT`. So Shift+Left is `KEY_LEFT` with `KEY_MOD_SHIFT`, and Ctrl+Shift+C is `CTRLC` with both. The driver queues each key with them (`struct kb_key`), and `kb_get_modifiers()` gives the ones held now.
   - **Fake Shifts:** a real keyboard sends Shift presses and releases prefixed with `0xE0` around the gray arrows, Home, End and the like. The driver ignores them. QEMU doesn't send them.
 
-**Redraws:** the window server composites the screen only when a window is marked changed, or something sets `ws->window_changes`, as leaving fullscreen, a workspace switch and `bg` do. Moving the mouse alone doesn't composite (#163).
-- **Apps:** every gfx drawing syscall marks the app's window changed, and so does setting a window's title or header.
-- **Kernel threads** that draw with `w->draw->*` must call `gfx_commit()` themselves, or their drawing only appears when something else on screen changes.
+**Redraws:** the window server redraws only the parts of the screen that changed (#180), and nothing when nothing did. Moving the mouse alone redraws nothing (#163).
+- **What changed,** collected at the start of each frame outside fullscreen, with interrupts off:
+  - **a window marked changed:** where it was drawn last (`w->drawn`) and its extent now (`gfx_window_extent`), so a moved or shrunk window leaves nothing behind. `changed` is cleared here, before drawing, and `drawn` set to the extent read here;
+  - **a closed window:** `ws_remove` adds its `drawn` to `ws->_damage`;
+  - **the whole screen,** when something sets `ws->window_changes`: leaving fullscreen, a workspace switch, `bg` and `th` (`gfx_composition_redraw`).
+- **The list** (`__ws_damage`) holds up to `WS_DAMAGE_MAX`, 8, rectangles. Ones that overlap or touch are merged, and a full list is merged into one. Each is composited separately (`__ws_composite`): the desktop's color, the label, then every window that overlaps it, clipped to it.
+- **The rule this relies on:** anything that changes how a window looks must mark it changed, or ask for a whole redraw. Otherwise the change shows only when something else redraws that part of the screen, and `screencheck` reports it.
+  - **Apps:** every gfx drawing syscall marks the app's window changed, and so do setting a window's title or header and moving it (`kernel_gfx_set_position`).
+  - **Kernel threads** that draw with `w->draw->*` must call `gfx_commit()` themselves.
+  - **The window manager** marks a window whose focus or position in the stack changes, including the one that loses focus.
 
 **Copying to the screen** (#163): the window server never reads the framebuffer, since reading video memory is slow on a real card, and in 86Box.
 - **The screen copy,** `ws->_screen`, a second screen-sized buffer, holds what the framebuffer shows. `__ws_copy_rows` compares the composition buffer with it a word at a time, and writes each word that differs to both.
 - **The cursor** is never drawn into a buffer. For each of the cursor's rows, the copy takes the words it touches from the composition buffer, draws that row of the cursor over them (`vesa_put_cursor_row`), and compares those instead. It records where it put the cursor (`_screen_cursor_x`/`_y`).
-- **What's copied:**
-  - every row after a composite, and in fullscreen;
-  - when only the cursor moved, just the rows between where it was and where it is;
-  - nothing when nothing changed.
+- **What's copied** (`__ws_copy_damage`): the rows of each redrawn rectangle, every row in fullscreen, and when the cursor moved, the rows it left and the rows it's on. Ranges are merged and copied from the top, once each.
 - **Interrupts:** outside fullscreen the copy runs with them on, since only the window server thread writes the composition buffer then. In fullscreen they're off (see "Fullscreen").
 - **Nothing else may write the framebuffer** once `ws_init` has cleared it and the copy, or the two disagree. Only the panic and shutdown screens do, and they halt.
 - **Checking it:** the shell's `screencheck` (`ws_check_screen`, #180) has the window server composite the whole screen from scratch into a spare buffer, with the cursor, and compare that with the screen copy. It prints "Screen matches." or the rectangle that differs.
@@ -272,17 +276,17 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - **No nesting:** the lock isn't reentrant, so don't call a function that takes it while holding it.
 - **Interrupts:** `spin_lock` waits by yielding to other threads (`WAIT` → `kernel_yield`), so don't take it inside `ENTER_CRITICAL`.
 - **Compositing** reads buffers without the lock. That's safe only because every swap also runs on the window server thread. Moving a swap to another thread would mean the compositor has to take the lock too.
-  - So it can copy a window halfway through a redraw, which then shows on screen until the next composite. The window manager clears `changed` as the window server takes the changes, before it draws (`take_changes`), not after, so a commit made during the copy still gets the finished frame composited.
+  - So it can copy a window halfway through a redraw, which then shows on screen until the next composite. The window server clears `changed` as it collects what changed, before it draws, not after, so a commit made during the copy still gets the finished frame composited.
 - **The event queue** has its own lock, `w->spinlock`.
 
 **Window lifetime:** when a thread or process with a window exits, the cleanup worker calls `gfx_destroy_window`. The window server may be in the middle of a frame that uses that window, so the window isn't freed right away (#16).
-- **Removing it:** `ws_remove` sets `w->removed` and takes the window out of the lists, the active one or another workspace's.
+- **Removing it:** `ws_remove` sets `w->removed`, adds where it was drawn to what the next frame redraws, and takes the window out of the lists, the active one or another workspace's.
 - **Freeing it:** the window server frees the window and its buffer at the start of its next frame (`__ws_free_windows`), when it holds no window pointers.
 - **Rules for window manager and window server code:**
   - Don't keep a window pointer from one frame to the next. Anything that does, like `pressed_window` or `ws->_fullscreen`, has to be cleared in `ws_remove`.
   - Don't put a window with `removed` set back into a list, or store it anywhere. `add`, `push_front` and `push_back` check it under `wm->spinlock`.
   - **Every change to the window lists holds `wm->spinlock`:** `add`, `remove`, `push_front`, `push_back` and the workspace switch.
-  - The walks in `wm_default_draw`, `wm_default_mouse_event` and `wm_default_changes` don't take the lock. That's safe for two reasons:
+  - The walks in `wm_default_draw`, `wm_default_mouse_event` and `ws_draw`'s collection of what changed don't take the lock. That's safe for two reasons:
     - a removed window keeps its `next` pointer until it's freed;
     - a window's `next` is set before it's published at the front, with `COMPILER_BARRIER()` between the two stores.
 

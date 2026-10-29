@@ -39,9 +39,6 @@ struct windowmanager_ops {
 
     int (*init)(struct windowmanager *wm, int flags);
     int (*destroy)(struct windowmanager *wm);
-
-    /* whether any window is marked changed, clearing every window's changed */
-    int (*take_changes)(struct windowmanager *wm);
 };
 
 /* Window manager struct */
