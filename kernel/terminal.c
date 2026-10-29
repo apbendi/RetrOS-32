@@ -127,7 +127,7 @@ static int __terminal_grow_textbuffer(struct terminal* term, int min_capacity)
 		new_size *= 2;
 	}
 
-	char* new_buffer = (char*) krealloc(term->textbuffer, new_size);
+	char* new_buffer = (char*) krealloc(term->textbuffer, term->textbuffer_size, new_size);
 	if(new_buffer == NULL){
 		warningf("[TERM] Failed to grow text buffer to %d bytes\n", new_size);
 		return -1;
@@ -1505,7 +1505,7 @@ void terminal_set_input(struct terminal* term, const char* prompt, const char* t
 			size *= 2;
 		}
 
-		char* input = (char*) krealloc(term->input, size);
+		char* input = (char*) krealloc(term->input, term->input_size, size);
 		if(input == NULL){
 			warningf("[TERM] Failed to grow input line to %d bytes\n", size);
 			terminal_unlock(term);

@@ -158,7 +158,7 @@ void* calloc(int size, int val)
 	return m;
 }
 
-void* krealloc(void* ptr, int new_size)
+void* krealloc(void* ptr, int old_size, int new_size)
 {
     if (new_size == 0) {
         kfree(ptr);
@@ -174,7 +174,11 @@ void* krealloc(void* ptr, int new_size)
         return NULL;
     }
 
-    memcpy(new_ptr, ptr, new_size);
+    /* The old block holds old_size bytes, so copy no more than it has */
+    int copy_size = old_size < new_size ? old_size : new_size;
+    if (copy_size > 0) {
+        memcpy(new_ptr, ptr, copy_size);
+    }
 
     kfree(ptr);
     return new_ptr;
