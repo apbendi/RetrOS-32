@@ -53,7 +53,7 @@ static struct window_draw_ops default_window_draw_ops = {
     .line = &kernel_gfx_draw_line,
     .circle = &kernel_gfx_draw_circle,
     .box = &kernel_gfx_draw_contoured_box,
-    .bitmap = &kernel_gfx_draw_bitmap
+    .image = &kernel_gfx_draw_image
 };
 
 /**

@@ -235,7 +235,7 @@ static void taskbar_hdr_event(struct window* w, struct taskbar_header* header, i
             w->draw->box(w, header->x+4, header->y+20 + (j*TASKBAR_OPTIONS_HEIGHT) + 4, TASKBAR_EXT_OPT_WIDTH-8, 16, 30);
 
             if(header->options[j].icon != NULL){
-                gfx_put_icon16(header->options[j].icon->pixels, header->x+4, header->y+20 + (j*TASKBAR_OPTIONS_HEIGHT) + 4);
+                w->draw->image(w, header->x+4, header->y+20 + (j*TASKBAR_OPTIONS_HEIGHT) + 4, header->options[j].icon);
             }
             w->draw->text(w, header->x+24, header->y+20 + (j*TASKBAR_OPTIONS_HEIGHT) + 8, header->options[j].name, COLOR_BLACK);
         }
@@ -342,11 +342,11 @@ static void __kthread_entry taskbar(void)
         if(default_taskbar.headers[i].name[0] == 0) continue;
         gfx_button(default_taskbar.headers[i].x + 20, default_taskbar.headers[i].y, default_taskbar.headers[i].w + 16, default_taskbar.headers[i].h, default_taskbar.headers[i].name);
         if(default_taskbar.headers[i].icon != NULL){
-            gfx_put_icon16(default_taskbar.headers[i].icon->pixels, default_taskbar.headers[i].x+4, default_taskbar.headers[i].y);
+            w->draw->image(w, default_taskbar.headers[i].x+4, default_taskbar.headers[i].y, default_taskbar.headers[i].icon);
         }
     }
     
-    gfx_put_icon16(wlan_16.pixels, timedate_x - 20, 2);
+    w->draw->image(w, timedate_x - 20, 2, &wlan_16);
 
     /* Minute of the last clock redraw, -1 to draw right away */
     int last_minute = -1;

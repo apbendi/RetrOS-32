@@ -123,42 +123,6 @@ int gfx_button_ext(int x, int y, int width, int height, char* name, color_t colo
 	return 0;
 }
 
-int gfx_put_icon16(const unsigned char icon[], int x, int y)
-{
-	spin_lock(&$process->current->gfx_window->buffer_lock);
-	for (int l = 0; l < 16; l++) {
-
-		for (int i = 0; i < 16; i++) {
-			if (icon[l*16+i] != COLOR_TRANSPARENT) {
-
-				if((x)+i < 0 || (y)+l < 0 || (x)+i >= $process->current->gfx_window->inner_width || (y)+l >= $process->current->gfx_window->inner_height)
-					continue;
-				putpixel($process->current->gfx_window->inner, (x)+i, (y)+l, icon[l*16+i], $process->current->gfx_window->pitch);
-			}
-		}
-	}
-	spin_unlock(&$process->current->gfx_window->buffer_lock);
-	return 0;
-}
-
-int gfx_put_icon32(const unsigned char icon[], int x, int y)
-{
-	spin_lock(&$process->current->gfx_window->buffer_lock);
-	for (int l = 0; l < 32; l++) {
-
-		for (int i = 0; i < 32; i++) {
-			if (icon[l*32+i] != COLOR_TRANSPARENT) {
-
-				if((x)+i < 0 || (y)+l < 0 || (x)+i >= $process->current->gfx_window->inner_width || (y)+l >= $process->current->gfx_window->inner_height)
-					continue;
-				putpixel($process->current->gfx_window->inner, (x)+i, (y)+l, icon[l*32+i], $process->current->gfx_window->pitch);
-			}
-		}
-	}
-	spin_unlock(&$process->current->gfx_window->buffer_lock);
-	return 0;
-}
-
 int gfx_event_loop(struct gfx_event* event, gfx_event_flag_t flags)
 {
 
@@ -243,22 +207,31 @@ int kernel_gfx_draw_pixel(struct window* w, int x, int y, color_t color)
 	return 0;
 }
 
-int kernel_gfx_draw_bitmap(struct window* w, int x, int y, int width, int height, const uint8_t* bitmap)
+/**
+ * Draws an image into a window's content at x, y, leaving the window as it is where the image is COLOR_TRANSPARENT.
+ * Whatever falls outside the content isn't drawn.
+ */
+int kernel_gfx_draw_image(struct window* w, int x, int y, const struct image* image)
 {
 	ERR_ON_NULL(w);
+	ERR_ON_NULL(image);
 
 	spin_lock(&w->buffer_lock);
 
-	/* only draw rectangle inside window */
-	if(x < 0 || y < 0 || x+width > w->inner_width || y+height > w->inner_height){
-		spin_unlock(&w->buffer_lock);
-		return -2;
-	}
+	/* The rows and columns of the image that land inside the window */
+	int left = x < 0 ? -x : 0;
+	int top = y < 0 ? -y : 0;
+	int right = image->width < w->inner_width - x ? image->width : w->inner_width - x;
+	int bottom = image->height < w->inner_height - y ? image->height : w->inner_height - y;
 
-	int i, j;
-	for (j = y; j < (y+height); j++)
-		for (i = x; i < (x+width); i++)
-			putpixel(w->inner, i, j, bitmap[(j-y)*width+(i-x)], w->pitch);
+	for (int row = top; row < bottom; row++){
+		const uint8_t* source = image->pixels + row * image->width;
+		for (int column = left; column < right; column++){
+			if(source[column] != COLOR_TRANSPARENT){
+				putpixel(w->inner, x + column, y + row, source[column], w->pitch);
+			}
+		}
+	}
 
 	spin_unlock(&w->buffer_lock);
 	return 0;

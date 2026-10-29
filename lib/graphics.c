@@ -44,6 +44,17 @@ int gfx_draw_pixel(int x, int y, unsigned char color)
 	return 0;
 }
 
+int gfx_draw_image(int x, int y, const struct image* image)
+{
+	struct gfx_image draw = {
+		.x = x,
+		.y = y,
+		.image = *image
+	};
+
+	return gfx_draw_syscall(GFX_DRAW_IMAGE, &draw, 0);
+}
+
 int gfx_draw_circle(int x, int y, int r, unsigned char color, char fill)
 {
 	struct gfx_circle c = {

@@ -109,6 +109,12 @@ public:
     {
         gfx_draw_pixel(x, y, color);
     }
+
+    /* Draws an image in one call, leaving the window as it is where the image is COLOR_TRANSPARENT */
+    int drawImage(int x, int y, const struct image* image)
+    {
+        return gfx_draw_image(x, y, image);
+    }
 	
 	void setTitle(const char* name){
 		gfx_set_title(name);

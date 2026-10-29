@@ -16,6 +16,7 @@
 #include <gfx/events.h>
 #include <assert.h>
 #include <errors.h>
+#include <memory.h>
 
 int gfx_syscall_hook(int option, void* data, int flags)
 {
@@ -48,6 +49,21 @@ int gfx_syscall_hook(int option, void* data, int flags)
     case GFX_DRAW_PIXEL:;
         struct gfx_pixel* pixel = (struct gfx_pixel*)data;
         kernel_gfx_draw_pixel($process->current->gfx_window, pixel->x, pixel->y, pixel->color);
+        break;
+
+    case GFX_DRAW_IMAGE:;
+        /* The arguments, then every pixel, are in the app's memory, which is checked before anything is read */
+        struct gfx_image* draw = (struct gfx_image*)data;
+        if(user_memory_validate(draw, sizeof(*draw), 0) != ERROR_OK){
+            return -ERROR_INVALID_ARGUMENTS;
+        }
+        struct gfx_image args = *draw;
+        if(args.image.width < 1 || args.image.width > GFX_IMAGE_MAX_SIDE || args.image.height < 1 ||
+            args.image.height > GFX_IMAGE_MAX_SIDE ||
+            user_memory_validate(args.image.pixels, args.image.width * args.image.height, 0) != ERROR_OK){
+            return -ERROR_INVALID_ARGUMENTS;
+        }
+        kernel_gfx_draw_image($process->current->gfx_window, args.x, args.y, &args.image);
         break;
 
     case GFX_EVEN_LOOP_OPT:
