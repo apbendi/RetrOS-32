@@ -14,7 +14,7 @@
 #include <gfx/gfxlib.h>
 #include <kernel.h>
 #include <colors.h>
-#include <images.h>
+#include <gfx/icons.h>
 
 #define WIDTH  200
 #define HEIGHT 250
@@ -41,7 +41,8 @@ void __kthread_entry about(int argc, char* argv[])
     SECTION(w, 12, 12, WIDTH-24, HEIGHT-24, "About");
 
     /* draw logo in middle */
-    w->draw->image(w, (WIDTH/2) - (logo.width/2), 30, &logo);
+    const struct image* logo = icon_get("logo");
+    w->draw->image(w, (WIDTH/2) - (logo->width/2), 30, logo);
 
     /* about page information from kernel.h */
     w->draw->textf(w, 16, 150, COLOR_BLACK,  "Kernel:   %s", KERNEL_NAME);

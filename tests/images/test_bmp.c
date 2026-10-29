@@ -1,7 +1,7 @@
 /**
  * Host tests for lib/bmp.c, the image reader the kernel runs on files from the disk. run.sh builds it with
  * AddressSanitizer, so a read outside a file's data fails the run. Files given as arguments must parse with the
- * palette's own colors: run.sh passes every BMP in images/.
+ * palette's own colors: run.sh passes every BMP in images/ and rootfs/sysutil/icons/.
  */
 
 #include <stdint.h>
