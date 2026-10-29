@@ -319,7 +319,6 @@ Notes:
 
 - [x] Custom Bootloader & GRUB compatible
 - [x] Stage 2 bootloader 
-- [x] Wallpapers
 - [x] Mountable image
 - [x] Users 
 - [x] Multi-threaded pre-emptive scheduling
@@ -382,7 +381,7 @@ Notes:
   - [x] Sync / Migration Took
   - [x] mkfs
   - [x] Testing
-  - [ ] Create & Encode icons and wallpapers
+  - [ ] Create & Encode icons
 
 See the [open issues](https://github.com/joexbayer/RetrOS-32/issues) for a full list of proposed features (and known issues).
 

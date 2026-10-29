@@ -29,10 +29,8 @@ static struct window* __ws_enter_fullscreen(struct windowserver* ws, struct wind
 static struct window* __ws_leave_fullscreen(struct windowserver* ws, int mouse_x, int mouse_y,
                                             int* rel_x, int* rel_y);
 static int ws_set_background(struct windowserver* ws, color_t color);
-static int ws_set_background_file(struct windowserver* ws, const char* path);
 static int ws_draw(struct windowserver* ws);
 static int ws_destroy(struct windowserver* ws);
-static int ws_raw_wallpaper(struct windowserver* ws, char* path);
 
 static struct window_server_ops ws_default_ops = {
     .init = ws_init,
@@ -40,10 +38,8 @@ static struct window_server_ops ws_default_ops = {
     .remove = ws_remove,
     .fullscreen = ws_fullscreen,
     .set_background = ws_set_background,
-    .set_background_file = ws_set_background_file,
     .draw = ws_draw,
-    .destroy = ws_destroy,
-    .set_raw_wallpaper = ws_raw_wallpaper
+    .destroy = ws_destroy
 };
 
 static int ws_init(struct windowserver* ws)
@@ -72,25 +68,6 @@ static int ws_init(struct windowserver* ws)
     }
 
     SET_FlAG(ws->flags, WINDOW_SERVER_INITIALIZED);
-    return ERROR_OK;
-}
-
-static int ws_raw_wallpaper(struct windowserver* ws, char* path)
-{
-    ERR_ON_NULL(ws);
-    WS_VALIDATE(ws);
-
-    int ret = fs_load_from_file(path, ws->background, 640*480);
-    if(ret <= 0){
-        dbgprintf("[WSERVER] Could not read background file: %d.\n", ret);
-        return -ERROR_FILE_NOT_FOUND;
-    }
-
-    /* covert background to rgb */
-    for(int i = 0; i < 640*480; i++){
-        ws->background[i] = rgb_to_vga(ws->background[i]);
-    }
-
     return ERROR_OK;
 }
 
@@ -325,67 +302,6 @@ static int ws_set_background(struct windowserver* ws, color_t color)
     return ERROR_OK;
 }
 
-static int ws_set_background_file(struct windowserver* ws, const char* path)
-{
-    ERR_ON_NULL(ws);
-    ERR_ON_NULL(path);
-    WS_VALIDATE(ws);
-
-    int originalWidth = 320;  
-    int originalHeight = 240; 
-    int targetWidth = vbe_info->width;    
-    int targetHeight = vbe_info->height;   
-
-     /* upscale image */
-    float scaleX = (float)targetWidth / (float)originalWidth;
-    float scaleY = (float)targetHeight / (float)originalHeight;
-
-    ubyte_t* temp = kalloc(320*240);
-    if(temp == NULL){
-        return -ERROR_ALLOC;
-    }
-
-    int ret = fs_load_from_file(path, temp, 320*240);
-    if(ret <= 0){
-        dbgprintf("[WSERVER] Could not read background file: %d.\n", ret);
-        kfree(temp);
-        return -ERROR_FILE_NOT_FOUND;
-    }
-
-    ubyte_t* temp_window = kalloc(320*240);
-    if(temp_window == NULL){
-        kfree(temp);
-        return -ERROR_ALLOC;
-    }
-
-    dbgprintf("[WSERVER] Decoding background file %x.\n", ws->background);
-
-    int out;
-    decode_run_length(temp, ret, temp_window, &out);
-
-    for (int i = 0; i < originalWidth; i++){
-        for (int j = 0; j < originalHeight; j++){
-           
-            int screenX = (int)(i * scaleX);
-            int screenY = (int)(j * scaleY);
-
-           
-            unsigned char pixelValue = rgb_to_vga(temp_window[j * originalWidth + i]);
-
-           
-            for (int x = 0; x < scaleX; x++){
-                for (int y = 0; y < scaleY; y++){
-                    vesa_put_pixel(ws->background, screenX + x, screenY + y, pixelValue);
-                }
-            }
-        }
-    }
-
-    kfree(temp);
-    kfree(temp_window);
-    return ERROR_OK;
-}
-
 static int __ws_key_event(struct windowserver* ws, unsigned char key, unsigned char modifiers)
 {
     ERR_ON_NULL(ws);
@@ -608,12 +524,7 @@ struct windowserver* ws_new()
         return NULL;
     }
 
-    if(vbe_info->width == 640){
-        //sws_load_default_wallpaper(ws);
-        ws_set_background(ws, 0x17);
-    } else {
-        ws_set_background(ws, 0x17);
-    }
+    ws_set_background(ws, 0x17);
 
     kref_get(&ws->_krefs);
     return ws;
