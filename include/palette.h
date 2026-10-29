@@ -17,6 +17,12 @@ extern const uint8_t vga_palette[256][3];
 #define PALETTE_TRANSPARENT 255
 
 /**
+ * The palette's color nearest red, green and blue from 0 to 255, the lowest index of those equally near. It's never
+ * PALETTE_TRANSPARENT, nor the black entries before it, which index 0 already is.
+ */
+uint8_t palette_nearest(int red, int green, int blue);
+
+/**
  * The color an image file lists for a palette entry, red, green and blue from 0 to 255. The transparent entry is
  * magenta, (255, 0, 255), the usual way to mark transparency in an image editor. The palette's own full magenta is
  * listed as (254, 0, 254), so it looks the same but isn't taken for transparent: its nearest color is still itself

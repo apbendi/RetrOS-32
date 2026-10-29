@@ -1,6 +1,7 @@
 /**
  * @file palette.c
- * @brief The standard VGA palette, shared by the kernel, which loads it, and the host tools that write images.
+ * @brief The standard VGA palette, shared by the kernel, which loads it, apps, and the host tools that read and write
+ * images, and the search for the palette color nearest any other.
  */
 
 #include <palette.h>
@@ -48,3 +49,21 @@ const uint8_t vga_palette[256][3] = {
     /* Black */
     {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0},
 };
+
+uint8_t palette_nearest(int red, int green, int blue)
+{
+    int best = 0;
+    int best_distance = -1;
+
+    for (int i = 0; i < PALETTE_TRANSPARENT; i++) {
+        int dr = red - PALETTE_TO_8BIT(vga_palette[i][0]);
+        int dg = green - PALETTE_TO_8BIT(vga_palette[i][1]);
+        int db = blue - PALETTE_TO_8BIT(vga_palette[i][2]);
+        int distance = dr * dr + dg * dg + db * db;
+        if (best_distance < 0 || distance < best_distance) {
+            best = i;
+            best_distance = distance;
+        }
+    }
+    return best;
+}

@@ -93,5 +93,59 @@ else
     fail "bmp2c"
 fi
 
+# import: the 24- and 32-bit BMPs image editors export, written here the way they write them
+python3 - "$OUT" <<'PY'
+import struct, sys
+out = sys.argv[1]
+def bmp(path, w, h, bpp, pixels, header=40, compression=0, masks=None, top_down=False):
+    """pixels: rows, top first, of (r, g, b, a)"""
+    stride = (w * bpp // 8 + 3) & ~3
+    extra = 12 if compression == 3 and header == 40 else 0
+    offset = 14 + header + extra
+    rows = pixels if top_down else pixels[::-1]
+    data = b""
+    for row in rows:
+        line = b"".join(bytes((b, g, r)) + (bytes((a,)) if bpp == 32 else b"") for r, g, b, a in row)
+        data += line + b"\0" * (stride - len(line))
+    info = struct.pack("<IiiHHIIiiII", header, w, -h if top_down else h, 1, bpp, compression, len(data), 2835, 2835, 0, 0)
+    if header > 40:
+        info += struct.pack("<IIII", *masks) + b"\0" * (header - 56)
+    elif extra:
+        info += struct.pack("<III", *masks[:3])
+    open(path, "wb").write(b"BM" + struct.pack("<IHHI", offset + len(data), 0, 0, offset) + info + data)
+# A version 5 header with an alpha mask: red, white, black, magenta; (254, 0, 254), and blue, green and green at
+# alpha 0, 127 and 128
+bmp(out + "/rgba.bmp", 4, 2, 32, [
+    [(255, 0, 0, 255), (255, 255, 255, 255), (0, 0, 0, 255), (255, 0, 255, 255)],
+    [(254, 0, 254, 255), (0, 0, 255, 0), (0, 255, 0, 127), (0, 255, 0, 128)],
+], header=124, compression=3, masks=(0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000))
+# 24 bits, top-down: blue, the EGA dark red (42, 0, 0) and a gray between two of the palette's
+bmp(out + "/rgb.bmp", 3, 1, 24, [[(0, 0, 255, 0), (170, 0, 0, 0), (100, 100, 100, 0)]], top_down=True)
+# 32 bits with every alpha byte 0, as many programs write them: all opaque
+bmp(out + "/noalpha.bmp", 2, 1, 32, [[(255, 255, 255, 0), (0, 0, 255, 0)]])
+PY
+expect_import() {
+    local name=$1 expected=$2
+    if "$TOOL" import "$OUT/$name.bmp" "$OUT/$name.out.bmp" > /dev/null &&
+        "$TOOL" bmp2raw "$OUT/$name.out.bmp" "$OUT/$name.raw" > /dev/null &&
+        [ "$(od -An -tu1 -v "$OUT/$name.raw" | tr -s ' \n' ' ' | sed 's/^ //;s/ $//')" = "$expected" ]; then
+        pass "import $name"
+    else
+        fail "import $name: got $(od -An -tu1 -v "$OUT/$name.raw" 2>/dev/null | tr -s ' \n' ' '), expected $expected"
+    fi
+}
+# The palette: 40 red, 15 white, 0 black, 36 its own magenta, 32 blue, 48 green, 4 dark red, 255 transparent
+expect_import rgba "40 15 0 255 36 255 255 48"
+gray=$(python3 -c "
+import re
+src = open('lib/palette.c').read()
+pal = [tuple(map(int, t)) for t in re.findall(r'\{(\d+), (\d+), (\d+)\}', src[src.index('= {'):])]
+to8 = lambda v: (v * 255 + 31) // 63
+d = [sum((c - to8(p)) ** 2 for c, p in zip((100, 100, 100), e)) for e in pal[:255]]
+print(d.index(min(d)))")
+expect_import rgb "32 4 $gray"
+expect_import noalpha "15 32"
+refuse "$TOOL" import "$OUT/16.raw" "$OUT/x.bmp"
+
 [ $failed = 0 ] && echo "All passed." || echo "Some failed."
 exit $failed

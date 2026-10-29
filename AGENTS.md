@@ -232,6 +232,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **Reading them:** `bmp_parse` and `bmp_decode` in `lib/bmp.c` (`include/bmp.h`), built into the kernel and `libgraphic`. They never read outside the data they're given, since the kernel reads files from the disk with them, and refuse anything else with `-ERROR_BAD_IMAGE`.
   - **Other colors:** a file whose table lists the palette that way is used as it is. One an image editor saved with other colors, or in another order, is remapped: exact magenta becomes transparent, and every other color the palette's nearest.
   - **`bin/bmptool`** (`tools/bmp.c`) converts palette indexes to a BMP and back (`raw2bmp`, `bmp2raw`), writes C arrays from BMPs (`bmp2c`), and checks whether RetrOS can read a file, and whether its colors are remapped (`check`). It reads files with `lib/bmp.c`.
+  - **New art:** `bmptool import IN.bmp OUT.bmp` converts the 24- or 32-bit BMP any image editor exports, or an editor's 8-bit one, to the format. Each pixel becomes the palette's nearest color (`palette_nearest`), and a pixel whose alpha is below half, or that's exact magenta, becomes transparent. A PNG goes through an editor's BMP export first.
   - **Tests:** `tests/images/run.sh` tests the reader and the tool on the Mac, under AddressSanitizer, with every layout, damaged and truncated files, and every BMP in `images/`.
 
 **Events:**
@@ -496,7 +497,7 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
    `apps/breakout`, `apps/bcalc` and `apps/cube` follow this pattern.
 3. **Math:** `libcore` has no libm. `sin_60`/`cos_60` in `lib/libc.c` are 6° tables, offset by 90°: `cos_60[i]` is sin(6i°), and `sin_60[i]` is −cos(6i°). Avoid 64-bit integer division.
 4. **Files:** the file syscalls are in `lib/syscall.c` and `include/lib/syscall.h`; see "File system" for how they behave. They return negative codes from `include/errors.h`, and `error_get_string` (in `libcore`) gives a code's message.
-5. **Icons and pictures:** put a BMP in `rootfs/sysutil/icons/` ("Colors", under "Graphics system", has the format), load it with `gfx_load_icon`, and draw it with `drawImage`. Don't compile image data into an app.
+5. **Icons and pictures:** draw one in any image editor, export a 24- or 32-bit BMP, convert it with `bin/bmptool import` into `rootfs/sysutil/icons/` ("Colors", under "Graphics system", has the format), load it with `gfx_load_icon`, and draw it with `drawImage`. Build `bmptool` on the Mac somewhere other than `bin/`, as `tests/images/run.sh` does. Don't compile image data into an app.
 6. **Input beyond clicks:** for dragging, handle `GFX_EVENT_MOUSE_DOWN`, `GFX_EVENT_MOUSE_MOVE` and `GFX_EVENT_MOUSE_UP`, and read the modifier keys and click counts from `flags` (see "Mouse" and "Key codes" under "Graphics system"). For copy and paste, `clipboard_set` and `clipboard_get` are in `lib/syscall.c` (see "Selection and the clipboard"). The Editor uses all of them.
 7. **Build and launch:** `docker compose up` installs the app into `rootfs/bin`. Launch it with `exec -d /bin/<name>.o`.
 
