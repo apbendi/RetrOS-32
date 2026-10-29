@@ -1,6 +1,7 @@
 #ifndef __ICONS_H
 #define __ICONS_H
 
+/* Each icon is its pixels' palette indexes, row by row from the top left, with COLOR_TRANSPARENT where it has none */
 extern unsigned char computer_icon[32*32];
 extern unsigned char terminal_16[16*16];
 extern unsigned char menu_16[16*16];
