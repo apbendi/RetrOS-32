@@ -51,7 +51,8 @@ static char* error_string[] = {
     "No file system.",
     "Missing closing quote.",
     "Arguments too long.",
-    "Can't move a directory inside itself."
+    "Can't move a directory inside itself.",
+    "Not an image RetrOS can read."
 };
 
 char* error_get_string(error_t err)

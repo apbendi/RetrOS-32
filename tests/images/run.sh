@@ -1,5 +1,6 @@
 #!/bin/bash
-# Host tests for RetrOS's images: bmptool (tools/bmp.c), built here with the host's compiler. Run from anywhere:
+# Host tests for RetrOS's images: lib/bmp.c, the reader the kernel and apps use, and bmptool (tools/bmp.c), both
+# built here with the host's compiler, under AddressSanitizer. Run from anywhere:
 #   tests/images/run.sh
 # Its build goes in tests/images/out, never bin/, which has to hold the build container's binaries (AGENTS.md).
 set -u
@@ -9,11 +10,16 @@ mkdir -p "$OUT"
 CC=${HOST_CC:-cc}
 TOOL="$OUT/bmptool"
 
-$CC tools/bmp.c lib/palette.c -idirafter include -O1 -g -Wall -Wextra -fsanitize=address,undefined -o "$TOOL" || exit 1
+SAN="-O1 -g -Wall -Wextra -fsanitize=address,undefined -fno-sanitize-recover=all"
+$CC tools/bmp.c lib/bmp.c lib/palette.c -idirafter include $SAN -o "$TOOL" || exit 1
+$CC tests/images/test_bmp.c lib/bmp.c lib/palette.c -idirafter include $SAN -o "$OUT/test_bmp" || exit 1
 
 failed=0
 pass() { echo "ok   $1"; }
 fail() { echo "FAIL $1"; failed=1; }
+
+# The reader: files of every layout, damaged files, and every image in images/
+"$OUT/test_bmp" images/*.bmp || failed=1
 
 # Round trips: palette indexes to a BMP and back, at widths that need each amount of row padding
 for size in 1x1 2x3 3x5 4x4 16x16 16x21 32x32 85x95 255x2 256x256; do
@@ -42,10 +48,10 @@ head -c 4 /dev/urandom > "$OUT/4.raw"
 refuse "$TOOL" check "$OUT/16.raw"
 head -c 100 "$OUT/ok.bmp" > "$OUT/short.bmp"
 refuse "$TOOL" check "$OUT/short.bmp"
-# A color table that isn't the VGA palette: entry 1's blue changed
+# A color table that isn't the VGA palette, entry 1's blue changed, is read with its colors mapped to the palette
 cp "$OUT/ok.bmp" "$OUT/table.bmp"
 printf '\x00' | dd of="$OUT/table.bmp" bs=1 seek=$((54 + 4)) conv=notrunc 2>/dev/null
-refuse "$TOOL" check "$OUT/table.bmp"
+if "$TOOL" check "$OUT/table.bmp" | grep -q "mapped to the palette"; then pass "check: other colors"; else fail "check: other colors"; fi
 # 24 bits a pixel
 cp "$OUT/ok.bmp" "$OUT/bpp.bmp"
 printf '\x18' | dd of="$OUT/bpp.bmp" bs=1 seek=28 conv=notrunc 2>/dev/null

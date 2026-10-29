@@ -219,9 +219,12 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **How they're built:** the build turns them into C arrays, `bin/gen/images.c`, never committed. `images.h` declares each as `const struct image NAME`, named after its file, with `IMAGE_NAME_WIDTH` and `IMAGE_NAME_HEIGHT`.
   - **To change one,** edit its BMP and rebuild. **To add one,** add a BMP whose name is a C identifier, and include `<images.h>`.
   - **Apps' images aren't there yet:** TreeView's icons are arrays in `apps/utils/TreeView.hpp`, and Finder's are `rootfs/ico/*.ico`, raw 32×32 bytes.
-- **Image files** (#177) are 8-bit, uncompressed BMPs whose color table is the VGA palette, except entry 255, which is magenta so an image editor shows where it's transparent.
-  - **`bin/bmptool`** (`tools/bmp.c`) converts palette indexes to a BMP and back (`raw2bmp`, `bmp2raw`), writes C arrays from BMPs (`bmp2c`), and checks that a file is in the format (`check`).
-  - **Its tests:** `tests/images/run.sh`, on the Mac, under AddressSanitizer.
+- **Image files** (#177) are 8-bit, uncompressed BMPs, at most 256 pixels a side, whose color table is the VGA palette (`palette_file_color` in `include/palette.h`).
+  - **Transparency:** entry 255 is listed as magenta, `(255, 0, 255)`, so an image editor shows where it's transparent. The palette's own full magenta, entry 36, is listed as `(254, 0, 254)`, so only exact magenta means transparent.
+  - **Reading them:** `bmp_parse` and `bmp_decode` in `lib/bmp.c` (`include/bmp.h`), built into the kernel and `libgraphic`. They never read outside the data they're given, since the kernel reads files from the disk with them, and refuse anything else with `-ERROR_BAD_IMAGE`.
+  - **Other colors:** a file whose table lists the palette that way is used as it is. One an image editor saved with other colors, or in another order, is remapped: exact magenta becomes transparent, and every other color the palette's nearest.
+  - **`bin/bmptool`** (`tools/bmp.c`) converts palette indexes to a BMP and back (`raw2bmp`, `bmp2raw`), writes C arrays from BMPs (`bmp2c`), and checks whether RetrOS can read a file, and whether its colors are remapped (`check`). It reads files with `lib/bmp.c`.
+  - **Tests:** `tests/images/run.sh` tests the reader and the tool on the Mac, under AddressSanitizer, with every layout, damaged and truncated files, and every BMP in `images/`.
 
 **Events:**
 - **Reading:** `gfx_get_event(&e, GFX_EVENT_NONBLOCKING)` returns 0 if it got an event and -1 if there was none. On -1 it leaves `e` untouched.
