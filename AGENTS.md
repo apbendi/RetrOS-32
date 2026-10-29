@@ -262,6 +262,10 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - nothing when nothing changed.
 - **Interrupts:** outside fullscreen the copy runs with them on, since only the window server thread writes the composition buffer then. In fullscreen they're off (see "Fullscreen").
 - **Nothing else may write the framebuffer** once `ws_init` has cleared it and the copy, or the two disagree. Only the panic and shutdown screens do, and they halt.
+- **Checking it:** the shell's `screencheck` (`ws_check_screen`, #180) has the window server composite the whole screen from scratch into a spare buffer, with the cursor, and compare that with the screen copy. It prints "Screen matches." or the rectangle that differs.
+  - **When it runs:** at the end of a frame that left nothing to redraw, with interrupts off.
+  - **What it can't do:** it refuses in fullscreen. A kernel thread that has drawn but not yet committed shows up as a difference, so close the Clock first.
+  - **Testing it:** to see it catch a difference, change a byte of `ws->_screen` with lldb from a breakpoint inside `__ws_check_screen`, after it has decided to run. A byte changed any earlier can be copied over by the next redraw first.
 
 **Concurrency:** the window server thread replaces a window's buffer on a resize, maximize, restore or F10 fullscreen, while the window's owner may be drawing into it on its own thread. `w->buffer_lock` keeps the two apart (#9):
 - **Drawing:** code that writes a window's pixels holds the lock from its bounds check through its last pixel, as the `kernel_gfx_*` functions in `gfxlib.c` do. Code that replaces `inner` holds it for the swap.

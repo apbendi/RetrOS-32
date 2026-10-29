@@ -314,6 +314,38 @@ void windows(int argc, char* argv[])
 }
 EXPORT_KSYMBOL(windows);
 
+/* Checks that the screen shows what compositing it from scratch gives, for testing what the window server redraws (#180) */
+void screencheck(int argc, char* argv[])
+{
+	struct gfx_rect diff;
+	int ret = gfx_check_screen(&diff);
+	switch (ret){
+	case 0:
+		twritef("Screen matches.\n");
+		break;
+	case -ERROR_WINDOW_NOT_FOUND:
+		twritef("No screen to check: the window server isn't running\n");
+		break;
+	case -ERROR_ALLOC:
+		twritef("Couldn't check the screen: not enough memory for a second screen\n");
+		break;
+	case -ERROR_INVALID_ARGUMENTS:
+		twritef("Couldn't check the screen: a window is fullscreen\n");
+		break;
+	case -ERROR_TIMEOUT:
+		twritef("Couldn't check the screen: it kept changing, or another check was under way\n");
+		break;
+	default:
+		if(ret < 0){
+			twritef("Couldn't check the screen: %s\n", error_get_string(ret));
+			break;
+		}
+		twritef("Screen differs: %d pixel%s, from %d,%d to %d,%d\n", ret, ret == 1 ? "" : "s", diff.x0, diff.y0, diff.x1, diff.y1);
+		break;
+	}
+}
+EXPORT_KSYMBOL(screencheck);
+
 /* Function to print the lines and corners */
 static void print_branches(int level) {
     for (int i = 0; i < level; i++) {

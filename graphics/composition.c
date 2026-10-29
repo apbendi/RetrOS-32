@@ -86,6 +86,20 @@ int gfx_get_windows(struct wm_window_info* out, int max)
     return wm_get_windows(ws->_wm, out, max);
 }
 
+/**
+ * Checks that the screen shows what compositing it from scratch gives (ws_check_screen). Returns how many pixels
+ * differ, with the rectangle around them in diff, or a negative error, -ERROR_WINDOW_NOT_FOUND when there's no window
+ * server, e.g. in text mode.
+ */
+int gfx_check_screen(struct gfx_rect* diff)
+{
+    if(ws == NULL || ws->_wm == NULL || ws->_wm->state != WM_INITIALIZED){
+        return -ERROR_WINDOW_NOT_FOUND;
+    }
+
+    return ws_check_screen(ws, diff);
+}
+
 void __kthread_entry gfx_compositor_main()
 {
     ws = ws_new();

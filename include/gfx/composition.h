@@ -15,5 +15,6 @@ int gfx_set_taskbar(pid_t pid);
 
 struct wm_window_info;
 int gfx_get_windows(struct wm_window_info* out, int max);
+int gfx_check_screen(struct gfx_rect* diff);
 
 #endif /* FCA672BC_C2FD_4772_BC32_C01EF99BEA47 */

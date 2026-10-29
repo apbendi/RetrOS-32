@@ -476,6 +476,117 @@ static void __ws_composite(struct windowserver* ws, uint8_t* buffer, struct gfx_
     vesa_reset_clip();
 }
 
+/* How long screencheck waits for a frame that leaves nothing to redraw */
+#define WS_CHECK_TIMEOUT_MS 2000
+
+/**
+ * Does a screencheck asked for with ws_check_screen, if there is one: composites the whole screen into its buffer,
+ * draws the cursor over it where the copy put it, and compares that with the screen copy. Called at the end of a
+ * frame, with interrupts off so nothing draws meanwhile, and only once nothing is left to redraw. Otherwise a later
+ * frame does it.
+ */
+static void __ws_check_screen(struct windowserver* ws)
+{
+    ENTER_CRITICAL();
+    uint8_t* buffer = ws->_check.buffer;
+    if(buffer == NULL || ws->_check.done){
+        LEAVE_CRITICAL();
+        return;
+    }
+
+    /* The window draws into the composition buffer itself, so there's nothing to compare it with */
+    if(ws->_fullscreen != NULL){
+        ws->_check.result = -ERROR_INVALID_ARGUMENTS;
+        ws->_check.done = 1;
+        LEAVE_CRITICAL();
+        return;
+    }
+
+    bool_t pending = ws->window_changes;
+    for(struct window* w = ws->_wm->windows; w != NULL && !pending; w = w->next){
+        pending = w->changed;
+    }
+    if(pending){
+        LEAVE_CRITICAL();
+        return;
+    }
+
+    int width = vbe_info->width, height = vbe_info->height, pitch = vbe_info->pitch;
+    __ws_composite(ws, buffer, (struct gfx_rect){ 0, 0, width, height });
+
+    int x = ws->_screen_cursor_x, y = ws->_screen_cursor_y;
+    int left = MAX(x, 0), right = MIN(x + VESA_CURSOR_WIDTH, width);
+    for(int l = 0; l < VESA_CURSOR_HEIGHT && left < right; l++){
+        if(y + l >= 0 && y + l < height){
+            vesa_put_cursor_row(buffer + (y+l)*pitch + left, left, right, x, l);
+        }
+    }
+
+    int differ = 0;
+    struct gfx_rect diff = { width, height, 0, 0 };
+    for(int row = 0; row < height; row++){
+        for(int column = 0; column < width; column++){
+            if(buffer[row*pitch + column] != ws->_screen[row*pitch + column]){
+                differ++;
+                diff.x0 = MIN(diff.x0, column);
+                diff.y0 = MIN(diff.y0, row);
+                diff.x1 = MAX(diff.x1, column + 1);
+                diff.y1 = MAX(diff.y1, row + 1);
+            }
+        }
+    }
+
+    ws->_check.result = differ;
+    ws->_check.diff = diff;
+    ws->_check.done = 1;
+    LEAVE_CRITICAL();
+}
+
+/**
+ * Checks that the screen shows what compositing it from scratch gives, for testing what the window server redraws
+ * (#180). Returns how many pixels differ, with the rectangle around them in diff, or a negative error: no memory for
+ * a second screen, a window fullscreen, another check under way, or no frame without something left to redraw
+ * within WS_CHECK_TIMEOUT_MS. A kernel thread that has drawn but not yet committed shows up as a difference.
+ */
+int ws_check_screen(struct windowserver* ws, struct gfx_rect* diff)
+{
+    ERR_ON_NULL(ws);
+    ERR_ON_NULL(diff);
+
+    /* From the kernel heap, on the caller's thread, since spin_lock can't be taken with interrupts off */
+    uint8_t* buffer = kalloc_try(ws->_wm->composition_buffer_size);
+    if(buffer == NULL){
+        return -ERROR_ALLOC;
+    }
+
+    ENTER_CRITICAL();
+    if(ws->_check.buffer != NULL){
+        LEAVE_CRITICAL();
+        kfree(buffer);
+        return -ERROR_TIMEOUT;
+    }
+    ws->_check.done = 0;
+    ws->_check.buffer = buffer;
+    LEAVE_CRITICAL();
+
+    for(int waited = 0; !ws->_check.done && waited < WS_CHECK_TIMEOUT_MS; waited += 10){
+        kernel_sleep(10);
+    }
+
+    /* The check runs with interrupts off, so once this runs it's either done or not started, and won't start now */
+    ENTER_CRITICAL();
+    int done = ws->_check.done;
+    ws->_check.buffer = NULL;
+    LEAVE_CRITICAL();
+    kfree(buffer);
+
+    if(!done){
+        return -ERROR_TIMEOUT;
+    }
+    *diff = ws->_check.diff;
+    return ws->_check.result;
+}
+
 static int ws_draw(struct windowserver* ws)
 {
     ERR_ON_NULL(ws);
@@ -557,6 +668,8 @@ static int ws_draw(struct windowserver* ws)
         }
         LEAVE_CRITICAL();
     }
+
+    __ws_check_screen(ws);
 
     /* Every state the mouse driver queued, in order, so a click that came and went within this frame isn't lost */
     while(mouse_changed){
