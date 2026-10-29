@@ -11,6 +11,11 @@
 
 #include <lib/graphics.h>
 #include <lib/syscall.h>
+#include <fs/fs_types.h>
+#include <bmp.h>
+#define ERRORS_CODES_ONLY
+#include <errors.h>
+#include <colors.h>
 #include <libc.h>
 #include <args.h>
 
@@ -53,6 +58,101 @@ int gfx_draw_image(int x, int y, const struct image* image)
 	};
 
 	return gfx_draw_syscall(GFX_DRAW_IMAGE, &draw, 0);
+}
+
+/* The image for one that can't be loaded: a white box, outlined in dark gray, with a red X, like the kernel's */
+static unsigned char placeholder[16 * 16];
+
+static const unsigned char* placeholder_pixels(void)
+{
+	if(placeholder[0] == 0){
+		for (int y = 0; y < 16; y++){
+			for (int x = 0; x < 16; x++){
+				unsigned char color = COLOR_TRANSPARENT;
+				if(x >= 1 && x <= 14 && y >= 1 && y <= 14){
+					color = x == 1 || x == 14 || y == 1 || y == 14 ? 8 : 15;
+				}
+				/* The X: two pixels wide, from row 4 to 11 */
+				int d = y < 8 ? y : 15 - y;
+				if(y >= 4 && y <= 11 && (x == d || x == d + 1 || x == 15 - d || x == 14 - d)){
+					color = 12;
+				}
+				placeholder[y * 16 + x] = color;
+			}
+		}
+	}
+	return placeholder;
+}
+
+int gfx_load_icon(const char* name, struct image* image)
+{
+	image->width = 16;
+	image->height = 16;
+	image->pixels = placeholder_pixels();
+
+	char path[FS_PATH_MAX];
+	int dir = strlen(ICONS_DIR);
+	int len = strlen(name);
+	if(dir + len + 5 > FS_PATH_MAX){
+		return -ERROR_INVALID_ARGUMENTS;
+	}
+	memcpy(path, ICONS_DIR, dir);
+	memcpy(path + dir, name, len);
+	memcpy(path + dir + len, ".bmp", 5);
+
+	struct fs_dirent info;
+	int ret = stat(path, &info);
+	if(ret < 0){
+		return ret;
+	}
+	if(info.size == 0 || info.size > BMP_FILE_MAX){
+		return -ERROR_BAD_IMAGE;
+	}
+
+	unsigned char* data = malloc(info.size);
+	if(data == NULL){
+		return -ERROR_ALLOC;
+	}
+	int fd = open(path, FS_FILE_FLAG_READ);
+	if(fd < 0){
+		free(data);
+		return fd;
+	}
+	int got = 0;
+	while (got < (int)info.size){
+		int n = read(fd, data + got, info.size - got);
+		if(n <= 0){
+			break;
+		}
+		got += n;
+	}
+	fclose(fd);
+
+	struct bmp_info bmp;
+	if(got != (int)info.size || bmp_parse(data, got, &bmp) < 0){
+		free(data);
+		return -ERROR_BAD_IMAGE;
+	}
+	unsigned char* pixels = malloc(bmp.width * bmp.height);
+	if(pixels == NULL){
+		free(data);
+		return -ERROR_ALLOC;
+	}
+	bmp_decode(data, &bmp, pixels);
+	free(data);
+
+	image->width = bmp.width;
+	image->height = bmp.height;
+	image->pixels = pixels;
+	return 0;
+}
+
+void gfx_free_icon(struct image* image)
+{
+	if(image->pixels != NULL && image->pixels != placeholder){
+		free((void*)image->pixels);
+	}
+	image->pixels = NULL;
 }
 
 int gfx_draw_circle(int x, int y, int r, unsigned char color, char fill)

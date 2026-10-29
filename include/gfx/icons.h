@@ -3,9 +3,6 @@
 
 #include <image.h>
 
-/* Where the images the kernel loads at run time are, each NAME.bmp */
-#define ICONS_DIR "/sysutil/icons/"
-
 /**
  * The image ICONS_DIR NAME.bmp, read from the disk the first time it's asked for, and kept. If it's missing or can't be
  * read, the log says why, and it's missing_image, the placeholder, from then on. Images the kernel needs without a

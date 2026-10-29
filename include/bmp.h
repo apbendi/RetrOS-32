@@ -15,6 +15,9 @@
 /* The largest width or height an image file may have */
 #define BMP_MAX_SIDE 256
 
+/* The largest image file: the longest header, a full color table, and BMP_MAX_SIDE square rows */
+#define BMP_FILE_MAX (14 + 124 + 256 * 4 + BMP_MAX_SIDE * BMP_MAX_SIDE)
+
 /* What bmp_parse found in a file, for bmp_decode */
 struct bmp_info {
     int width;

@@ -11,4 +11,7 @@ struct image {
     const unsigned char* pixels;
 };
 
+/* Where the images loaded at run time are, each NAME.bmp, shared by the kernel (icon_get) and apps (gfx_load_icon) */
+#define ICONS_DIR "/sysutil/icons/"
+
 #endif /* IMAGE_H */
