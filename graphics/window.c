@@ -57,18 +57,54 @@ static struct window_draw_ops default_window_draw_ops = {
 };
 
 /**
- * @brief Draw given window to a frambuffer.
- * 
- * @param buffer 
- * @param window 
+ * The rectangle of the screen gfx_draw_window can draw the window into: its frame, from GFX_WINDOW_HEADER_OVERHANG
+ * above its position, and its content, or only its outline while it's moved or resized. Clipped to the screen. It's
+ * never smaller than what's drawn, since the window server redraws only rectangles like it (#180).
+ */
+struct gfx_rect gfx_window_extent(struct window* window)
+{
+    struct gfx_rect rect;
+
+    if((window->is_moving.state == GFX_WINDOW_MOVING || window->resize) && !HAS_FLAG(window->flags, GFX_IS_IMMUATABLE)){
+        /* As gfx_draw_window draws the outline: at the size the window gets on release, during a resize */
+        int width = window->resize ? window->pending_size.width+16 : window->width;
+        int height = window->resize ? window->pending_size.height+16 : window->height;
+        rect = (struct gfx_rect){ window->x, window->y, window->x+width, window->y+height };
+    } else {
+        /**
+         * The frame fits within the window's width and height, from GFX_WINDOW_HEADER_OVERHANG above it, except:
+         * - the title is centered, so one wider than the window reaches past both sides;
+         * - on a window too small for its frame, apps can make one, the buttons, from width-40, reach past its left
+         *   side, the bottom border, from height-8, past its top, and the title bar's 9 rows past its bottom.
+         */
+        int padding = HAS_FLAG(window->flags, GFX_HIDE_HEADER) ? 0 : 8;
+        int title_start = (window->width/2) - ((strlen(window->name)*8)/2);
+        int title_end = title_start + strlen(window->name)*8 + 4;
+        rect.x0 = window->x + MIN(MIN(title_start, window->width-40), 0);
+        rect.y0 = window->y + MIN(window->height-8, -GFX_WINDOW_HEADER_OVERHANG);
+        rect.x1 = window->x + MAX(MAX(window->width, padding+window->inner_width), title_end);
+        rect.y1 = window->y + MAX(MAX(window->height, padding+window->inner_height), 9);
+    }
+
+    rect.x0 = MAX(rect.x0, 0);
+    rect.y0 = MAX(rect.y0, 0);
+    rect.x1 = MIN(rect.x1, vbe_info->width);
+    rect.y1 = MIN(rect.y1, vbe_info->height);
+    return rect;
+}
+
+/**
+ * Draws the window into a screen-sized buffer, clipped to the vesa_* helpers' clip rectangle. It doesn't clear the
+ * window's changed: the window manager does that as the window server takes the changes, before drawing, so a commit
+ * made while the window is drawn is drawn again in the next frame.
  */
 void gfx_draw_window(uint8_t* buffer, struct window* window)
 {
-    /**
-     * Clear changed before copying the window, not after. Its owner may commit while the copy is under way,
-     * and clearing it afterwards would drop that commit, leaving a half-drawn frame on screen until something else changes.
-     */
-    window->changed = 0;
+    /* Nothing to do when the window is outside the part of the screen being redrawn (#180) */
+    struct gfx_rect extent = gfx_window_extent(window);
+    if(extent.x1 <= vesa_clip.x0 || extent.y1 <= vesa_clip.y0 || extent.x0 >= vesa_clip_right() || extent.y0 >= vesa_clip_bottom()){
+        return;
+    }
 
     struct gfx_theme* theme = kernel_gfx_current_theme();
     int padding = HAS_FLAG(window->flags, GFX_HIDE_HEADER) ? 0 : 8;
@@ -99,9 +135,9 @@ void gfx_draw_window(uint8_t* buffer, struct window* window)
     }
 
     /**
-     * Copy the window's content into the screen buffer, if it isn't minimized. Only the part on screen is copied,
-     * so a window partly off screen is cut off instead of writing past the buffer (#4). The source is indexed by
-     * the window's own row and column, so the visible part stays aligned.
+     * Copy the window's content into the screen buffer, if it isn't minimized. Only the part inside the clip rectangle
+     * is copied, so a window partly off screen is cut off instead of writing past the buffer (#4). The source is
+     * indexed by the window's own row and column, so the visible part stays aligned.
      *
      * A row at a time, since a pixel is a byte in both, and the window server copies every window whenever one
      * changes. A transparent window still goes pixel by pixel, leaving what's under its transparent pixels.
@@ -109,8 +145,8 @@ void gfx_draw_window(uint8_t* buffer, struct window* window)
     if(window->inner != NULL && !HAS_FLAG(window->flags, GFX_IS_HIDDEN)){
         int left = window->x+padding;
         int top = window->y+padding;
-        int x_start = vesa_clip_start(left), x_end = vesa_clip_end(left+window->inner_width, vbe_info->width);
-        int y_start = vesa_clip_start(top), y_end = vesa_clip_end(top+window->inner_height, vbe_info->height);
+        int x_start = vesa_clip_x_start(left), x_end = vesa_clip_x_end(left+window->inner_width);
+        int y_start = vesa_clip_y_start(top), y_end = vesa_clip_y_end(top+window->inner_height);
         int width = x_end - x_start;
         bool_t transparent = HAS_FLAG(window->flags, GFX_IS_TRANSPARENT);
 

@@ -456,6 +456,26 @@ static void __ws_copy_rows(struct windowserver* ws, int top, int bottom)
     ws->_screen_cursor_y = y;
 }
 
+/**
+ * Composites rect of the screen into buffer: the desktop's color, the workspace's label, then every window that
+ * overlaps it, back to front, each clipped to it (#180).
+ */
+static void __ws_composite(struct windowserver* ws, uint8_t* buffer, struct gfx_rect rect)
+{
+    for(int y = rect.y0; y < rect.y1 && rect.x1 > rect.x0; y++){
+        memset(buffer + y*vbe_info->pitch + rect.x0, ws->background, rect.x1 - rect.x0);
+    }
+
+    vesa_set_clip(rect.x0, rect.y0, rect.x1, rect.y1);
+
+    /* write current workspace at the right bottom of screen, numbered from 1 like Alt+1 to Alt+4 */
+    vesa_printf(buffer, 8, vbe_info->height -8, 0x1F, "Workspace %d", ws->workspace + 1);
+
+    ws->_wm->ops->draw(ws->_wm, buffer, ws->_wm->windows);
+
+    vesa_reset_clip();
+}
+
 static int ws_draw(struct windowserver* ws)
 {
     ERR_ON_NULL(ws);
@@ -487,13 +507,10 @@ static int ws_draw(struct windowserver* ws)
         ws->window_changes = 0;
         LEAVE_CRITICAL();
 
-        if(requested || ws->_wm->ops->changes(ws->_wm)){
-            memset(ws->_wm->composition_buffer, ws->background, ws->_wm->composition_buffer_size);
-
-            /* write current workspace at the right bottom of screen, numbered from 1 like Alt+1 to Alt+4 */
-            vesa_printf(ws->_wm->composition_buffer, 8, vbe_info->height -8, 0x1F, "Workspace %d", ws->workspace + 1);
-
-            ws->_wm->ops->draw(ws->_wm, ws->_wm->windows);
+        /* Taken even when a redraw was asked for, so the windows' changed is cleared */
+        int changes = ws->_wm->ops->take_changes(ws->_wm);
+        if(requested || changes){
+            __ws_composite(ws, ws->_wm->composition_buffer, (struct gfx_rect){ 0, 0, vbe_info->width, vbe_info->height });
             composited = 1;
         }
     }

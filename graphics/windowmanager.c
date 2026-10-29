@@ -29,12 +29,12 @@
 
 static int wm_default_add(struct windowmanager* wm, struct window* window);
 static int wm_default_remove(struct windowmanager* wm, struct window* window);
-static int wm_default_draw(struct windowmanager* wm, struct window* window);
+static int wm_default_draw(struct windowmanager* wm, uint8_t* buffer, struct window* window);
 static int wm_default_push_front(struct windowmanager* wm, struct window* window);
 static int wm_default_push_back(struct windowmanager* wm, struct window* window);
 static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char flags);
 static int wm_default_workspace(struct windowmanager* wm, int workspace);
-static int wm_default_changes(struct windowmanager* wm);
+static int wm_default_take_changes(struct windowmanager* wm);
 
 /* default windowmanager ops struct */
 static struct windowmanager_ops wm_default_wm_ops = {
@@ -47,7 +47,7 @@ static struct windowmanager_ops wm_default_wm_ops = {
     .workspace = wm_default_workspace,
     .init = init_windowmanager,
     .destroy = wm_destroy,
-    .changes = wm_default_changes
+    .take_changes = wm_default_take_changes
 };
 
 /* init new window manager with default ops and rest 0 */
@@ -87,20 +87,25 @@ int init_windowmanager(struct windowmanager* wm, int flags)
     return ERROR_OK;
 }
 
-static int wm_default_changes(struct windowmanager* wm)
+/**
+ * Whether any window is marked changed, clearing every window's changed. The window server takes the changes before
+ * it draws, so a commit made while it draws stays marked, and is drawn in the next frame. Walks the list without the
+ * lock, as wm_default_draw does.
+ */
+static int wm_default_take_changes(struct windowmanager* wm)
 {
     ERR_ON_NULL(wm);
     WM_VALIDATE(wm);
 
-    struct window* w = wm->windows;
-
-    while(w != NULL){
-        if(w->changed)
-            return 1;
-        w = w->next;
+    int changes = 0;
+    for(struct window* w = wm->windows; w != NULL; w = w->next){
+        if(w->changed){
+            w->changed = 0;
+            changes = 1;
+        }
     }
 
-    return 0;
+    return changes;
 }
 
 
@@ -342,10 +347,11 @@ static int wm_default_push_front(struct windowmanager* wm, struct window* window
  * TODO: add a max depth to this to prevent stack overflow
  * @warning this can cause a stack overflow if there are too many windows
  * @param wm windowmanager
+ * @param buffer screen-sized buffer to draw into, clipped to the vesa_* clip rectangle
  * @param window window to recursively draw from 
  * @return int 0 on success, error code otherwise
  */
-static int wm_default_draw(struct windowmanager* wm, struct window* window)
+static int wm_default_draw(struct windowmanager* wm, uint8_t* buffer, struct window* window)
 {
     ERR_ON_NULL(wm);
     ERR_ON_NULL(window);
@@ -354,10 +360,10 @@ static int wm_default_draw(struct windowmanager* wm, struct window* window)
         return ERROR_OK;
     }
     if(window->next != NULL){
-        wm->ops->draw(wm, window->next);
+        wm->ops->draw(wm, buffer, window->next);
     }
     
-    window->draw->draw(wm->composition_buffer, window);
+    window->draw->draw(buffer, window);
 
     return ERROR_OK;
 }

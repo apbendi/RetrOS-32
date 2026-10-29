@@ -54,6 +54,8 @@ void system_shutdown()
     } else {
         /* Orange on black, color 42 in the standard VGA palette */
         static const char* lines[] = {"It's now safe to turn off", "your computer."};
+        /* The window server may have stopped partway through redrawing part of the screen */
+        vesa_reset_clip();
         memset((uint8_t*)vbe_info->framebuffer, 0, vbe_info->pitch * vbe_info->height);
         for (int l = 0; l < 2; l++){
             int len = strlen(lines[l]);
@@ -248,6 +250,8 @@ void kernel_panic(const char* reason)
     
     dbgprintf("KERNEL PANIC: %s\n", reason);
     //backtrace();
+    /* The window server may have stopped partway through redrawing part of the screen */
+    vesa_reset_clip();
     /* fill screen with blue */
     memset((uint8_t*)vbe_info->framebuffer, 0x01, vbe_info->pitch * vbe_info->height);
 
