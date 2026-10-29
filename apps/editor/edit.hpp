@@ -66,6 +66,7 @@ public:
     ~Editor();
 
     bool Save();
+    bool SaveAs();
     void Help();
     bool Open(char* path);
     void putChar(unsigned char c, int modifiers = 0);
@@ -159,7 +160,7 @@ private:
     void drawLineNumbers(const int* row_lines, int row_count);
     void drawStatusLine(color_t color, const char* fmt, ...);
     void applyResolution(int window_width, int window_height);
-    bool showNewFileDialog(char* out_path, int out_path_size);
+    bool showNewFileDialog(char* path, int path_size);
 
     void ropeClear();
     bool ropeLoadFromBuffer(const unsigned char* data, int len);

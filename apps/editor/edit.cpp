@@ -190,6 +190,7 @@ enum {
 struct EditorNewFilePopupShared {
     volatile int running;
     volatile int result;
+    /* What the box holds when it opens, and the path typed, trimmed, when it closes with one */
     char path[FS_PATH_MAX];
 };
 
@@ -232,9 +233,8 @@ static void __editor_new_file_popup_thread(void* arg)
     }
 
     shared->result = EDITOR_NEW_FILE_POPUP_RESULT_CANCEL;
-    shared->path[0] = 0;
 
-    Window popup(268, 112, "New File", 1);
+    Window popup(268, 112, "Save As", 1);
 
     volatile int action = EDITOR_NEW_FILE_POPUP_ACTION_NONE;
     WidgetManager* widgets = nullptr;
@@ -245,7 +245,7 @@ static void __editor_new_file_popup_thread(void* arg)
 
     char input_placeholder[] = "/path/to/file.c";
     char input_tag[] = "new_path";
-    char create_label[] = "Create";
+    char create_label[] = "Save";
     char cancel_label[] = "Cancel";
 
     auto freeWidgets = [&]() {
@@ -336,12 +336,16 @@ static void __editor_new_file_popup_thread(void* arg)
         return;
     }
 
+    for (const char* p = shared->path; *p != 0; p++) {
+        path_input->Keyboard(*p);
+    }
+
     while (1) {
         popup.drawRect(0, 0, 268, 112, COLOR_BG);
         popup.drawContouredRect(0, 0, 268, 112);
-        popup.drawText(10, 8, "Create New File", COLOR_BLACK);
+        popup.drawText(10, 8, "Save File As", COLOR_BLACK);
         popup.drawText(10, 20, "Path:", COLOR_BLACK);
-        popup.drawText(10, 56, "Enter=Create  Esc/F4=Cancel", COLOR_VGA_MEDIUM_DARK_GRAY);
+        popup.drawText(10, 56, "Enter=Save  Esc/F4=Cancel", COLOR_VGA_MEDIUM_DARK_GRAY);
 
         if (status[0] != 0) {
             popup.drawText(10, 66, status, COLOR_VGA_RED);
@@ -2681,11 +2685,62 @@ void Editor::setFd(int fd)
     m_fd = fd;
 }
 
+/**
+ * Saves an untitled text to a new file. It asks for the path until it's given one where nothing is yet, so it never
+ * replaces a file, or until it's canceled. @return whether it saved
+ */
+bool Editor::SaveAs()
+{
+    /* Static, to keep them off the app's stack. What was typed is in the box again after an error, to change */
+    static char typed[FS_PATH_MAX];
+    static char absolute[FS_PATH_MAX];
+    static struct fs_dirent existing;
+    typed[0] = 0;
+
+    while (1) {
+        if (!showNewFileDialog(typed, sizeof(typed))) {
+            return false;
+        }
+
+        const char* problem = nullptr;
+        int ret = 0;
+        if (editor_absolute_path(typed, absolute) < 0) {
+            problem = "Path too long.";
+        } else if ((ret = stat(absolute, &existing)) >= 0) {
+            problem = (existing.attributes & FS_ATTR_DIRECTORY) ? error_get_string(-ERROR_IS_DIRECTORY) : "File Already Exists";
+        } else if (ret != -ERROR_FILE_NOT_FOUND) {
+            /* Like a directory in the path that isn't there */
+            problem = error_get_string(ret);
+        }
+
+        if (problem == nullptr) {
+            break;
+        }
+
+        MsgBox msg("Save As", problem, MSGBOX_OK);
+        msg.show();
+    }
+
+    strncpy(m_currentPath, absolute, (uint32_t)(sizeof(m_currentPath) - 1));
+    m_currentPath[sizeof(m_currentPath) - 1] = 0;
+
+    bool saved = Save();
+    if (m_fd < 0) {
+        /* No file was made, so the text stays untitled, and the next save asks again. Save said why */
+        m_currentPath[0] = 0;
+        return false;
+    }
+
+    char title[EDITOR_TITLE_MAX + 1];
+    editor_title(m_currentPath, title, sizeof(title));
+    setTitle(title);
+    return saved;
+}
+
 bool Editor::Save()
 {
     if (m_fd < 0 && m_currentPath[0] == 0) {
-        drawStatusLine(COLOR_VGA_RED, "No open file. Use F4 to open/create one.");
-        return false;
+        return SaveAs();
     }
 
     if (m_readOnly) {
@@ -2761,55 +2816,57 @@ void Editor::applyResolution(int window_width, int window_height)
     ensureCursorVisible(cols, rows);
 }
 
-bool Editor::showNewFileDialog(char* out_path, int out_path_size)
+/**
+ * Asks for the path to save a new file to, in a window of its own. path holds what the box starts with, and gets what
+ * was typed. @return false if it was canceled, or the window couldn't be shown, which the status line says
+ */
+bool Editor::showNewFileDialog(char* path, int path_size)
 {
-    if (out_path == nullptr || out_path_size <= 1) {
+    if (path == nullptr || path_size <= 1) {
         return false;
     }
-
-    out_path[0] = 0;
 
     /* Must live on heap: user threads have separate stacks in this kernel. */
     EditorNewFilePopupShared* shared = (EditorNewFilePopupShared*) malloc(sizeof(EditorNewFilePopupShared));
     if (shared == nullptr) {
-        drawStatusLine(COLOR_VGA_RED, "New File: out of memory.");
+        drawStatusLine(COLOR_VGA_RED, "Save As: out of memory.");
         return false;
     }
 
     memset(shared, 0, sizeof(EditorNewFilePopupShared));
     shared->running = 1;
     shared->result = EDITOR_NEW_FILE_POPUP_RESULT_CANCEL;
-    shared->path[0] = 0;
+    strncpy(shared->path, path, (uint32_t)(sizeof(shared->path) - 1));
 
     Thread popup_thread(__editor_new_file_popup_thread, 0);
     int thread_id = popup_thread.start((void*)shared);
     if (thread_id < 0) {
-        drawStatusLine(COLOR_VGA_RED, "Failed to open New File window.");
+        drawStatusLine(COLOR_VGA_RED, "Failed to open Save As window.");
         free(shared);
         return false;
     }
 
     int await_ret = invoke_syscall(SYSCALL_AWAIT_PROCESS, thread_id, 0, 0);
     if (await_ret < 0) {
-        drawStatusLine(COLOR_VGA_RED, "Failed waiting for New File window.");
+        drawStatusLine(COLOR_VGA_RED, "Failed waiting for Save As window.");
         free(shared);
         return false;
     }
 
     if (shared->result == EDITOR_NEW_FILE_POPUP_RESULT_ERROR) {
-        drawStatusLine(COLOR_VGA_RED, "New File: out of memory.");
+        drawStatusLine(COLOR_VGA_RED, "Save As: out of memory.");
         free(shared);
         return false;
     }
 
     if (shared->result != EDITOR_NEW_FILE_POPUP_RESULT_CREATE || shared->path[0] == 0) {
-        drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "New file creation canceled.");
+        drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "Not saved.");
         free(shared);
         return false;
     }
 
-    strncpy(out_path, shared->path, (uint32_t)(out_path_size - 1));
-    out_path[out_path_size - 1] = 0;
+    strncpy(path, shared->path, (uint32_t)(path_size - 1));
+    path[path_size - 1] = 0;
     free(shared);
     return true;
 }
@@ -3006,7 +3063,7 @@ void Editor::FileChooser()
         }
         int bottom = panel_y + panel_h;
         int y = drawWrapped(panel_x + 4, panel_y + 4, row_chars, bottom, COLOR_TEXT, "File Browser");
-        y = drawWrapped(panel_x + 4, y, row_chars, bottom, COLOR_TEXT, "Pick file from tree, then Open. New File creates one.");
+        y = drawWrapped(panel_x + 4, y, row_chars, bottom, COLOR_TEXT, "Pick file from tree, then Open. New File starts an empty one.");
 
         /* The name is cut short with "..." so the whole line fits a row */
         const char* prefix = "Selected: ";
@@ -3166,22 +3223,21 @@ void Editor::FileChooser()
         if (chooser_action == CHOOSER_ACTION_NEW) {
             chooser_action = CHOOSER_ACTION_NONE;
 
-            char new_file[FS_PATH_MAX];
-            memset(new_file, 0, sizeof(new_file));
-            if (showNewFileDialog(new_file, sizeof(new_file)) && new_file[0] != 0) {
-                if (!Open(new_file)) {
-                    /* Open said why on the status line, which the redraw would cover */
-                    continue;
-                }
-
-                freeChooserWidgets();
-                reDrawHeader();
-                reDraw(0, m_bufferHead);
-                return;
+            /* An empty, untitled text, which the first save names. Unsaved changes are asked about first */
+            if (!SaveMsg()) {
+                continue;
             }
+            if (m_fd >= 0) {
+                fclose(m_fd);
+                m_fd = -1;
+            }
+            setTitle("Editor");
+            Reset();
 
-            /* showNewFileDialog said why on the status line */
-            continue;
+            freeChooserWidgets();
+            reDrawHeader();
+            reDraw(0, m_bufferHead);
+            return;
         }
 
         if (chooser_action == CHOOSER_ACTION_CANCEL) {
@@ -3704,10 +3760,9 @@ extern "C" int main(int argc, char* argv[])
 {
     Editor* editor = new Editor();
 
+    /* Without a file, an untitled text, which the first save names */
     if (argc > 1) {
         editor->Open(argv[1]);
-    } else {
-        editor->FileChooser();
     }
 
     editor->EditorLoop();
