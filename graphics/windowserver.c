@@ -31,6 +31,7 @@ static struct window* __ws_leave_fullscreen(struct windowserver* ws, int mouse_x
 static int ws_set_background(struct windowserver* ws, color_t color);
 static int ws_draw(struct windowserver* ws);
 static int ws_destroy(struct windowserver* ws);
+static void __ws_damage(struct gfx_rect* list, int* count, struct gfx_rect rect);
 
 static struct window_server_ops ws_default_ops = {
     .init = ws_init,
@@ -117,6 +118,8 @@ static int ws_remove(struct windowserver* ws, struct window* window)
      */
     ENTER_CRITICAL();
     window->removed = 1;
+    /* Where it was drawn shows what's behind it from the next frame (#180) */
+    __ws_damage(ws->_damage, &ws->_damage_count, window->drawn);
     if(ws->_wm->pressed_window == window){
         ws->_wm->pressed_window = NULL;
         ws->_wm->dragging = 0;
@@ -412,8 +415,8 @@ static void __ws_copy_words(uint32_t* framebuffer, uint32_t* screen, const uint3
  * on a real card (#163). The cursor is drawn over the words its rows touch as they're copied, so it never goes into
  * the composition buffer, which in fullscreen is the window's own.
  *
- * Rows outside top to bottom are left as they are, so they have to include every row the cursor was on at the last
- * copy, and every row it's on now.
+ * The cursor is drawn over whatever part of it falls in these rows. When it has moved, the caller copies the rows it
+ * left and the rows it's on now too, and then records where it put it (__ws_copy_damage).
  */
 static void __ws_copy_rows(struct windowserver* ws, int top, int bottom)
 {
@@ -451,9 +454,94 @@ static void __ws_copy_rows(struct windowserver* ws, int top, int bottom)
         next = end;
     }
     __ws_copy_words(framebuffer+next, screen+next, source+next, last-next);
+}
 
-    ws->_screen_cursor_x = x;
-    ws->_screen_cursor_y = y;
+/* The rectangle around both a and b */
+static struct gfx_rect __ws_rect_union(struct gfx_rect a, struct gfx_rect b)
+{
+    return (struct gfx_rect){ MIN(a.x0, b.x0), MIN(a.y0, b.y0), MAX(a.x1, b.x1), MAX(a.y1, b.y1) };
+}
+
+/**
+ * Adds rect, clipped to the screen, to a list of up to WS_DAMAGE_MAX parts of the screen to redraw (#180). One that
+ * overlaps or touches another is merged with it into the rectangle around both, and when the list is full, they're all
+ * merged into one.
+ */
+static void __ws_damage(struct gfx_rect* list, int* count, struct gfx_rect rect)
+{
+    rect.x0 = MAX(rect.x0, 0);
+    rect.y0 = MAX(rect.y0, 0);
+    rect.x1 = MIN(rect.x1, vbe_info->width);
+    rect.y1 = MIN(rect.y1, vbe_info->height);
+    if(rect.x1 <= rect.x0 || rect.y1 <= rect.y0){
+        return;
+    }
+
+    /* A merged rectangle can reach ones already passed, so start over after each merge */
+    for(int i = 0; i < *count; i++){
+        struct gfx_rect other = list[i];
+        if(rect.x0 <= other.x1 && other.x0 <= rect.x1 && rect.y0 <= other.y1 && other.y0 <= rect.y1){
+            rect = __ws_rect_union(rect, other);
+            list[i] = list[--(*count)];
+            i = -1;
+        }
+    }
+
+    if(*count == WS_DAMAGE_MAX){
+        for(int i = 0; i < *count; i++){
+            rect = __ws_rect_union(rect, list[i]);
+        }
+        *count = 0;
+    }
+    list[(*count)++] = rect;
+}
+
+/* A range of the screen's rows, from top up to bottom */
+struct ws_rows {
+    int top, bottom;
+};
+
+/**
+ * Copies the rows of the redrawn rectangles to the framebuffer, and if the cursor moved, the rows it left and the
+ * rows it's on now, then records where the copy put the cursor (#180). Rows are copied in order from the top, with
+ * ranges that overlap or touch merged, so none is copied twice.
+ */
+static void __ws_copy_damage(struct windowserver* ws, struct gfx_rect* damage, int damaged, bool_t cursor_moved)
+{
+    struct ws_rows rows[WS_DAMAGE_MAX + 2];
+    int count = 0;
+    for(int i = 0; i < damaged; i++){
+        rows[count++] = (struct ws_rows){ damage[i].y0, damage[i].y1 };
+    }
+    if(cursor_moved){
+        rows[count++] = (struct ws_rows){ ws->_screen_cursor_y, ws->_screen_cursor_y + VESA_CURSOR_HEIGHT };
+        rows[count++] = (struct ws_rows){ ws->m.y, ws->m.y + VESA_CURSOR_HEIGHT };
+    }
+
+    for(int i = 1; i < count; i++){
+        struct ws_rows range = rows[i];
+        int j = i;
+        for(; j > 0 && rows[j-1].top > range.top; j--){
+            rows[j] = rows[j-1];
+        }
+        rows[j] = range;
+    }
+
+    for(int i = 0; i < count; i++){
+        int top = rows[i].top, bottom = rows[i].bottom;
+        while(i + 1 < count && rows[i+1].top <= bottom){
+            i++;
+            bottom = MAX(bottom, rows[i].bottom);
+        }
+        top = MAX(top, 0);
+        bottom = MIN(bottom, vbe_info->height);
+        if(top < bottom){
+            __ws_copy_rows(ws, top, bottom);
+        }
+    }
+
+    ws->_screen_cursor_x = ws->m.x;
+    ws->_screen_cursor_y = ws->m.y;
 }
 
 /**
@@ -606,23 +694,50 @@ static int ws_draw(struct windowserver* ws)
     struct window* fullscreen = ws->_fullscreen;
 
     /**
-     * Composite when a window changed, or when something asked for it, like leaving fullscreen. The cursor isn't
-     * part of it, so moving the mouse alone doesn't composite. In fullscreen the window draws into the composition
-     * buffer itself, and nothing clears the other windows' changed, so a request waits until fullscreen ends.
+     * Redraw only what changed (#180): where each window marked changed was drawn last and where it is now, and where
+     * closed windows were, or the whole screen when something asked for that, like leaving fullscreen. The cursor isn't
+     * part of it, so moving the mouse alone redraws nothing. In fullscreen the window draws into the composition buffer
+     * itself, and nothing clears the other windows' changed, so they wait until fullscreen ends.
      */
-    bool_t composited = 0;
+    struct gfx_rect damage[WS_DAMAGE_MAX];
+    int damaged = 0;
     if(fullscreen == NULL){
-        /* Taken with interrupts off, since other threads ask too: ws_remove and ws_set_background */
+        /**
+         * Collected with interrupts off: ws_remove adds to it and reads windows' drawn, and other threads ask for whole
+         * redraws and move windows. changed is cleared here, before drawing, so a commit made while the window is
+         * drawn is drawn in the next frame. drawn is the extent read here, so a move that lands mid-draw leaves the
+         * window marked, and the next frame redraws both where it was meant to be and where it went.
+         */
         ENTER_CRITICAL();
         int requested = ws->window_changes;
         ws->window_changes = 0;
+        for(int i = 0; i < ws->_damage_count; i++){
+            damage[i] = ws->_damage[i];
+        }
+        damaged = ws->_damage_count;
+        ws->_damage_count = 0;
+
+        for(struct window* w = ws->_wm->windows; w != NULL; w = w->next){
+            if(!w->changed && !requested){
+                continue;
+            }
+            struct gfx_rect extent = gfx_window_extent(w);
+            if(w->changed){
+                __ws_damage(damage, &damaged, w->drawn);
+                __ws_damage(damage, &damaged, extent);
+                w->changed = 0;
+            }
+            w->drawn = extent;
+        }
+
+        if(requested){
+            damage[0] = (struct gfx_rect){ 0, 0, vbe_info->width, vbe_info->height };
+            damaged = 1;
+        }
         LEAVE_CRITICAL();
 
-        /* Taken even when a redraw was asked for, so the windows' changed is cleared */
-        int changes = ws->_wm->ops->take_changes(ws->_wm);
-        if(requested || changes){
-            __ws_composite(ws, ws->_wm->composition_buffer, (struct gfx_rect){ 0, 0, vbe_info->width, vbe_info->height });
-            composited = 1;
+        for(int i = 0; i < damaged; i++){
+            __ws_composite(ws, ws->_wm->composition_buffer, damage[i]);
         }
     }
 
@@ -635,14 +750,7 @@ static int ws_draw(struct windowserver* ws)
          * Outside fullscreen, only this thread writes the composition buffer, the screen copy and the framebuffer,
          * and only this thread makes a window fullscreen, so the copy runs with interrupts on.
          */
-        if(composited){
-            __ws_copy_rows(ws, 0, vbe_info->height);
-        } else if(cursor_moved){
-            /* Only the cursor moved, so only the rows it left and the rows it's on now can differ */
-            int top = MAX(MIN(ws->_screen_cursor_y, ws->m.y), 0);
-            int bottom = MIN(MAX(ws->_screen_cursor_y, ws->m.y) + VESA_CURSOR_HEIGHT, vbe_info->height);
-            __ws_copy_rows(ws, top, bottom);
-        }
+        __ws_copy_damage(ws, damage, damaged, cursor_moved);
     } else {
         ENTER_CRITICAL();
         /* Read again: the window may have been removed during the yield above, and then the next frame composites */
@@ -663,7 +771,8 @@ static int ws_draw(struct windowserver* ws)
                                               : (now->owner == NULL || now->owner->state != RUNNING);
             if(ready){
                 now->changed = 0;
-                __ws_copy_rows(ws, 0, vbe_info->height);
+                struct gfx_rect screen = { 0, 0, vbe_info->width, vbe_info->height };
+                __ws_copy_damage(ws, &screen, 1, cursor_moved);
             }
         }
         LEAVE_CRITICAL();

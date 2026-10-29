@@ -10,6 +10,8 @@
 #include <mouse.h>
 
 #define WINDOW_SERVER_SLEEP_TIME 2
+/* The most rectangles a frame redraws separately: more are merged into the one around them all */
+#define WS_DAMAGE_MAX 8
 #define WS_VALIDATE(ws) if((ws)->ops == NULL || (ws)->ops->add == NULL || (ws)->ops->remove == NULL || (ws)->ops->draw == NULL) { return -ERROR_OPS_CORRUPTED; }
 #define WS_VALIDATE_FLAGS(ws) if((ws)->flags & ~(WINDOW_SERVER_INITIALIZED)) { return -ERROR_INVALID_ARGUMENTS; }
 
@@ -62,6 +64,13 @@ struct windowserver {
     uint8_t* _screen;
     int _screen_cursor_x, _screen_cursor_y;
 
+    /**
+     * Parts of the screen to redraw in the next frame, besides the windows marked changed: where closed windows were
+     * (#180). Added to by ws_remove, from any thread, with interrupts off.
+     */
+    struct gfx_rect _damage[WS_DAMAGE_MAX];
+    int _damage_count;
+
     /* A screencheck asked for (ws_check_screen): the buffer to composite into, and the result once done is set */
     struct {
         uint8_t* buffer;
@@ -82,7 +91,7 @@ struct windowserver {
 
     /* states */
     struct mouse m;
-    /* Asks for the screen to be composited again, from any thread. ws_draw takes it outside fullscreen. */
+    /* Asks for the whole screen to be redrawn, from any thread. ws_draw takes it outside fullscreen. */
     int window_changes;
     
     byte_t flags;

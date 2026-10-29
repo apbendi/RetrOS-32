@@ -270,10 +270,17 @@ int kernel_gfx_draw_char(struct window* w, int x, int y, unsigned char c, unsign
 	return 0;
 }
 
+/**
+ * Moves the window, setting x and y together with interrupts off, so the window server never takes half a move. Marks
+ * it changed, so where it was and where it is are both redrawn (#180).
+ */
 void kernel_gfx_set_position(struct window* w, int x, int y)
 {
+	ENTER_CRITICAL();
 	w->x = x;
 	w->y = y;
+	w->changed = 1;
+	LEAVE_CRITICAL();
 }
 
 void gfx_commit()

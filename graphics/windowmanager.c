@@ -34,7 +34,6 @@ static int wm_default_push_front(struct windowmanager* wm, struct window* window
 static int wm_default_push_back(struct windowmanager* wm, struct window* window);
 static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char flags);
 static int wm_default_workspace(struct windowmanager* wm, int workspace);
-static int wm_default_take_changes(struct windowmanager* wm);
 
 /* default windowmanager ops struct */
 static struct windowmanager_ops wm_default_wm_ops = {
@@ -46,8 +45,7 @@ static struct windowmanager_ops wm_default_wm_ops = {
     .mouse_event = wm_default_mouse_event,
     .workspace = wm_default_workspace,
     .init = init_windowmanager,
-    .destroy = wm_destroy,
-    .take_changes = wm_default_take_changes
+    .destroy = wm_destroy
 };
 
 /* init new window manager with default ops and rest 0 */
@@ -86,28 +84,6 @@ int init_windowmanager(struct windowmanager* wm, int flags)
 
     return ERROR_OK;
 }
-
-/**
- * Whether any window is marked changed, clearing every window's changed. The window server takes the changes before
- * it draws, so a commit made while it draws stays marked, and is drawn in the next frame. Walks the list without the
- * lock, as wm_default_draw does.
- */
-static int wm_default_take_changes(struct windowmanager* wm)
-{
-    ERR_ON_NULL(wm);
-    WM_VALIDATE(wm);
-
-    int changes = 0;
-    for(struct window* w = wm->windows; w != NULL; w = w->next){
-        if(w->changed){
-            w->changed = 0;
-            changes = 1;
-        }
-    }
-
-    return changes;
-}
-
 
 /* default static functions for windowmanager ops */
 
@@ -149,7 +125,9 @@ static int wm_default_add(struct windowmanager* wm, struct window* window)
         window->in_focus = 1;
     } else if(!HAS_FLAG(window->flags, GFX_HIDE_HEADER)){
         window->in_focus = 1;
+        /* Its title bar is drawn in another color now (#180) */
         current->in_focus = 0;
+        current->changed = 1;
     }
 
     spin_unlock(&wm->spinlock);
@@ -323,7 +301,9 @@ static int wm_default_push_front(struct windowmanager* wm, struct window* window
     }
 
     if(!HAS_FLAG(window->flags, GFX_HIDE_HEADER) && wm->windows != NULL){
+        /* Its title bar is drawn in another color now (#180) */
         wm->windows->in_focus = 0;
+        wm->windows->changed = 1;
     }
     /* As in add: next first, so a walk without the lock never sees the list cut short */
     window->next = wm->windows;
