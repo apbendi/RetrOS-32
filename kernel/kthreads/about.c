@@ -51,6 +51,9 @@ void __kthread_entry about(int argc, char* argv[])
     w->draw->textf(w, 16, 180, COLOR_BLACK,  "Built on: %s",  KERNEL_DATE);
     w->draw->textf(w, 16, 190, COLOR_BLACK,  "Arch:     %s",  "i386");
 
+    /* Kernel drawing doesn't mark the window changed */
+    gfx_commit();
+
     while (1){
         struct gfx_event event;
         int ret = gfx_event_loop(&event, GFX_EVENT_BLOCKING);

@@ -136,7 +136,7 @@ int vesa_printf(uint8_t* buffer, int32_t x, int32_t y, int color, char* fmt, ...
 void vesa_inner_box(uint8_t* buffer, int x, int y, int w, int h, color_t color);
 void vesa_init();
 
-void vesa_put_cursor(uint8_t* buffer, int x, int y);
+void vesa_put_cursor_row(uint8_t* pixels, int first, int last, int x, int l);
 void vesa_put_icon32(uint8_t* buffer, int x, int y);
 void vga_load_palette(void);
 

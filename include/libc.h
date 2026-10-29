@@ -44,7 +44,6 @@ uint32_t strncpy(char* dest, const char* src, uint32_t len);
 uint32_t memcmp(const void* ptr, const void* ptr2, uint32_t len);
 void* memset (void *dest, int val, int len);
 void* memcpy(void *dest, const void *src, int n);
-void* xmemcpy(void *dest, const void *src, int n);
 void* memmove(void *dest, const void *src, size_t n);
 
 int32_t csprintf(char *buffer, const char *fmt, va_list args);

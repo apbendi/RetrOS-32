@@ -60,6 +60,24 @@ static int ws_init(struct windowserver* ws)
     ws->_wm = wm;
     ws->workspace = 0;
 
+    /**
+     * The screen copy starts cleared, as the composition buffer does, and so does the framebuffer, which holds the
+     * boot messages until now. From here on only the window server writes the framebuffer, apart from the panic and
+     * shutdown screens, which halt.
+     */
+    ws->_screen = kalloc(wm->composition_buffer_size);
+    if(ws->_screen == NULL){
+        wm->ops->destroy(wm);
+        return -ERROR_ALLOC;
+    }
+    memset(ws->_screen, 0, wm->composition_buffer_size);
+    memset((uint8_t*)vbe_info->framebuffer, 0, wm->composition_buffer_size);
+    ws->_screen_cursor_x = 0;
+    ws->_screen_cursor_y = 0;
+
+    /* The first frame composites the desktop, even with no windows */
+    ws->window_changes = 1;
+
     SET_FlAG(ws->flags, WINDOW_SERVER_INITIALIZED);
     return ERROR_OK;
 }
@@ -264,8 +282,9 @@ static int ws_set_background(struct windowserver* ws, color_t color)
     ERR_ON_NULL(ws);
     WS_VALIDATE(ws);
 
-    /* Shown from the next frame that composites the screen */
+    /* Shown from the next frame outside fullscreen */
     ws->background = color;
+    ws->window_changes = 1;
     return ERROR_OK;
 }
 
@@ -372,36 +391,69 @@ static int __ws_key_event(struct windowserver* ws, unsigned char key, unsigned c
     return ERROR_OK;
 }
 
-/**
- * Copies a fullscreen frame to the framebuffer, with the cursor in it. The window's owner draws into the composition
- * buffer itself, so the cursor can't be left there: its pixels are saved, the cursor drawn, the frame copied, and the
- * pixels put back. Interrupts are off, so the owner can't draw while its buffer has the cursor in it (#165).
- */
-static void __ws_copy_fullscreen(struct windowserver* ws)
+/* The most words a row of the cursor can touch: its width, starting anywhere in a word */
+#define WS_CURSOR_WORDS ((VESA_CURSOR_WIDTH + 6) / 4)
+
+/* Writes each of count words of source that differs from the screen copy to the copy and the framebuffer */
+static void __ws_copy_words(uint32_t* framebuffer, uint32_t* screen, const uint32_t* source, int count)
 {
-    uint8_t* buffer = ws->_wm->composition_buffer;
-    int x = ws->m.x;
-    int y = ws->m.y;
-    uint8_t saved[VESA_CURSOR_HEIGHT][VESA_CURSOR_WIDTH];
-
-    for(int l = 0; l < VESA_CURSOR_HEIGHT; l++){
-        for(int i = 0; i < VESA_CURSOR_WIDTH; i++){
-            if(vesa_on_screen(x+i, y+l)){
-                saved[l][i] = *getpixel(buffer, x+i, y+l, vbe_info->pitch);
-            }
+    for(int i = 0; i < count; i++){
+        uint32_t word = source[i];
+        if(word != screen[i]){
+            screen[i] = word;
+            framebuffer[i] = word;
         }
     }
+}
 
-    vesa_put_cursor(buffer, x, y);
-    xmemcpy((uint8_t*)vbe_info->framebuffer, buffer, ws->_wm->composition_buffer_size);
+/**
+ * Copies the composition buffer's rows from top up to bottom to the framebuffer, with the cursor over them, writing
+ * only the words that differ from the screen copy. The framebuffer is never read, since reading video memory is slow
+ * on a real card (#163). The cursor is drawn over the words its rows touch as they're copied, so it never goes into
+ * the composition buffer, which in fullscreen is the window's own.
+ *
+ * Rows outside top to bottom are left as they are, so they have to include every row the cursor was on at the last
+ * copy, and every row it's on now.
+ */
+static void __ws_copy_rows(struct windowserver* ws, int top, int bottom)
+{
+    uint32_t* framebuffer = (uint32_t*)vbe_info->framebuffer;
+    uint32_t* screen = (uint32_t*)ws->_screen;
+    uint32_t* source = (uint32_t*)ws->_wm->composition_buffer;
+    int pitch = vbe_info->pitch;
 
-    for(int l = 0; l < VESA_CURSOR_HEIGHT; l++){
-        for(int i = 0; i < VESA_CURSOR_WIDTH; i++){
-            if(vesa_on_screen(x+i, y+l)){
-                putpixel(buffer, x+i, y+l, saved[l][i], vbe_info->pitch);
-            }
+    /* VBE_SIZE() is the screen and a byte more, so this is every pixel when the screen's size is a multiple of 4 */
+    int words = ws->_wm->composition_buffer_size / 4;
+    int next = top*pitch / 4;
+    int last = MIN((bottom*pitch + 3) / 4, words);
+
+    /* The cursor's columns on screen */
+    int x = ws->m.x, y = ws->m.y;
+    int left = MAX(x, 0), right = MIN(x + VESA_CURSOR_WIDTH, vbe_info->width);
+
+    for(int l = 0; l < VESA_CURSOR_HEIGHT && left < right; l++){
+        int row = y + l;
+        if(row < top || row >= bottom){
+            continue;
         }
+
+        /* The words this row of the cursor touches, with the cursor drawn over them */
+        int first = (row*pitch + left) / 4;
+        int end = MIN((row*pitch + right + 3) / 4, last);
+        uint32_t with_cursor[WS_CURSOR_WORDS];
+        for(int i = first; i < end; i++){
+            with_cursor[i-first] = source[i];
+        }
+        vesa_put_cursor_row((uint8_t*)with_cursor + (row*pitch + left - first*4), left, right, x, l);
+
+        __ws_copy_words(framebuffer+next, screen+next, source+next, first-next);
+        __ws_copy_words(framebuffer+first, screen+first, with_cursor, end-first);
+        next = end;
     }
+    __ws_copy_words(framebuffer+next, screen+next, source+next, last-next);
+
+    ws->_screen_cursor_x = x;
+    ws->_screen_cursor_y = y;
 }
 
 static int ws_draw(struct windowserver* ws)
@@ -414,7 +466,6 @@ static int ws_draw(struct windowserver* ws)
     
     /* get state variables */
     int mouse_changed = mouse_get_event(&ws->m);
-    ws->window_changes = ws->_wm->ops->changes(ws->_wm);
     struct kb_key key;
     if(kb_get_key(&key)){
         __ws_key_event(ws, key.key, key.modifiers);
@@ -423,44 +474,72 @@ static int ws_draw(struct windowserver* ws)
     /* Read after the keys, since F10 can change it in this frame */
     struct window* fullscreen = ws->_fullscreen;
 
-    if((ws->window_changes || mouse_changed ) && fullscreen == NULL){
-        memset(ws->_wm->composition_buffer, ws->background, ws->_wm->composition_buffer_size);
+    /**
+     * Composite when a window changed, or when something asked for it, like leaving fullscreen. The cursor isn't
+     * part of it, so moving the mouse alone doesn't composite. In fullscreen the window draws into the composition
+     * buffer itself, and nothing clears the other windows' changed, so a request waits until fullscreen ends.
+     */
+    bool_t composited = 0;
+    if(fullscreen == NULL){
+        /* Taken with interrupts off, since other threads ask too: ws_remove and ws_set_background */
+        ENTER_CRITICAL();
+        int requested = ws->window_changes;
+        ws->window_changes = 0;
+        LEAVE_CRITICAL();
 
-        /* write current workspace at the right bottom of screen, numbered from 1 like Alt+1 to Alt+4 */
-        vesa_printf(ws->_wm->composition_buffer, 8, vbe_info->height -8, 0x1F, "Workspace %d", ws->workspace + 1);
+        if(requested || ws->_wm->ops->changes(ws->_wm)){
+            memset(ws->_wm->composition_buffer, ws->background, ws->_wm->composition_buffer_size);
 
-        ws->_wm->ops->draw(ws->_wm, ws->_wm->windows);
-        vesa_put_cursor(ws->_wm->composition_buffer, ws->m.x, ws->m.y);
+            /* write current workspace at the right bottom of screen, numbered from 1 like Alt+1 to Alt+4 */
+            vesa_printf(ws->_wm->composition_buffer, 8, vbe_info->height -8, 0x1F, "Workspace %d", ws->workspace + 1);
+
+            ws->_wm->ops->draw(ws->_wm, ws->_wm->windows);
+            composited = 1;
+        }
     }
 
     /* Move out of this module */
     kernel_yield();
 
-    ENTER_CRITICAL();
-    /* Read again: the window may have been removed during the yield above, which leaves fullscreen */
-    struct window* now = ws->_fullscreen;
-    if(now == NULL){
-        /* Copy buffer over to framebuffer. */
-        xmemcpy((uint8_t*)vbe_info->framebuffer, ws->_wm->composition_buffer, ws->_wm->composition_buffer_size);
-    } else if(now->changed || mouse_changed){
+    bool_t cursor_moved = ws->m.x != ws->_screen_cursor_x || ws->m.y != ws->_screen_cursor_y;
+    if(fullscreen == NULL){
         /**
-         * A fullscreen window draws into the composition buffer itself, so copy it only once the frame is done.
-         * Copying mid-draw would put half-drawn frames on screen, making a selection drag or a full redraw flicker.
-         *
-         * A terminal draws a whole frame in one commit, with drawing set meanwhile, so it's copied as soon as
-         * changed is set. That's needed when a program draws into a shell's terminal while the shell is running,
-         * waiting for it in pcb_await. Any other window is copied once its owner waits for input or sleeps.
-         *
-         * The cursor goes into the copy, so it doesn't flash (#165).
+         * Outside fullscreen, only this thread writes the composition buffer, the screen copy and the framebuffer,
+         * and only this thread makes a window fullscreen, so the copy runs with interrupts on.
          */
-        bool_t ready = now->frames_atomic ? !now->drawing
-                                          : (now->owner == NULL || now->owner->state != RUNNING);
-        if(ready){
-            now->changed = 0;
-            __ws_copy_fullscreen(ws);
+        if(composited){
+            __ws_copy_rows(ws, 0, vbe_info->height);
+        } else if(cursor_moved){
+            /* Only the cursor moved, so only the rows it left and the rows it's on now can differ */
+            int top = MAX(MIN(ws->_screen_cursor_y, ws->m.y), 0);
+            int bottom = MIN(MAX(ws->_screen_cursor_y, ws->m.y) + VESA_CURSOR_HEIGHT, vbe_info->height);
+            __ws_copy_rows(ws, top, bottom);
         }
+    } else {
+        ENTER_CRITICAL();
+        /* Read again: the window may have been removed during the yield above, and then the next frame composites */
+        struct window* now = ws->_fullscreen;
+        if(now != NULL && (now->changed || cursor_moved)){
+            /**
+             * A fullscreen window draws into the composition buffer itself, so copy it only once the frame is done.
+             * Copying mid-draw would put half-drawn frames on screen, making a selection drag or a full redraw flicker.
+             *
+             * A terminal draws a whole frame in one commit, with drawing set meanwhile, so it's copied as soon as
+             * changed is set. That's needed when a program draws into a shell's terminal while the shell is running,
+             * waiting for it in pcb_await. Any other window is copied once its owner waits for input or sleeps.
+             *
+             * Interrupts stay off for the copy, since the frame is only done while the owner can't run: otherwise it
+             * could start its next frame partway through. The cursor goes over the copy, not into the window (#165).
+             */
+            bool_t ready = now->frames_atomic ? !now->drawing
+                                              : (now->owner == NULL || now->owner->state != RUNNING);
+            if(ready){
+                now->changed = 0;
+                __ws_copy_rows(ws, 0, vbe_info->height);
+            }
+        }
+        LEAVE_CRITICAL();
     }
-    LEAVE_CRITICAL();
 
     if(mouse_changed){
         /* internal mouse event for windows, at the cursor's arrow tip */
@@ -506,6 +585,7 @@ static int ws_destroy(struct windowserver* ws)
         return ERROR_OK;
     }
 
+    kfree(ws->_screen);
     ws->_wm->ops->destroy(ws->_wm);
 
     kfree(ws);

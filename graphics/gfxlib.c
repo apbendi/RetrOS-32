@@ -315,6 +315,8 @@ int kernel_gfx_set_title(const char* title)
 	
 	memset($process->current->gfx_window->name, 0, GFX_MAX_WINDOW_NAME_SIZE);
 	memcpy($process->current->gfx_window->name, title, strlen(title));
+	/* The window server draws it, so the window has to be composited again */
+	$process->current->gfx_window->changed = 1;
 
 	return 0;
 }
@@ -326,6 +328,7 @@ int kernel_gfx_set_header(const char* header)
 	
 	memset($process->current->gfx_window->header, 0, GFX_MAX_WINDOW_NAME_SIZE);
 	memcpy($process->current->gfx_window->header, header, strlen(header));
+	$process->current->gfx_window->changed = 1;
 
 	return 0;
 }
