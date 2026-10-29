@@ -449,9 +449,16 @@ void exec(int argc, char* argv[])
 			}
 			break;
 		default:
-			break;
+			twritef("usage: exec [options] <file | kfunc> [args ...]\n Note: Any command can be executed by as a thread\n Example: exec echo hi\n");
+			return;
 		}
 		idx++;
+	}
+
+	/* The option must be followed by a program or kernel function */
+	if(idx >= argc){
+		twritef("usage: exec [options] <file | kfunc> [args ...]\n Note: Any command can be executed by as a thread\n Example: exec echo hi\n");
+		return;
 	}
 
 	pid = start(argv[idx], argc-idx, &argv[idx]);
