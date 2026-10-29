@@ -127,9 +127,13 @@ inline uint32_t strncmp(const char* str, const char* str2, uint32_t len)
 	return memcmp((uint8_t*)str, (uint8_t*)str2, len);
 }
 
-inline uint32_t strcmp(const char* str, const char* str2)
+inline int32_t strcmp(const char* str, const char* str2)
 {
-    return memcmp((uint8_t*)str, (uint8_t*)str2, strlen(str));
+    while (*str != '\0' && *str == *str2) {
+        str++;
+        str2++;
+    }
+    return (int32_t)((uint8_t)*str - (uint8_t)*str2);
 }
 
 inline inline uint32_t memcmp(const void* ptr, const void* ptr2, uint32_t len)
