@@ -78,6 +78,8 @@ struct pcb {
     volatile pcb_state_t state;
     int16_t pid;
     uint32_t sleep;
+    /* In kernel_wait: BLOCKED, and woken by pcb_wake or at sleep, whichever comes first */
+    bool_t timed_wait;
     uint32_t stackptr;
     uint32_t* page_dir;
     uint32_t data_size;

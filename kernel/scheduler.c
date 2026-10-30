@@ -268,7 +268,12 @@ static error_t sched_round_robin(struct scheduler* sched)
             }
         /* fall through */
         case BLOCKED:
-            /* Blocked just means we want to add it back to the queue */
+            /* Blocked just means we want to add it back to the queue, unless it's in kernel_wait and its time is up */
+            if(next->state == BLOCKED && next->timed_wait && next->sleep < timer_get_ms()){
+                next->state = RUNNING;
+                break;
+            }
+        /* fall through */
         default:
             /* push next back into queue, should be very rare. */
             sched->queue->ops->push(sched->queue, next);
@@ -392,6 +397,24 @@ struct scheduler* get_scheduler()
 void kernel_sleep(int time)
 {
     get_scheduler()->ops->sleep(get_scheduler(), time);
+}
+
+/**
+ * Waits until pcb_wake wakes the thread, or ms milliseconds have passed. To wait for something without missing its
+ * wake, check for it with interrupts off and call this before turning them on: a wake can't come in between, and one
+ * that comes after ends the wait.
+ */
+void kernel_wait(int ms)
+{
+    struct pcb* current = $process->current;
+
+    ENTER_CRITICAL();
+    current->sleep = timer_get_ms() + ms;
+    current->timed_wait = true;
+    current->state = BLOCKED;
+    kernel_yield();
+    current->timed_wait = false;
+    LEAVE_CRITICAL();
 }
 
 void kernel_yield()
