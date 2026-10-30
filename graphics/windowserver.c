@@ -693,6 +693,35 @@ int ws_check_screen(struct windowserver* ws, struct gfx_rect* diff)
     return ws->_check.result;
 }
 
+/**
+ * Whether the next frame has something to do, so the window server shouldn't wait for it: input, a cursor that isn't
+ * where it's drawn, or something to redraw. In fullscreen only the fullscreen window is drawn, and it stays changed
+ * until its owner finishes its frame, so the window server keeps yielding meanwhile. Called with interrupts off.
+ */
+static bool_t __ws_pending(struct windowserver* ws)
+{
+    if(mouse_has_event() || kb_has_key()){
+        return true;
+    }
+    if(ws->m.x != ws->_screen_cursor_x || ws->m.y != ws->_screen_cursor_y){
+        return true;
+    }
+
+    if(ws->_fullscreen != NULL){
+        return ws->_fullscreen->changed;
+    }
+
+    if(ws->window_changes || ws->_damage_count > 0){
+        return true;
+    }
+    for(struct window* w = ws->_wm->windows; w != NULL; w = w->next){
+        if(w->changed){
+            return true;
+        }
+    }
+    return false;
+}
+
 static int ws_draw(struct windowserver* ws)
 {
     ERR_ON_NULL(ws);
@@ -703,8 +732,9 @@ static int ws_draw(struct windowserver* ws)
     
     /* get state variables */
     int mouse_changed = mouse_get_event(&ws->m);
+    /* Every key typed since the last frame, since frames can be WS_WAIT_MS apart (#199) */
     struct kb_key key;
-    if(kb_get_key(&key)){
+    while(kb_get_key(&key)){
         __ws_key_event(ws, key.key, key.modifiers);
     }
 
@@ -810,6 +840,17 @@ static int ws_draw(struct windowserver* ws)
         }
         mouse_changed = mouse_get_event(&ws->m);
     }
+
+    /**
+     * Wait for something to draw rather than running frames back to back (#199). Input and drawing threads' commits
+     * wake the window server (gfx_composition_wake). Anything else that marks a window changed, like the window manager
+     * or a move, is drawn within WS_WAIT_MS. Checked with interrupts off, so a wake can't come between the two.
+     */
+    ENTER_CRITICAL();
+    if(!__ws_pending(ws)){
+        kernel_wait(WS_WAIT_MS);
+    }
+    LEAVE_CRITICAL();
 
     return ERROR_OK;
 }

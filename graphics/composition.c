@@ -13,6 +13,7 @@
 #include <gfx/events.h>
 #include <math.h>
 #include <gfx/windowserver.h>
+#include <gfx/composition.h>
 #include <windowmanager.h>
 #include <kthreads.h>
 
@@ -20,6 +21,8 @@
 void __kthread_entry gfx_compositor_main();
 
 struct windowserver* ws;
+/* The window server's thread, which waits between frames when there's nothing to draw (#199) */
+static struct pcb* __ws_thread = NULL;
 
 /**
  * @brief Removes a window from the "wind.order" list.
@@ -60,7 +63,17 @@ void gfx_composition_redraw(void)
 {
     if(ws != NULL){
         ws->window_changes = 1;
+        gfx_composition_wake();
     }
+}
+
+/**
+ * Wakes the window server if it's waiting between frames (#199): for input, or a window with something new to show.
+ * Interrupt handlers call it too, which pcb_wake allows.
+ */
+void gfx_composition_wake(void)
+{
+    if(__ws_thread != NULL) pcb_wake(__ws_thread);
 }
 
 int gfx_set_taskbar(pid_t pid)
@@ -122,6 +135,7 @@ void __kthread_entry gfx_compositor_main()
 
     dbgprintf("[WSERVER] Window server initialized.\n");
 
+    __ws_thread = $process->current;
     start("login", 0, NULL);
     while(1){
         ws->ops->draw(ws);

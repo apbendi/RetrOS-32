@@ -18,6 +18,7 @@
 #include <serial.h>
 #include <scheduler.h>
 #include <kutils.h>
+#include <gfx/composition.h>
 
 /**
  * Every function here that writes a window's pixels holds w->buffer_lock from its bounds check
@@ -288,6 +289,7 @@ void gfx_commit()
 	if($process->current->gfx_window == NULL)
 		return;
 	$process->current->gfx_window->changed = 1;
+	gfx_composition_wake();
 }
 
 /**

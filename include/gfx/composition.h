@@ -11,6 +11,7 @@ void gfx_compositor_main();
 void gfx_set_fullscreen(struct window* w);
 int gfx_set_background_color(color_t color);
 void gfx_composition_redraw(void);
+void gfx_composition_wake(void);
 
 int gfx_set_taskbar(pid_t pid);
 

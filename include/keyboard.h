@@ -64,6 +64,7 @@ struct kb_key {
 void init_keyboard();
 unsigned char kb_get_char(int block);
 int kb_get_key(struct kb_key* key);
+int kb_has_key(void);
 unsigned char kb_get_modifiers(void);
 
 #endif

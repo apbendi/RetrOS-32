@@ -50,7 +50,7 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
   - The lookup tries `EXPORT_KSYMBOL` names first, then every function in `symbols.map`. So any kernel function's name runs as a command, with `(argc, argv)` as its arguments (#27), e.g. `exec_cmd` itself.
   - **Passing arguments on:** a kernel thread gets copies of its arguments. A process gets `argv` and its strings copied into its memory, which have to fit in one 4 KB page, or it fails with "Arguments too long.".
 - **Where data comes in:**
-  - **Input:** the keyboard and mouse interrupts fill buffers, and `wind` polls them every frame.
+  - **Input:** the keyboard and mouse interrupts fill buffers and wake `wind`, which reads everything in them each frame.
   - **Network:** the e1000 interrupt queues each packet for `netd`, which hands it to `workd` to run up the stack in `net/`. Apps use the socket syscalls in `net/api.c`.
     - **`netd` waits** in `kernel_wait` while its queues are empty (#198). Queuing a packet to send or one received wakes it, and it wakes every 10 ms anyway (`NETD_WAIT_MS`), for TCP's timers: retries, `TIME_WAIT` and stale pending connections.
   - **Files:** `fs/fs.c` is the file layer, and FAT through FatFs is the only file system behind it. `kernel()` mounts the disk at boot. See "File system" below.
@@ -262,6 +262,9 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **Apps:** every gfx drawing syscall marks the app's window changed, and so do setting a window's title or header and moving it (`kernel_gfx_set_position`).
   - **Kernel threads** that draw with `w->draw->*` must call `gfx_commit()` themselves.
   - **The window manager** marks a window whose focus or position in the stack changes, including the one that loses focus.
+- **Between frames** (#199): at the end of a frame, with interrupts off, `__ws_pending` checks whether the next one has anything to do: input, a cursor that isn't where it's drawn, or something to redraw. In fullscreen, that's only the fullscreen window, which stays changed until it's copied.
+  - **If not,** the window server waits in `kernel_wait` until `gfx_composition_wake` wakes it, or `WS_WAIT_MS`, 10 ms, passes.
+  - **What wakes it:** the keyboard and mouse interrupts, `gfx_commit`, a terminal's drawing, and `gfx_composition_redraw`. Anything else that marks a window changed, like a move or the window manager, is drawn within 10 ms. A new kind of drawing that has to show at once should call `gfx_composition_wake`.
 
 **Copying to the screen** (#163): the window server never reads the framebuffer, since reading video memory is slow on a real card, and in 86Box.
 - **The screen copy,** `ws->_screen`, a second screen-sized buffer, holds what the framebuffer shows. `__ws_copy_rect` compares the composition buffer with it a word at a time, and writes each word that differs to both.

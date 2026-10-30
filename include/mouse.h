@@ -48,5 +48,6 @@ struct mouse {
 
 void mouse_init();
 int mouse_get_event(struct mouse* m);
+int mouse_has_event(void);
 
 #endif /* FA227328_E158_4ACA_9652_4D12EC113A2B */
