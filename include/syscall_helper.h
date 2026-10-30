@@ -69,7 +69,10 @@ enum {
 
     /* The clipboard (clipboard.h) */
     SYSCALL_CLIPBOARD_SET,
-    SYSCALL_CLIPBOARD_GET
+    SYSCALL_CLIPBOARD_GET,
+
+    /* Milliseconds since the timer started (timer.h) */
+    SYSCALL_GET_TICKS
 };
 
 #endif /* __SYSCALL_HELPER_H */

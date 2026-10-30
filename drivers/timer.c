@@ -16,6 +16,8 @@
 #include <pcb.h>
 #include <arch/io.h>
 #include <kutils.h>
+#include <syscalls.h>
+#include <syscall_helper.h>
 
 #define PIT_IRQ		32
 
@@ -35,6 +37,7 @@ int timer_get_tick()
 {
 	return tick;
 }
+EXPORT_SYSCALL(SYSCALL_GET_TICKS, timer_get_tick);
 
 int time_get_difference(struct time* t1, struct time* t2)
 {

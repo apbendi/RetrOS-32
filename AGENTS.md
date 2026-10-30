@@ -437,7 +437,7 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
   - descriptors 0 to 2 are the terminal. `stdout` is line-buffered. `stdin` reads lines typed at the terminal, if the program is the one its shell is waiting for; otherwise it's at its end;
   - RetrOS's errors become `errno` values;
   - `rename` replaces an existing file;
-  - the clock has whole seconds of local time;
+  - the clock has whole seconds of local time. `CLOCK_MONOTONIC` has milliseconds since boot, for timing;
   - at most 4 MB of heap and 64 KB of stack.
 - **Not yet:** thread safety, `dup`, `exec`, signals, exit codes and windows (#117).
 
@@ -455,6 +455,8 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
   - `-run` using TCC's own C library through a generated symbol table, since the program would have no set-up library of its own.
 - **Settings:** `apps/tcc/config.h`, in place of what TCC's configure script writes.
 - **Its own files** are in `/lib/tcc`: headers, `libtcc1.a` (64-bit arithmetic and the like) and `runmain.o` (for `-run`).
+
+**Benchmarks:** `apps/bench` builds two with gcc, `/bin/cpubench.o [ROUNDS]`, a prime sieve, and `/bin/iobench.o [KB]`, which writes, reads back and deletes a file in the current directory. Each does the same work every run and prints its time in milliseconds, from `CLOCK_MONOTONIC`.
 
 **Testing:** the `test-c` skill's harness (`tests/c/run.py`) runs C programs and TinyCC's own tests on RetrOS, compiled with gcc and the cross compiler, and with `--native`, with `/bin/tcc.o` on RetrOS.
 

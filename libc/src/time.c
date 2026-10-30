@@ -1,7 +1,7 @@
 /**
  * The clock and sleeping. RetrOS's real-time clock holds local time, and RetrOS has no time zones, so time() is local
  * time counted as if it were UTC, and localtime() (musl's, with no TZ) gives it back unchanged. The clock has whole
- * seconds.
+ * seconds. CLOCK_MONOTONIC is the timer's milliseconds since boot instead, for measuring how long something takes.
  */
 #include <time.h>
 #include <errno.h>
@@ -23,10 +23,15 @@ int clock_gettime(clockid_t clock, struct timespec* ts)
 {
 	switch(clock){
 	case CLOCK_REALTIME:
-	case CLOCK_MONOTONIC:
 		ts->tv_sec = time(0);
 		ts->tv_nsec = 0;
 		return 0;
+	case CLOCK_MONOTONIC: {
+		unsigned ms = (unsigned)__retros_syscall(SYSCALL_GET_TICKS, 0, 0, 0);
+		ts->tv_sec = ms / 1000;
+		ts->tv_nsec = (long)(ms % 1000) * 1000000;
+		return 0;
+	}
 	default:
 		errno = EINVAL;
 		return -1;

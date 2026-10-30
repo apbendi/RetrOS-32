@@ -28,6 +28,7 @@ programs: $(UTILS)
 		$(MAKE) -C $$dir; \
 	done
 	$(MAKE) -C tcc
+	$(MAKE) -C bench
 	@# The old C compiler, which TinyCC replaced (#116), may still be installed from an earlier build
 	$(QUIET)$(RM_F) ../rootfs/bin/cc.o
 	@echo "[apps] built all user programs."
@@ -58,5 +59,6 @@ clean:
 		$(MAKE) -C $$dir clean; \
 	done
 	$(MAKE) -C tcc clean
+	$(MAKE) -C bench clean
 	$(QUIET)$(RM_RF) $(BUILD_DIR)
 	$(QUIET)$(RM_F) libcore.a libnet.a libgraphic.a libzlib.a libhttp.a
