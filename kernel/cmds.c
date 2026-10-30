@@ -1133,10 +1133,15 @@ static int services(int argc, char *argv[])
 }
 EXPORT_KSYMBOL(services);
 
-/* The clock, in milliseconds since boot, and the timer interrupts handled. qctl.py clock compares them with the host. */
+/**
+ * The clock, in milliseconds since boot, the timer interrupts handled, and the CPU's time stamp counter, as its high
+ * and low halves in hex. qctl.py clock compares them with the host.
+ */
 static int uptime(int argc, char* argv[])
 {
-    twritef("uptime: %d ms, %d timer interrupts\n", timer_get_tick(), timer_get_interrupts());
+    unsigned long long tsc = rdtsc();
+    twritef("uptime: %d ms, %d timer interrupts, TSC %x:%x\n", timer_get_tick(), timer_get_interrupts(),
+        (uint32_t)(tsc >> 32), (uint32_t)tsc);
     return 0;
 }
 EXPORT_KSYMBOL(uptime);

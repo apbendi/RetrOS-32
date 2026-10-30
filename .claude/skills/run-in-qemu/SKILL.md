@@ -42,7 +42,7 @@ $Q stop
   - **The shell comes to the front** for each check, and it starts at 32,32, over About and new apps' title bars. Drag it aside first, or clicks meant for those title bars land in the shell.
 - **`text`** prints the VGA text screen, for the boot menu and text mode.
 - **`mon CMD`** runs any QEMU monitor command.
-- **`clock SECONDS`** compares RetrOS's clock with the host's. It runs the shell's `uptime` twice, about SECONDS apart, times each line as it reaches the serial log, and prints the guest's milliseconds as a share of the host's, and the timer interrupts a second. Run something with `exec -d` first to measure under load.
+- **`clock SECONDS`** compares RetrOS's clock with the host's. It runs the shell's `uptime` twice, about SECONDS apart, times each line as it reaches the serial log, and prints the guest's milliseconds as a share of the host's, the timer interrupts a second, and the TSC's rate by the host's clock. In stock QEMU the TSC counts QEMU's clock in nanoseconds, so it runs at 1000 MHz; with `-icount` it follows the instructions run, like QEMU's clock. Run something with `exec -d` first to measure under load.
   - **`--trace`** also counts, from QEMU's trace events (`pic_set_irq`, `pic_interrupt`), the timer ticks QEMU raised and the share RetrOS took. Tracing slows QEMU, mostly its disk emulation, so compare traced numbers with traced ones.
 
 ## How it behaves
