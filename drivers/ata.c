@@ -18,11 +18,16 @@
 #include <libc.h>
 
 #include <kutils.h>
+#include <sync.h>
 
 #include <serial.h>
 
 static uint8_t* ata_driver_data;
 struct ide_device ata_ide_device;
+
+/* One transfer at a time. A lock, not interrupts off, so the rest of the system keeps running during one (#196).
+ * acquire can block, so the driver can't be called with interrupts off or from an interrupt handler. */
+static mutex_t ata_lock;
 
 void __int_handler ata_primary()
 {
@@ -150,7 +155,7 @@ int ata_write(char *buf, uint32_t from, uint32_t count)
 {
     unsigned long pos = from;
 
-    ENTER_CRITICAL();
+    acquire(&ata_lock);
 
     for (uint32_t i = 0; i < count; i++)
     {
@@ -160,7 +165,7 @@ int ata_write(char *buf, uint32_t from, uint32_t count)
             ;
     }
     
-    LEAVE_CRITICAL();
+    release(&ata_lock);
     return count;
 }
 
@@ -169,19 +174,19 @@ int ata_read(char *buf, uint32_t from, uint32_t numsects)
 	unsigned long pos = from;
     int rc = 0;
 
-    ENTER_CRITICAL();
+    acquire(&ata_lock);
 
     for (uint32_t i = 0; i < numsects; i++)
     {
         rc = __ata_read_sector((char*) buf, pos + i);
         if (rc == -1){
-            LEAVE_CRITICAL();
+            release(&ata_lock);
             return -1;
         }
         buf += 512;
     }
 
-    LEAVE_CRITICAL();
+    release(&ata_lock);
     return rc;
 }
 
@@ -246,6 +251,7 @@ void ata_ide_init(struct pci_device* dev)
             ata_ide_device.size   = *((unsigned int *)(ata_driver_data + ATA_IDENT_MAX_LBA));
         
 
+        mutex_init(&ata_lock);
         attach_disk_dev(&ata_read, &ata_write, &ata_ide_device);
 	}
 
