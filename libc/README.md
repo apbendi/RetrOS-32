@@ -31,7 +31,7 @@ The tree is otherwise unmodified. RetrOS's own code goes next to it, in `libc/`.
 - **`src/`:**
   - `start.c`: the thread structure musl needs, the empty environment, constructors, then `main` and `exit`;
   - `unistd.c`, `fcntl.c`, `stat.c`, `uio.c`, `rename.c`: POSIX calls on RetrOS's system calls, with RetrOS's error codes mapped to `errno` (`retros.c`). `rename` replaces an existing file, as POSIX says, which RetrOS doesn't do itself;
-  - `time.c`: `time`, `gettimeofday` and `clock_gettime`, from RetrOS's clock, which holds local time in whole seconds, except `CLOCK_MONOTONIC`, the timer's milliseconds since boot; `sleep`, `usleep` and `nanosleep`, on its sleep call. `clock()` returns -1: RetrOS doesn't count a program's processor time;
+  - `time.c`: `time`, `gettimeofday` and `clock_gettime`, from RetrOS's clock, which holds local time in whole seconds, except `CLOCK_MONOTONIC`, the kernel's clock in milliseconds since boot, which follows the CPU's time stamp counter; `sleep`, `usleep` and `nanosleep`, on its sleep call. `clock()` returns -1: RetrOS doesn't count a program's processor time;
   - `system.c`: `sysconf`, `realpath` (no links to follow), and stand-ins: `mprotect` does nothing, since RetrOS can't protect memory, and the `exec` functions fail;
   - `linux.c`: the Linux system calls musl's own code makes, like stdio's `writev`, `open` and `ioctl`, done with those functions;
   - `malloc.c`: `malloc` and the rest, dividing large blocks from the kernel's `malloc` system call;
