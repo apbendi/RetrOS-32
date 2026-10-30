@@ -235,8 +235,10 @@ def start(args):
            # Stop instead of rebooting on a triple fault, so registers can still be read
            "-no-reboot", "-no-shutdown",
            "-d", "cpu_reset,guest_errors", "-D", DEBUG_LOG]
-    if args.qemu_args:
-        cmd += shlex.split(args.qemu_args)
+    # getattr, like image's: tests/c/run.py builds its own arguments for start
+    qemu_args = getattr(args, "qemu_args", None)
+    if qemu_args:
+        cmd += shlex.split(qemu_args)
     if args.gdb:
         cmd += ["-gdb", f"tcp::{GDB_PORT}", "-S"]
     out = open(os.path.join(STATE, "qemu.out"), "w")
