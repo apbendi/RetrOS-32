@@ -50,6 +50,9 @@ static struct work_queue queue = {
     .size = 0
 };
 
+/* The worker thread, which blocks while the queue is empty, until work_queue_add wakes it */
+static struct pcb* __workd = NULL;
+
 /**
  * @brief Adds new work which will call function work_fn and call the call back with the
  * return value of work_fn
@@ -85,6 +88,8 @@ int work_queue_add(int (*fn)(void*), void* arg, void(*callback)(int))
             queue.tail = work;
         }
         works_in_queue++;
+        /* The scheduler calls this too, to clean up exited threads, and pcb_wake neither locks nor switches */
+        if(__workd != NULL) pcb_wake(__workd);
     });
 
     return 0;
@@ -104,13 +109,15 @@ void worker_thread()
     int my_id = workers++;
     (void)my_id;
     dbgprintf("[%d] Starting worker thread...\n", my_id);
+    __workd = $process->current;
     while (1) {
 
         ENTER_CRITICAL();
         if(queue.head == NULL) {
-            /* Should block */
-            LEAVE_CRITICAL();
+            /* With interrupts off, work can't be added between the check and the block unnoticed */
+            $process->current->state = BLOCKED;
             kernel_yield();
+            LEAVE_CRITICAL();
             continue;
         }
 
