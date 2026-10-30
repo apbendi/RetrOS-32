@@ -293,6 +293,34 @@ static error_t sched_round_robin(struct scheduler* sched)
     return ERROR_OK;
 }
 
+/**
+ * Whether a thread in the queue can run: one sched_round_robin would switch to, or hand to workd. The running thread
+ * isn't in the queue, so a thread asking this asks about the others.
+ */
+static bool_t sched_has_ready(struct scheduler* sched)
+{
+    ASSERT_CRITICAL();
+
+    uint32_t now = timer_get_ms();
+    for(struct pcb* pcb = sched->queue->_list; pcb != NULL; pcb = pcb->next){
+        switch (pcb->state){
+        case RUNNING:
+        case PCB_NEW:
+        case ZOMBIE:
+            return true;
+        case SLEEPING:
+            if(pcb->sleep < now) return true;
+            break;
+        case BLOCKED:
+            if(pcb->timed_wait && pcb->sleep < now) return true;
+            break;
+        default:
+            break;
+        }
+    }
+    return false;
+}
+
 	/* Default round robin scheduler behavior */
 static error_t sched_default(struct scheduler* sched)
 {
@@ -415,6 +443,27 @@ void kernel_wait(int ms)
     kernel_yield();
     current->timed_wait = false;
     LEAVE_CRITICAL();
+}
+
+/**
+ * idled's loop. Halts the CPU until the next interrupt if no other thread can run, or else yields to them. Halting
+ * while one could would make it wait for an interrupt. A sleeping thread whose time comes during the halt runs at the
+ * next timer interrupt, which yields to it, so sleeps end up to a timer period late.
+ */
+void kernel_idle()
+{
+    ENTER_CRITICAL();
+    bool_t ready = sched_has_ready(get_scheduler());
+    if(!ready){
+        /**
+         * An interrupt can't come between sti and hlt, since sti takes effect after the next instruction. So one
+         * that wakes a thread after the check ends the halt. Interrupts go off again for LEAVE_CRITICAL.
+         */
+        asm volatile("sti; hlt; cli" ::: "memory");
+    }
+    LEAVE_CRITICAL();
+
+    if(ready) kernel_yield();
 }
 
 void kernel_yield()

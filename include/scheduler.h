@@ -5,6 +5,7 @@
 
 void kernel_sleep(int time);
 void kernel_wait(int ms);
+void kernel_idle();
 void kernel_yield();
 void kernel_exit();
 void block();
