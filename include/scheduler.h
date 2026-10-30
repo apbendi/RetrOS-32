@@ -4,6 +4,7 @@
 #include <pcb.h>
 
 void kernel_sleep(int time);
+void kernel_wait(int ms);
 void kernel_yield();
 void kernel_exit();
 void block();

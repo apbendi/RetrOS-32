@@ -12,6 +12,7 @@
 #include <kconfig.h>
 #include <kutils.h>
 #include <scheduler.h>
+#include <timer.h>
 #include <serial.h>
 #include <assert.h>
 #include <kthreads.h>
@@ -38,6 +39,12 @@
 #endif // !#define KDEBUG_NET_DAEMON
 
 #define MAX_PACKET_SIZE 0x800  /* 2048 bytes - increased to handle larger packets */
+
+/* How long netd waits for a packet before running TCP's timers anyway. The shortest TCP delay is 20 ms. */
+#define NETD_WAIT_MS 10
+/* How often netd cleans up pending connections, and how old one has to be to go */
+#define NETD_CLEANUP_MS 100
+#define NETD_PENDING_TIMEOUT_MS 3000
 
 struct networkmanager netd = {
     .state = NETD_UNINITIALIZED,
@@ -363,17 +370,17 @@ void __kthread_entry networking_main()
         tcp_retry_all(0);
         tcp_cleanup_time_wait_sockets();
         
-        /* Clean up stale pending connections every iteration (timeout after 3000 ticks ~3 seconds) */
-        static int cleanup_counter = 0;
-        if(++cleanup_counter >= 100){  /* Run cleanup every ~100 iterations */
-            tcp_cleanup_all_pending_connections(3000);
-            cleanup_counter = 0;
+        static uint32_t cleanup_at = 0;
+        if(timer_get_ms() >= cleanup_at){
+            tcp_cleanup_all_pending_connections(NETD_PENDING_TIMEOUT_MS);
+            cleanup_at = timer_get_ms() + NETD_CLEANUP_MS;
         }
 
-        if(todos == 0){
-            //$process->current->state = BLOCKED;
+        /* net_incoming_packet and net_send_skb wake netd. With interrupts off, neither can queue one unnoticed. */
+        ENTER_CRITICAL();
+        if(netd.skb_tx_queue->size == 0 && netd.skb_rx_queue->size == 0){
+            kernel_wait(NETD_WAIT_MS);
         }
-
-        kernel_yield();
+        LEAVE_CRITICAL();
     }
 }
