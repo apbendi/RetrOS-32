@@ -586,12 +586,12 @@ def wait(args):
 
 # --- The clock ------------------------------------------------------------
 
-UPTIME = re.compile(r"term\[shell\]: uptime: (\d+) ms, (\d+) timer interrupts")
+UPTIME = re.compile(r"term\[shell\]: uptime: (\d+) ms, (\d+) timer interrupts(?:, TSC ([0-9a-f]+):([0-9a-f]+))?")
 
 
 def uptime():
-    """Runs the shell's uptime. Returns the host's time when its line reached the serial log, the guest's clock and
-    timer interrupts from it, and how far QEMU's debug log had got by then."""
+    """Runs the shell's uptime. Returns the host's time when its line reached the serial log, the guest's clock, timer
+    interrupts and TSC (None without one) from it, and how far QEMU's debug log had got by then."""
     since = serial_size()
     shell("uptime")
     text = ""
@@ -606,9 +606,12 @@ def uptime():
             now = time.time()
             debug_end = os.path.getsize(DEBUG_LOG) if os.path.exists(DEBUG_LOG) else 0
             text += data.decode("latin-1")
-            m = UPTIME.search(clean(text))
-            if m:
-                return now, int(m.group(1)), int(m.group(2)), debug_end
+            # Only whole lines, so the TSC isn't missed by matching a line that's still arriving
+            for line in text.split("\n")[:-1]:
+                m = UPTIME.search(clean(line))
+                if m:
+                    tsc = (int(m.group(3), 16) << 32 | int(m.group(4), 16)) if m.group(3) else None
+                    return now, int(m.group(1)), int(m.group(2)), tsc, debug_end
     die("uptime didn't answer within 30 s")
 
 
@@ -640,9 +643,9 @@ def clock(args):
         monitor("trace-event pic_set_irq on")
         monitor("trace-event pic_interrupt on")
     try:
-        t0, ms0, n0, pos0 = uptime()
+        t0, ms0, n0, tsc0, pos0 = uptime()
         sleep(max(0, t0 + args.seconds - time.time()))
-        t1, ms1, n1, pos1 = uptime()
+        t1, ms1, n1, tsc1, pos1 = uptime()
     finally:
         if args.trace:
             monitor("trace-event pic_set_irq off")
@@ -650,6 +653,8 @@ def clock(args):
     host = (t1 - t0) * 1000
     print(f"host {host:.0f} ms; guest clock {ms1 - ms0} ms ({(ms1 - ms0) / host:.1%} of host); "
           f"timer interrupts {n1 - n0} ({(n1 - n0) * 1000 / host:.0f}/s)")
+    if tsc0 is not None and tsc1 is not None:
+        print(f"TSC: {(tsc1 - tsc0) / host / 1000:.3f} MHz by the host's clock")
     if args.trace:
         edges, taken = trace_counts(pos0, pos1)
         print(f"traced: QEMU raised the timer {edges} times ({edges * 1000 / host:.0f}/s); "
