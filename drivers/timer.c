@@ -21,10 +21,10 @@
 
 #define PIT_IRQ		32
 
-static unsigned long tick = 0;
+static unsigned long interrupts = 0;
 static void __int_handler timer_callback()
 {
-	tick++;
+	interrupts++;
 	$process->current->preempts++;
 	EOI(32);
 	if($process->current != NULL)
@@ -33,16 +33,20 @@ static void __int_handler timer_callback()
 	}
 }
 
-int timer_get_tick()
+/**
+ * Milliseconds since the timer started: the clock that sleeps, timeouts and CLOCK_MONOTONIC read. At 1000 Hz, each
+ * timer interrupt is one.
+ */
+uint32_t timer_get_ms()
 {
-	return tick;
+	return interrupts;
 }
-EXPORT_SYSCALL(SYSCALL_GET_TICKS, timer_get_tick);
+EXPORT_SYSCALL(SYSCALL_GET_MS, timer_get_ms);
 
-/* The timer interrupts handled since the timer started. At 1000 Hz, that's also the clock, in milliseconds. */
+/* The timer interrupts handled since the timer started, which preempt threads, for uptime */
 int timer_get_interrupts()
 {
-	return tick;
+	return interrupts;
 }
 
 int time_get_difference(struct time* t1, struct time* t2)

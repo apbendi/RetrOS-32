@@ -1140,7 +1140,7 @@ EXPORT_KSYMBOL(services);
 static int uptime(int argc, char* argv[])
 {
     unsigned long long tsc = rdtsc();
-    twritef("uptime: %d ms, %d timer interrupts, TSC %x:%x\n", timer_get_tick(), timer_get_interrupts(),
+    twritef("uptime: %d ms, %d timer interrupts, TSC %x:%x\n", timer_get_ms(), timer_get_interrupts(),
         (uint32_t)(tsc >> 32), (uint32_t)tsc);
     return 0;
 }

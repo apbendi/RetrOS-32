@@ -27,7 +27,7 @@ int clock_gettime(clockid_t clock, struct timespec* ts)
 		ts->tv_nsec = 0;
 		return 0;
 	case CLOCK_MONOTONIC: {
-		unsigned ms = (unsigned)__retros_syscall(SYSCALL_GET_TICKS, 0, 0, 0);
+		unsigned ms = (unsigned)__retros_syscall(SYSCALL_GET_MS, 0, 0, 0);
 		ts->tv_sec = ms / 1000;
 		ts->tv_nsec = (long)(ms % 1000) * 1000000;
 		return 0;

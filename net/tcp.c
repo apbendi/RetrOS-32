@@ -107,7 +107,7 @@ int tcp_pending_add(struct tcp_pending_list* list, uint32_t remote_ip, uint16_t 
 			list->connections[i].remote_port = remote_port;
 			list->connections[i].initial_seq = initial_seq;
 			list->connections[i].our_seq = our_seq;
-			list->connections[i].timestamp = timer_get_tick();
+			list->connections[i].timestamp = timer_get_ms();
 			list->connections[i].valid = 1;
 			list->connections[i].handshake_complete = 0;
 			list->count++;
@@ -214,7 +214,7 @@ void tcp_pending_cleanup_stale(struct tcp_pending_list* list, uint32_t current_t
  */
 void tcp_cleanup_all_pending_connections(uint32_t timeout_ticks)
 {
-	uint32_t current_time = timer_get_tick();
+	uint32_t current_time = timer_get_ms();
 	struct sockets sockets;
 	
 	if(net_get_sockets(&sockets) < 0){
@@ -255,7 +255,7 @@ int tcp_retry_all(int force){
 	 * if packets are re-added to the queue during processing */
 	int initial_size = retry_queue->size;
 	int processed = 0;
-	uint32_t now = timer_get_tick();
+	uint32_t now = timer_get_ms();
 	
 	while(processed < initial_size && retry_queue->size > 0){
 		struct sk_buff* skb = retry_queue->ops->remove(retry_queue);
@@ -521,7 +521,7 @@ static int __tcp_send(struct sock* sock, struct tcp_header* hdr, struct sk_buff*
 	int ret;
 
 	dbgprintf("[TCP - %d] <- TCP packet: %d syn, %d ack, %d fin %d push (src port: %d, dest port: %d)\n", 
-		timer_get_tick(), hdr->syn, hdr->ack, hdr->fin, hdr->psh, htons(hdr->source), htons(hdr->dest));
+		timer_get_ms(), hdr->syn, hdr->ack, hdr->fin, hdr->psh, htons(hdr->source), htons(hdr->dest));
 
 	if(net_ipv4_add_header(skb, dest_ip, TCP, sizeof(struct tcp_header)+len) < 0){
 		skb_free(skb);
@@ -608,10 +608,10 @@ int tcp_send_segment(struct sock* sock, uint8_t* data, uint32_t len, uint8_t pus
 		__tcp_send(sock, &hdr, skb, data, len, sock->recv_addr.sin_addr.s_addr);
 
 		/* Wait for ACK */
-		timeout = timer_get_tick() + 1000;
+		timeout = timer_get_ms() + 1000;
 
 		/* check if ack was receiver for timeout seconds. */
-		while((uint32_t)timer_get_tick() < timeout){
+		while((uint32_t)timer_get_ms() < timeout){
 			kernel_yield();
 			if(!net_sock_awaiting_ack(sock)) return ERROR_OK;
 		}
@@ -1122,7 +1122,7 @@ static void tcp_retry_queue_flush(uint32_t ip, uint16_t port)
 static int tcp_retry_queue_add_delayed(struct sk_buff* skb, uint32_t delay_ticks)
 {
 	if(delay_ticks > 0){
-		skb->retry_at = timer_get_tick() + delay_ticks;
+		skb->retry_at = timer_get_ms() + delay_ticks;
 	} else {
 		skb->retry_at = 0;
 	}
@@ -1132,7 +1132,7 @@ static int tcp_retry_queue_add_delayed(struct sk_buff* skb, uint32_t delay_ticks
 
 static int tcp_retry_queue_add_waiting(struct sk_buff* skb)
 {
-	skb->retry_at = timer_get_tick();
+	skb->retry_at = timer_get_ms();
 	/* Keep backlog data alive while the application drains existing connections. */
 	skb->wait_forever_until = TCP_RETRY_WAIT_FOREVER;
 	return retry_queue->ops->add(retry_queue, skb);
@@ -1141,7 +1141,7 @@ static int tcp_retry_queue_add_waiting(struct sk_buff* skb)
 static void tcp_enter_time_wait(struct sock* sk)
 {
 	sk->tcp->state = TCP_TIME_WAIT;
-	sk->tcp->time_wait_expire = timer_get_tick() + TCP_TIME_WAIT_DURATION;
+	sk->tcp->time_wait_expire = timer_get_ms() + TCP_TIME_WAIT_DURATION;
 	/* Drop any queued retries for this 4-tuple; the connection is done. */
 	tcp_retry_queue_purge(sk->recv_addr.sin_addr.s_addr, sk->recv_addr.sin_port);
 	dbgprintf("[TCP] Socket %d entering TIME_WAIT (expires at %u)\n",
@@ -1155,7 +1155,7 @@ void tcp_cleanup_time_wait_sockets(void)
 		return;
 	}
 
-	uint32_t now = timer_get_tick();
+	uint32_t now = timer_get_ms();
 	for(int i = 0; i < sockets.total_sockets; i++){
 		struct sock* sk = sockets.sockets[i];
 		if(sk == NULL || sk->tcp == NULL){
@@ -1285,7 +1285,7 @@ static int tcp_state_machine(struct sk_buff* skb){
 	int result = -1;
 
 	dbgprintf("[TCP - %d] %s -> TCP packet: %d syn, %d ack, %d fin %d push %d rst (src port: %d, dest port: %d) %d bytes\n", 
-		timer_get_tick(), tcp_state_to_str(sk->tcp->state), hdr->syn, hdr->ack, hdr->fin, hdr->psh, hdr->rst, htons(hdr->source), htons(hdr->dest), skb->data_len);
+		timer_get_ms(), tcp_state_to_str(sk->tcp->state), hdr->syn, hdr->ack, hdr->fin, hdr->psh, hdr->rst, htons(hdr->source), htons(hdr->dest), skb->data_len);
 
 	//print_socks();
 
@@ -1660,7 +1660,7 @@ static int tcp_state_machine(struct sk_buff* skb){
 			dbgprintf("[TCP] FIN_WAIT -> FIN_WAIT_2 on socket %d\n", sk->socket);
 			sk->tcp->state = TCP_FIN_WAIT_2;
 			/* Avoid getting stuck forever if the peer never sends its FIN. */
-			sk->tcp->time_wait_expire = timer_get_tick() + TCP_TIME_WAIT_DURATION;
+			sk->tcp->time_wait_expire = timer_get_ms() + TCP_TIME_WAIT_DURATION;
 			skb_free(skb);
 			result = ERROR_OK;
 			goto out;

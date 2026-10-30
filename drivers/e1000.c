@@ -208,7 +208,7 @@ int e1000_transmit(char* buffer, uint32_t size)
 	E1000_DEVICE_SET(E1000_TDT) = (tail+1) % TX_SIZE;
 	dbgprintf("[e1000 TX] Queued %d bytes, new tail %d\n", size, E1000_DEVICE_GET(E1000_TDT));
 
-	//dbgprintf("[e1000 - %d] Sending %d bytes! (tail: %d) %d\n", timer_get_tick(), size, (tail + 1) % TX_SIZE, __cli_cnt);
+	//dbgprintf("[e1000 - %d] Sending %d bytes! (tail: %d) %d\n", timer_get_ms(), size, (tail + 1) % TX_SIZE, __cli_cnt);
 	return size;
 }
 
@@ -250,7 +250,7 @@ void __int_handler e1000_callback()
 
 static int32_t e1000_poll()
 {
-	dbgprintf("[e1000 - %d] Polling!\n", timer_get_tick());
+	dbgprintf("[e1000 - %d] Polling!\n", timer_get_ms());
 	/* Polling for RX interrupts */
 	if(E1000_DEVICE_GET(E1000_ICR) & E1000_IMS_RXDW)
 	{
