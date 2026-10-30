@@ -118,6 +118,12 @@ int mouse_get_event(struct mouse* m)
 	return got;
 }
 
+/* Whether mouse_get_event has a state to return */
+int mouse_has_event(void)
+{
+	return __mouse_queue_count > 0;
+}
+
 void __int_handler __mouse_handler()
 {
    	uint8_t status = inportb(MOUSE_STATUS);
@@ -163,6 +169,7 @@ void __int_handler __mouse_handler()
 							.flags = mouse_device.packet.flags
 						};
 						__mouse_queue_push(state);
+						gfx_composition_wake();
 						mouse_device.cycle = 0;
 					}
 					break;

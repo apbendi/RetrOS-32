@@ -21,6 +21,7 @@
 #include <sync.h>
 
 #include <vbe.h>
+#include <gfx/composition.h>
 
 #define KB_IRQ 33 /* Default is 1, 33 after mapped. */
 #define KB_BUFFER_SIZE 255
@@ -126,6 +127,9 @@ int kb_get_key(struct kb_key* key) {
   return 1;
 }
 
+/* Whether kb_get_key has a key to take */
+int kb_has_key(void) { return kb_buffer_head != kb_buffer_tail; }
+
 unsigned char kb_get_char(int spin) {
   struct kb_key key;
   while (!kb_get_key(&key)) {
@@ -146,6 +150,7 @@ static void kb_add_char(unsigned char c) {
   kb_buffer[kb_buffer_head].key = c;
   kb_buffer[kb_buffer_head].modifiers = kb_get_modifiers();
   kb_buffer_head = next_head;
+  gfx_composition_wake();
 }
 
 /* The window server's shortcuts (#89), or 0. Any other Alt+key sends the key alone. */

@@ -24,6 +24,7 @@
 #include <vbe.h>
 #include <scheduler.h>
 #include <clipboard.h>
+#include <gfx/composition.h>
 
 #define MAX_FMT_STR_SIZE 50
 #define TERMINAL_TEXTBUFFER_INITIAL_CAPACITY 1024
@@ -1281,6 +1282,7 @@ static int __terminal_putchar_graphics(struct terminal* term, char c)
 
 	if(term->screen != NULL && term->screen != $process->current->gfx_window){
 		term->screen->changed = 1;
+		gfx_composition_wake();
 	} else {
 		gfx_commit();
 	}
@@ -1479,6 +1481,7 @@ static int __terminal_commit_graphics(struct terminal* term)
 	}
 	screen->changed = 1;
 	screen->drawing = false;
+	gfx_composition_wake();
 	terminal_unlock(term);
 
 	return 0;
