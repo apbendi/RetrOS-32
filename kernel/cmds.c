@@ -25,6 +25,7 @@
 #include <timefmt.h>
 #include <errors.h>
 #include <clipboard.h>
+#include <timer.h>
 
 #define COMMAND(name, func) \
 	int name\
@@ -1131,6 +1132,14 @@ static int services(int argc, char *argv[])
     return 0;
 }
 EXPORT_KSYMBOL(services);
+
+/* The clock, in milliseconds since boot, and the timer interrupts handled. qctl.py clock compares them with the host. */
+static int uptime(int argc, char* argv[])
+{
+    twritef("uptime: %d ms, %d timer interrupts\n", timer_get_tick(), timer_get_interrupts());
+    return 0;
+}
+EXPORT_KSYMBOL(uptime);
 
 static int reboot(){
     twritef("Rebooting...\n");

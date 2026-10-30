@@ -29,7 +29,7 @@ $Q stop
 ```
 
 `$Q --help` lists every command.
-- **`start` options:** `--res 640|800|1024|text` picks the resolution. `--rtc 2026-10-20T10:05:00` starts the clock at a given time, e.g. to test the taskbar clock at a two-digit hour. `--image IMG` boots a copy of another image instead, e.g. the C harness's `tests/c/out/test.img` (the `test-c` skill). `--mem 16` sets the memory in MB; the default is 32, like `make qemu`. `--disk-bus virtio` boots with no disk the kernel can see: the BIOS boots from a virtio disk, which the kernel's IDE driver doesn't find, as on a machine booted from USB. `start` then waits for a shell that never comes, so run it in the background and drive the login window and the "No disk attached" prompt yourself.
+- **`start` options:** `--res 640|800|1024|text` picks the resolution. `--rtc 2026-10-20T10:05:00` starts the clock at a given time, e.g. to test the taskbar clock at a two-digit hour. `--image IMG` boots a copy of another image instead, e.g. the C harness's `tests/c/out/test.img` (the `test-c` skill). `--mem 16` sets the memory in MB; the default is 32, like `make qemu`. `--disk-bus virtio` boots with no disk the kernel can see: the BIOS boots from a virtio disk, which the kernel's IDE driver doesn't find, as on a machine booted from USB. `start` then waits for a shell that never comes, so run it in the background and drive the login window and the "No disk attached" prompt yourself. `--qemu-args "..."` adds QEMU options, e.g. `-icount shift=auto` (QEMU's clock follows the instructions run), `-msg timestamp=on` (a time on each line of `.qemu/qemu-debug.log`) or `-cpu pentium`.
 - **`type TEXT`** types text; `\n` is Enter.
 - **`key NAME...`** presses keys by QEMU's names: `ret`, `tab`, `esc`, `f10`, `backspace`, `shift-a`, `ctrl-c`.
 - **`windows`** lists the windows front to back, with each one's position, size and owner, and where to click to bring it to the front. It presses F12, which makes the window server log the list.
@@ -42,6 +42,8 @@ $Q stop
   - **The shell comes to the front** for each check, and it starts at 32,32, over About and new apps' title bars. Drag it aside first, or clicks meant for those title bars land in the shell.
 - **`text`** prints the VGA text screen, for the boot menu and text mode.
 - **`mon CMD`** runs any QEMU monitor command.
+- **`clock SECONDS`** compares RetrOS's clock with the host's. It runs the shell's `uptime` twice, about SECONDS apart, times each line as it reaches the serial log, and prints the guest's milliseconds as a share of the host's, and the timer interrupts a second. Run something with `exec -d` first to measure under load.
+  - **`--trace`** also counts, from QEMU's trace events (`pic_set_irq`, `pic_interrupt`), the timer ticks QEMU raised and the share RetrOS took. Tracing slows QEMU, mostly its disk emulation, so compare traced numbers with traced ones.
 
 ## How it behaves
 

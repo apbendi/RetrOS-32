@@ -39,6 +39,12 @@ int timer_get_tick()
 }
 EXPORT_SYSCALL(SYSCALL_GET_TICKS, timer_get_tick);
 
+/* The timer interrupts handled since the timer started. At 1000 Hz, that's also the clock, in milliseconds. */
+int timer_get_interrupts()
+{
+	return tick;
+}
+
 int time_get_difference(struct time* t1, struct time* t2)
 {
 	uint32_t time1 = (t1->hour*3600) + (t1->minute*60) + t1->second;
