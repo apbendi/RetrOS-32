@@ -592,8 +592,12 @@ UPTIME = re.compile(r"term\[shell\]: uptime: (\d+) ms, (\d+) timer interrupts(?:
 def uptime():
     """Runs the shell's uptime. Returns the host's time when its line reached the serial log, the guest's clock, timer
     interrupts and TSC (None without one) from it, and how far QEMU's debug log had got by then."""
+    focus("shell", quiet=True)
+    type_text("uptime")
+    # Enter goes straight to the monitor, without the pause type_text makes after each key, and the log is read from
+    # then on: a line that comes during that pause would be timed late
     since = serial_size()
-    shell("uptime")
+    monitor("sendkey ret")
     text = ""
     end = time.time() + 30
     with open(SERIAL, "rb") as f:
