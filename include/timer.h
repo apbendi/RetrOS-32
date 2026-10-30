@@ -6,6 +6,9 @@
 
 #define TIME_TO_INT(time) (((time)->hour*3600) + ((time)->minute*60) + (time)->second)
 
+/* How many times a second the timer interrupts, each time preempting the running thread. It has to divide 1000. */
+#define TIMER_HZ 250
+
 
 void init_pit(uint32_t frequency);
 struct time* get_datetime();

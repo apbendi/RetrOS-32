@@ -124,15 +124,17 @@ static void __timer_calibrate_tsc()
 		khz / 1000, khz % 1000 / 100, khz % 100 / 10, khz % 10);
 }
 
+_Static_assert(1000 % TIMER_HZ == 0, "Each timer interrupt has to be a whole number of milliseconds");
+
 /**
  * Milliseconds since the timer started: the clock that sleeps, timeouts and CLOCK_MONOTONIC read. It's read from the
- * TSC, so interrupts lost along the way don't slow it down. Without a TSC, it counts the timer's interrupts, one a
- * millisecond at 1000 Hz.
+ * TSC, so interrupts lost along the way don't slow it down. Without a TSC, it counts the timer's interrupts, each
+ * 1000 / TIMER_HZ milliseconds.
  */
 uint32_t timer_get_ms()
 {
 	if(tsc_mult == 0){
-		return interrupts;
+		return interrupts * (1000 / TIMER_HZ);
 	}
 	return (uint32_t)__tsc_to_ms(rdtsc() - tsc_start);
 }
