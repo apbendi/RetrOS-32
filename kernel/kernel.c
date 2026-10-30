@@ -259,7 +259,7 @@ void kernel(uint32_t magic)
 	}
 	kernel_boot_printf("Deamons initialized.");
 
-	init_pit(1000);
+	init_pit(TIMER_HZ);
 	kernel_boot_printf("Timer initialized.");
 
 	dbgprintf("Critical counter: %d\n", __cli_cnt);
