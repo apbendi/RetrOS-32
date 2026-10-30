@@ -9,7 +9,7 @@
 
 void init_pit(uint32_t frequency);
 struct time* get_datetime();
-int timer_get_tick();
+uint32_t timer_get_ms();
 int timer_get_interrupts();
 int time_get_difference();
 

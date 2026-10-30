@@ -89,10 +89,10 @@ error_t kernel_recv(struct sock* socket, void *buffer, int length, int flags)
 
 error_t kernel_recv_timeout(struct sock* socket, void *buffer, int length, int flags, int timeout)
 {
-    uint32_t timeout_ticks = timer_get_tick() + (timeout + 3) * 1000;
+    uint32_t timeout_ticks = timer_get_ms() + (timeout + 3) * 1000;
     int read = -1;
     while(read == -1){
-        if((uint32_t)timer_get_tick() > timeout_ticks) return 0;
+        if((uint32_t)timer_get_ms() > timeout_ticks) return 0;
         kernel_yield();
     }
 
@@ -122,9 +122,9 @@ error_t kernel_connect(struct sock* socket, const struct sockaddr *address, sock
     dbgprintf(" [%d] Connecting...\n", socket);
     /* block or spin */
 
-    uint32_t start_ticks = timer_get_tick();
+    uint32_t start_ticks = timer_get_ms();
     while(socket->tcp->state != TCP_ESTABLISHED){
-        if((uint32_t)(timer_get_tick() - start_ticks) > 2000){
+        if((uint32_t)(timer_get_ms() - start_ticks) > 2000){
             dbgprintf(" [%d] Connection timed out\n", socket);
             return -1;
         }

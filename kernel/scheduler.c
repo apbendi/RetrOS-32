@@ -100,7 +100,7 @@ static error_t sched_sleep(struct scheduler* sched, int time)
 
     assert(sched->ctx.running != NULL);
 
-    sched->ctx.running->sleep = timer_get_tick() + time;
+    sched->ctx.running->sleep = timer_get_ms() + time;
     sched->ctx.running->state = SLEEPING;
 
     (void)sched->ops->schedule(sched);
@@ -258,10 +258,10 @@ static error_t sched_round_robin(struct scheduler* sched)
         case SLEEPING:{
                 /**
                  * @brief When a pcb is sleeping, we need to know if we should wake it up.
-                 * If the pcb's sleep time is less than the current tick we can wake it up
+                 * If the pcb's sleep time is less than the clock (timer_get_ms) we can wake it up
                  * and schedule it as running, else it will be put at the end of the queue.
                  */
-                if(next->sleep < timer_get_tick()){
+                if(next->sleep < timer_get_ms()){
                     next->state = RUNNING;
                     break;
                 }

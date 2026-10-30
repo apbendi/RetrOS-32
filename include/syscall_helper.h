@@ -72,7 +72,7 @@ enum {
     SYSCALL_CLIPBOARD_GET,
 
     /* Milliseconds since the timer started (timer.h) */
-    SYSCALL_GET_TICKS
+    SYSCALL_GET_MS
 };
 
 #endif /* __SYSCALL_HELPER_H */

@@ -384,7 +384,7 @@ static bool_t __wm_over_content(struct window* w, int x, int y)
  */
 static int __wm_count_press(struct windowmanager* wm, struct window* window, int x, int y)
 {
-    int now = timer_get_tick();
+    int now = timer_get_ms();
     bool_t again = window == wm->click_window && now - wm->click_tick <= WM_MULTI_CLICK_MS
         && ABS(x - wm->click_x) <= WM_MULTI_CLICK_DISTANCE && ABS(y - wm->click_y) <= WM_MULTI_CLICK_DISTANCE;
     wm->click_count = again && wm->click_count < 3 ? wm->click_count + 1 : 1;
