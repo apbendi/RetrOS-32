@@ -377,7 +377,7 @@ void idletask(){
 	dbgprintf("Hello world!\n");
 	while(1){
 		if(__cli_cnt>0) warningf("Critical: %d\n", __cli_cnt);
-		kernel_yield();
+		kernel_idle();
 	};
 }
 
