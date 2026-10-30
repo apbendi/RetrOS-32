@@ -5,7 +5,7 @@ QEMU runs in the background with no window. Its serial log, a copy of the disk
 image and screenshots go in .qemu/ at the repo root. The script talks to QEMU's
 monitor over TCP to press keys, move the mouse and take screenshots.
 
-  start [--res 640|800|1024|text] [--gdb] [--rtc TIME] [--image IMG]
+  start [--res 640|800|1024|text] [--gdb] [--rtc TIME] [--image IMG] [--qemu-args ARGS]
                           boot a copy of RetrOS-32-debug.img (or IMG), pick the
                           resolution (default 1024) and wait for the desktop
   stop                    quit QEMU
@@ -29,15 +29,17 @@ monitor over TCP to press keys, move the mouse and take screenshots.
   drag X1 Y1 X2 Y2        press at X1,Y1, move to X2,Y2, release
 
   mon CMD                 run a QEMU monitor command (info registers, xp, ...)
+  clock SECONDS [--trace] compare RetrOS's clock with the host's over about SECONDS
 
 Environment: RETROS_QEMU_MONITOR_PORT (default 45454), RETROS_QEMU_GDB_PORT
 (1234), RETROS_QEMU_HTTP_PORT (18080, forwarded to the guest's port 80).
 """
-import argparse, os, re, shutil, signal, socket, subprocess, sys, time
+import argparse, os, re, shlex, shutil, signal, socket, subprocess, sys, time
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
 STATE = os.path.join(REPO, ".qemu")
 SERIAL = os.path.join(STATE, "serial.log")
+DEBUG_LOG = os.path.join(STATE, "qemu-debug.log")
 PIDFILE = os.path.join(STATE, "qemu.pid")
 MARK = os.path.join(STATE, "mark")
 DISK = os.path.join(STATE, "disk.img")
@@ -232,7 +234,9 @@ def start(args):
            "-monitor", f"tcp:127.0.0.1:{MONITOR_PORT},server,nowait",
            # Stop instead of rebooting on a triple fault, so registers can still be read
            "-no-reboot", "-no-shutdown",
-           "-d", "cpu_reset,guest_errors", "-D", os.path.join(STATE, "qemu-debug.log")]
+           "-d", "cpu_reset,guest_errors", "-D", DEBUG_LOG]
+    if args.qemu_args:
+        cmd += shlex.split(args.qemu_args)
     if args.gdb:
         cmd += ["-gdb", f"tcp::{GDB_PORT}", "-S"]
     out = open(os.path.join(STATE, "qemu.out"), "w")
@@ -580,6 +584,78 @@ def wait(args):
     print(line)
 
 
+# --- The clock ------------------------------------------------------------
+
+UPTIME = re.compile(r"term\[shell\]: uptime: (\d+) ms, (\d+) timer interrupts")
+
+
+def uptime():
+    """Runs the shell's uptime. Returns the host's time when its line reached the serial log, the guest's clock and
+    timer interrupts from it, and how far QEMU's debug log had got by then."""
+    since = serial_size()
+    shell("uptime")
+    text = ""
+    end = time.time() + 30
+    with open(SERIAL, "rb") as f:
+        f.seek(since)
+        while time.time() < end:
+            data = f.read()
+            if not data:
+                time.sleep(0.001)
+                continue
+            now = time.time()
+            debug_end = os.path.getsize(DEBUG_LOG) if os.path.exists(DEBUG_LOG) else 0
+            text += data.decode("latin-1")
+            m = UPTIME.search(clean(text))
+            if m:
+                return now, int(m.group(1)), int(m.group(2)), debug_end
+    die("uptime didn't answer within 30 s")
+
+
+def trace_counts(start, end):
+    """The PIT's rising edges into the interrupt controller, and the IRQ 0 interrupts the CPU took, in QEMU's debug
+    log between two offsets. -msg timestamp=on puts a time before each line, so the events are searched for."""
+    with open(DEBUG_LOG, "rb") as f:
+        f.seek(start)
+        text = f.read(end - start).decode("latin-1")
+    edges = taken = 0
+    level = None
+    for line in text.split("\n"):
+        m = re.search(r"pic_set_irq master 1 irq 0 level (\d)", line)
+        if m:
+            if level == 0 and m.group(1) == "1":
+                edges += 1
+            level = int(m.group(1))
+        elif "pic_interrupt irq 0 intno 32" in line:
+            taken += 1
+    return edges, taken
+
+
+def clock(args):
+    """Runs uptime twice, about SECONDS apart, and compares the guest's clock with the host's between the two lines.
+    With --trace, also counts the timer ticks QEMU raised and the ones RetrOS took, from QEMU's trace events."""
+    if not qemu_pid():
+        die("QEMU isn't running (qctl.py start)")
+    if args.trace:
+        monitor("trace-event pic_set_irq on")
+        monitor("trace-event pic_interrupt on")
+    try:
+        t0, ms0, n0, pos0 = uptime()
+        sleep(max(0, t0 + args.seconds - time.time()))
+        t1, ms1, n1, pos1 = uptime()
+    finally:
+        if args.trace:
+            monitor("trace-event pic_set_irq off")
+            monitor("trace-event pic_interrupt off")
+    host = (t1 - t0) * 1000
+    print(f"host {host:.0f} ms; guest clock {ms1 - ms0} ms ({(ms1 - ms0) / host:.1%} of host); "
+          f"timer interrupts {n1 - n0} ({(n1 - n0) * 1000 / host:.0f}/s)")
+    if args.trace:
+        edges, taken = trace_counts(pos0, pos1)
+        print(f"traced: QEMU raised the timer {edges} times ({edges * 1000 / host:.0f}/s); "
+              f"RetrOS took {taken} ({taken / max(edges, 1):.1%})")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="op", required=True)
@@ -591,6 +667,7 @@ def main():
     s.add_argument("--image", help="boot a copy of this image instead of RetrOS-32-debug.img, e.g. the C harness's")
     s.add_argument("--disk-bus", default="ide", choices=["ide", "virtio"],
                    help="virtio: the BIOS boots from the disk, but the kernel's IDE driver doesn't see it, as on a machine booted from USB")
+    s.add_argument("--qemu-args", help="more QEMU options, e.g. \"-icount shift=auto\" or \"-cpu pentium\"")
     sub.add_parser("stop")
     sub.add_parser("status")
     s = sub.add_parser("pick"); s.add_argument("res", choices=list(RESOLUTION_KEYS))
@@ -616,6 +693,8 @@ def main():
         s.add_argument(a, type=int)
     s.add_argument("--shift", action="store_true", help="with Shift held")
     s = sub.add_parser("mon"); s.add_argument("command")
+    s = sub.add_parser("clock"); s.add_argument("seconds", type=float)
+    s.add_argument("--trace", action="store_true", help="also count the timer ticks QEMU raised and RetrOS took")
     a = p.parse_args()
 
     if a.op == "start": start(a)
@@ -635,6 +714,7 @@ def main():
     elif a.op == "move": move(a.x, a.y)
     elif a.op == "drag": drag(a.x1, a.y1, a.x2, a.y2, a.shift)
     elif a.op == "mon": print(monitor(a.command))
+    elif a.op == "clock": clock(a)
 
 
 if __name__ == "__main__":

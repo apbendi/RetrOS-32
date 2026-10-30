@@ -10,6 +10,7 @@
 void init_pit(uint32_t frequency);
 struct time* get_datetime();
 int timer_get_tick();
+int timer_get_interrupts();
 int time_get_difference();
 
 #endif // !TIMER_H
