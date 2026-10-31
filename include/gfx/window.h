@@ -33,6 +33,14 @@ typedef enum window_states {
     GFX_WINDOW_STATIC
 } window_state_t;
 
+/* The buttons on a window's title bar */
+typedef enum window_buttons {
+    GFX_WINDOW_NO_BUTTON,
+    GFX_WINDOW_EXIT_BUTTON,
+    GFX_WINDOW_MINIMIZE_BUTTON,
+    GFX_WINDOW_MAXIMIZE_BUTTON
+} window_button_t;
+
 typedef enum window_flags {
     GFX_IS_RESIZABLE = 1 << 0,
     GFX_IS_IMMUATABLE = 1 << 1,
@@ -110,6 +118,12 @@ struct window {
     uint8_t* inner;
     uint8_t is_resizable;
     uint8_t resize;
+
+    /**
+     * The title bar button the press was on, a window_button_t, until its release. A button acts only on a release
+     * over the one pressed, so a drag from the content or another button that ends on it does nothing.
+     */
+    uint8_t pressed_button;
 
     /* Set while F10 has the window fullscreen. inner is then the window server's composition buffer, which must not be replaced or freed. */
     uint8_t is_fullscreen;

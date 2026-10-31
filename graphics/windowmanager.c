@@ -462,7 +462,7 @@ static int wm_default_mouse_event(struct windowmanager* wm, int x, int y, char f
                 __wm_push_mouse(pressed, GFX_EVENT_MOUSE_UP, x, y, 0);
             }
 
-            /* It's only a click if the mouse is still over the pressed window. */
+            /* It's only a click if the mouse is still over the pressed window. Its buttons check that the press was on them too. */
             if(pressed == window){
                 pressed->ops->click(pressed, x, y);
             }

@@ -344,23 +344,41 @@ static int gfx_window_resize(struct window* w, int width, int height)
     return ERROR_OK;
 }
 
+/* The title bar button at x, y on the screen. A window without options has none, and one that can't be resized no maximize button */
+static window_button_t gfx_window_button_at(struct window* window, int x, int y)
+{
+    if(HAS_FLAG(window->flags, GFX_NO_OPTIONS) || y < window->y - 3 || y > window->y - 3 + 9){
+        return GFX_WINDOW_NO_BUTTON;
+    }
+
+    int right = window->x + window->width;
+    if(x >= right - 22 + 6 && x <= right - 22 + 6 + 10){
+        return GFX_WINDOW_EXIT_BUTTON;
+    }
+    if(x >= right - 34 + 6 && x <= right - 34 + 6 + 10){
+        return GFX_WINDOW_MINIMIZE_BUTTON;
+    }
+    if(x >= right - 46 + 6 && x <= right - 46 + 6 + 10 && window->is_resizable){
+        return GFX_WINDOW_MAXIMIZE_BUTTON;
+    }
+    return GFX_WINDOW_NO_BUTTON;
+}
+
 /**
- * @brief Default handler for click event from mouse on given window.
- * 
+ * @brief Default handler for click event from mouse on given window: a release over it. It clicks a title bar button
+ * only if the press was on that button too (pressed_button).
+ *
  * @param window Window that was clicked.
- * @param x 
- * @param y 
+ * @param x
+ * @param y
  */
 static void gfx_default_click(struct window* window, int x, int y)
 {
-    if(HAS_FLAG(window->flags, GFX_NO_OPTIONS)) return;
-    
-    if(gfx_point_in_rectangle(window->x, window->y, window->x+window->width, window->y+10, x, y)){
-        //dbgprintf("Clicked %s header\n", window->name);
-    }
+    window_button_t button = gfx_window_button_at(window, x, y);
+    if(button == GFX_WINDOW_NO_BUTTON || button != window->pressed_button) return;
 
     /* Exit button */
-    if (x >= window->x + window->width - 22 + 6 && x <= window->x + window->width - 22 + 6 + 10 && y >= window->y - 3 && y <= window->y - 3 + 9) {
+    if (button == GFX_WINDOW_EXIT_BUTTON) {
         dbgprintf("[GFX WINDOW] Clicked %s exit button\n", window->name);
         struct gfx_event e = {
             .data = 0,
@@ -372,7 +390,7 @@ static void gfx_default_click(struct window* window, int x, int y)
     }
 
     /* Minimize button */
-    if (x >= window->x + window->width - 34 + 6 && x <= window->x + window->width - 34 + 6 + 10 && y >= window->y - 3 && y <= window->y - 3 + 9) {
+    if (button == GFX_WINDOW_MINIMIZE_BUTTON) {
         dbgprintf("[GFX WINDOW] Clicked %s minimize button\n", window->name);
         
         /* toggle IS_HIDDEN flag */
@@ -387,7 +405,7 @@ static void gfx_default_click(struct window* window, int x, int y)
     }
 
     /* Full screen button */
-    if (x >= window->x + window->width - 46 + 6 && x <= window->x + window->width - 46 + 6 + 10 && y >= window->y - 3 && y <= window->y - 3 + 9 && window->is_resizable) {
+    if (button == GFX_WINDOW_MAXIMIZE_BUTTON) {
         dbgprintf("[GFX WINDOW] Clicked %s full screen button\n", window->name);
         if(window->is_maximized.state == 0){
             window->is_maximized.x = window->x;
@@ -462,6 +480,8 @@ static void gfx_default_hover(struct window* window, int x, int y)
 
 static void gfx_default_mouse_down(struct window* window, int x, int y)
 {
+    window->pressed_button = gfx_window_button_at(window, x, y);
+
     if(gfx_point_in_rectangle(window->x, window->y-GFX_WINDOW_HEADER_OVERHANG, window->x+window->width-60, window->y+10, x, y)){
         window->is_moving.state = GFX_WINDOW_MOVING;
         window->is_moving.x = x - window->x;
@@ -481,6 +501,9 @@ static void gfx_default_mouse_down(struct window* window, int x, int y)
 /* Only called for the window that got the press, so a release anywhere ends its drag or resize. */
 static void gfx_default_mouse_up(struct window* window, int x, int y)
 {
+    /* After the click, which the window manager sends first */
+    window->pressed_button = GFX_WINDOW_NO_BUTTON;
+
     if(window->is_moving.state == GFX_WINDOW_MOVING){
         window->is_moving.state = GFX_WINDOW_STATIC;
 
@@ -626,6 +649,7 @@ struct window* gfx_new_window(int width, int height, window_flag_t flags)
         w->is_resizable = 0;
     }
     w->resize = 0;
+    w->pressed_button = GFX_WINDOW_NO_BUTTON;
     w->is_fullscreen = 0;
     w->removed = 0;
     w->next_free = NULL;
