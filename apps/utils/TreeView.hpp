@@ -17,6 +17,7 @@
 #include <utils/cppUtils.hpp>
 #include <lib/syscall.h>
 #include <utils/Function.hpp>
+#include <utils/ScrollBar.hpp>
 #include <libc.h>
 
 #include <fs/fs.h>
@@ -55,6 +56,8 @@ public:
         /* From /sysutil/icons, shared with Finder and the kernel. A file that can't be read gives a placeholder */
         gfx_load_icon("folder_16", &folderIcon);
         gfx_load_icon("file_16", &fileIcon);
+
+        scrollable = false;
     }
 
     ~TreeView() {
@@ -71,26 +74,73 @@ public:
 
     /* highlight is a file's full path, whose row is drawn highlighted when it shows, or nullptr for none */
     void drawTree(Window* window, const char* highlight = nullptr) {
+        placeScrollBar();
+
         /* Draw the tree view background */
         window->drawContouredRect(x, y, width, height);
         window->drawContouredBox(8, 12, width - 16, height-20, COLOR_WHITE);
 
         window->drawFormatText(2, 2, COLOR_BLACK, "Tree View");
-        int row = 0;
+        /* Rows count from the first shown, so those scrolled above it are negative */
+        int row = -firstRow();
         int max_rows = visibleRows();
         drawTreeRecursive(&root, 1, &row, -1, max_rows, highlight);
+
+        if (scrollBarShown()) {
+            scrollBar.draw();
+        }
     }
 
     /**
-     * Expands the directories that hold path, a file's full path, so its row shows, if the tree has the file. A row
-     * past the tree's bottom still doesn't.
+     * Gives the tree a scroll bar along its box's right side, shown while its rows don't all fit. Its owner passes it
+     * presses, moves and releases with mouse(). Without one, rows past the box's bottom aren't shown.
+     */
+    void setScrollable(bool on) {
+        scrollable = on;
+    }
+
+    /**
+     * Gives the scroll bar a press, or a move or release after one. It redraws itself when only its look changes.
+     * @return 0 for an event that isn't the bar's, or SCROLLBAR_TAKEN, with SCROLLBAR_SCROLLED when the rows moved, and
+     * the tree needs drawing again
+     */
+    int mouse(const struct gfx_event& event) {
+        if (!scrollable) {
+            return 0;
+        }
+
+        int result = scrollBar.mouse(event);
+        if ((result & SCROLLBAR_REDRAW) && !(result & SCROLLBAR_SCROLLED)) {
+            scrollBar.draw();
+        }
+        return result;
+    }
+
+    /**
+     * Expands the directories that hold path, a file's full path, so its row shows, if the tree has the file. With a
+     * scroll bar, a row out of view is scrolled to the middle; without one, a row past the box's bottom still doesn't
+     * show.
      * @return whether the tree has it
      */
     bool reveal(const char* path) {
         if (path == nullptr || path[0] == 0) {
             return false;
         }
-        return revealIn(&root, path);
+        if (!revealIn(&root, path)) {
+            return false;
+        }
+
+        if (scrollable) {
+            int row = 0;
+            int target = rowOf(&root, path, &row);
+            int visible = visibleRows();
+            int first = scrollBar.first();
+            if (target >= 0 && (target < first || target >= first + visible)) {
+                first = target - (visible / 2);
+            }
+            scrollBar.set(countRows(&root), visible, first);
+        }
+        return true;
     }
 
     void resize(int newWidth, int newHeight) {
@@ -114,8 +164,6 @@ public:
     }
 
     const char* click(int x, int y) {
-        (void)x;
-
         int max_rows = visibleRows();
         if (max_rows <= 0) {
             return nullptr;
@@ -125,11 +173,17 @@ public:
             return nullptr;
         }
 
-        int target_row = (y / 16) - 1;
-        if (target_row < 0 || target_row >= max_rows) {
+        /* The scroll bar's strip isn't a row's */
+        if (scrollBarShown() && x >= scrollBar.x()) {
             return nullptr;
         }
 
+        int shown_row = (y / 16) - 1;
+        if (shown_row < 0 || shown_row >= max_rows) {
+            return nullptr;
+        }
+
+        int target_row = shown_row + firstRow();
         int row = 0;
         struct TreeNode* hit = findNodeByRow(&root, &row, target_row);
         if (hit == nullptr) {
@@ -165,6 +219,68 @@ private:
     String* path;
     struct image folderIcon;
     struct image fileIcon;
+    /* Whether the tree has a scroll bar; its first is the first row shown */
+    bool scrollable;
+    ScrollBar scrollBar;
+
+    int firstRow() const
+    {
+        return scrollable ? scrollBar.first() : 0;
+    }
+
+    bool scrollBarShown() const
+    {
+        return scrollable && scrollBar.shown();
+    }
+
+    /* Inside the box's right border, the box's height inside its top and bottom ones, with the rows as they are now */
+    void placeScrollBar()
+    {
+        if (!scrollable) {
+            return;
+        }
+        scrollBar.place(width - 9 - SCROLLBAR_WIDTH, 13, height - 22);
+        scrollBar.set(countRows(&root), visibleRows(), scrollBar.first());
+    }
+
+    /* Where rows end, at the scroll bar when it's shown, or else the box's right border: the first x past them */
+    int rowsRight() const
+    {
+        return scrollBarShown() ? scrollBar.x() : width - 9;
+    }
+
+    /* The rows node's children take, with those of directories expanded */
+    int countRows(struct TreeNode* node)
+    {
+        int rows = 0;
+        for (int i = 0; i < node->childrenCount; i++) {
+            rows++;
+            if (node->children[i].isDirectory && node->children[i].isExpanded) {
+                rows += countRows(&node->children[i]);
+            }
+        }
+        return rows;
+    }
+
+    /* The row of the file at path, counting from *row, as findNodeByRow does, or -1 if it isn't showing */
+    int rowOf(struct TreeNode* node, const char* path, int* row)
+    {
+        for (int i = 0; i < node->childrenCount; i++) {
+            struct TreeNode* child = &node->children[i];
+            if (!child->isDirectory && pathMatches(path, child->name->getData(), false)) {
+                return *row;
+            }
+
+            (*row)++;
+            if (child->isDirectory && child->isExpanded) {
+                int found = rowOf(child, path, row);
+                if (found >= 0) {
+                    return found;
+                }
+            }
+        }
+        return -1;
+    }
 
     struct TreeNode* findNodeByRow(struct TreeNode* node, int* row, int target_row)
     {
@@ -239,7 +355,8 @@ private:
             return;
         }
 
-        int right_limit = width - 12;
+        /* Short of where rows end */
+        int right_limit = rowsRight() - 3;
         int pixels = right_limit - x;
         if (pixels < 8) {
             return;
@@ -446,80 +563,93 @@ private:
 
             struct TreeNode* child = &node->children[i];
             int current_row = *row;
-            int current_y = (current_row + 1) * 16;
-            int current_x = depth * 16;
+            (*row)++;
 
-            if (current_y + 15 >= height - 8) {
+            /* A row scrolled above the first shown isn't drawn, but its children still count */
+            if (current_row >= 0 && !drawRow(child, depth, current_row, parent_row, highlight)) {
                 return;
             }
 
-            /* The highlighted file's row, from just left of its icon to the box's right side, under the line to it */
-            if (!child->isDirectory && highlight != nullptr && pathMatches(highlight, child->name->getData(), false)) {
-                int left = current_x - 2;
-                int right = width - 10;
-                if (right > left) {
-                    gfx_draw_rectangle(left, current_y, right - left, 16, TREE_VIEW_HIGHLIGHT);
-                }
-            }
-
-            if (child->isDirectory && current_x + 16 < width - 8) {
-                drawIcon(current_x, current_y, &folderIcon);
-            } else if (current_x + 16 < width - 8) {
-                drawIcon(current_x, current_y, &fileIcon);
-            }
-
-            /**
-             * Only the name after the last /, not counting a directory's own at the end. Searched in the full path:
-             * moving name forward while counting j from its old start skipped slashes, so /lib/tcc/libtcc1.a showed
-             * as tcc/libtcc1.a
-             */
-            const char* full = child->name->getData();
-            const char* name = full;
-            int full_len = strlen(full);
-            for (int j = 0; j < full_len - 1; j++) {
-                if (full[j] == '/') {
-                    name = full + j + 1;
-                }
-            }
-
-            /* draw line from parent to current */
-            if (depth > 1 && parent_row >= 0) {
-                int parent_y = (parent_row + 1) * 16 + 8;
-                int branch_x = (depth - 1) * 16 + 8;
-                if (branch_x >= width - 8) {
-                    branch_x = width - 9;
-                }
-                int line_to_x = current_x;
-                if (line_to_x >= width - 8) {
-                    line_to_x = width - 9;
-                }
-
-                /* Draw vertical line */
-                gfx_draw_line(
-                    branch_x, // parent x + 8
-                    parent_y,
-                    branch_x,
-                    current_y + 8,
-                    COLOR_BLACK
-                );
-
-                /* Draw horizontal line */
-                gfx_draw_line(
-                    branch_x,
-                    current_y + 8,
-                    line_to_x,
-                    current_y + 8,
-                    COLOR_BLACK
-                );
-            }
-
-            drawClippedText(depth * 16 + 18, current_y + 5, name);
-
-            (*row)++;
             if (child->isExpanded && child->isDirectory) {
                 drawTreeRecursive(child, depth + 1, row, current_row, max_rows, highlight);
             }
         }
+    }
+
+    /**
+     * Draws child's row, current_row rows below the top, with the line from its parent's row, which is scrolled above
+     * the top when parent_row is negative.
+     * @return false when the row is past the box's bottom, so none after it fit either
+     */
+    bool drawRow(struct TreeNode* child, int depth, int current_row, int parent_row, const char* highlight)
+    {
+        int current_y = (current_row + 1) * 16;
+        int current_x = depth * 16;
+        int right = rowsRight();
+
+        if (current_y + 15 >= height - 8) {
+            return false;
+        }
+
+        /* The highlighted file's row, from just left of its icon to where rows end, under the line to it */
+        if (!child->isDirectory && highlight != nullptr && pathMatches(highlight, child->name->getData(), false)) {
+            int left = current_x - 2;
+            if (right - 1 > left) {
+                gfx_draw_rectangle(left, current_y, right - 1 - left, 16, TREE_VIEW_HIGHLIGHT);
+            }
+        }
+
+        if (current_x + 16 <= right) {
+            drawIcon(current_x, current_y, child->isDirectory ? &folderIcon : &fileIcon);
+        }
+
+        /**
+         * Only the name after the last /, not counting a directory's own at the end. Searched in the full path:
+         * moving name forward while counting j from its old start skipped slashes, so /lib/tcc/libtcc1.a showed
+         * as tcc/libtcc1.a
+         */
+        const char* full = child->name->getData();
+        const char* name = full;
+        int full_len = strlen(full);
+        for (int j = 0; j < full_len - 1; j++) {
+            if (full[j] == '/') {
+                name = full + j + 1;
+            }
+        }
+
+        /* draw line from parent to current, from the box's top when the parent is scrolled above it */
+        if (depth > 1) {
+            int parent_y = parent_row >= 0 ? (parent_row + 1) * 16 + 8 : 13;
+            int branch_x = (depth - 1) * 16 + 8;
+            if (branch_x >= right) {
+                branch_x = right - 1;
+            }
+            int line_to_x = current_x;
+            if (line_to_x >= right) {
+                line_to_x = right - 1;
+            }
+
+            /* Draw vertical line */
+            gfx_draw_line(
+                branch_x, // parent x + 8
+                parent_y,
+                branch_x,
+                current_y + 8,
+                COLOR_BLACK
+            );
+
+            /* Draw horizontal line */
+            gfx_draw_line(
+                branch_x,
+                current_y + 8,
+                line_to_x,
+                current_y + 8,
+                COLOR_BLACK
+            );
+        }
+
+        drawClippedText(depth * 16 + 18, current_y + 5, name);
+        return true;
     }
 };
 

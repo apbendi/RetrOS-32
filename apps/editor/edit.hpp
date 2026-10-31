@@ -18,8 +18,8 @@
 
 /* The tree's width when the Editor opens. Dragging its right border changes it, down to EDITOR_TREE_MIN_WIDTH */
 #define TREE_VIEW_WIDTH 130
-/* The narrowest the tree can be: wide enough for its "Tree View" label, which isn't cut short */
-#define EDITOR_TREE_MIN_WIDTH 80
+/* The narrowest the tree can be: wide enough for a few characters of each top-level name beside its scroll bar */
+#define EDITOR_TREE_MIN_WIDTH 96
 /* A press this far left of the tree's edge, across its gray border, or this far right, into the gutter, drags it */
 #define EDITOR_TREE_GRAB_LEFT 8
 #define EDITOR_TREE_GRAB_RIGHT 2
@@ -41,10 +41,7 @@
 #define HEADER_HEIGHT (EDITOR_BUTTON_Y + EDITOR_BUTTON_SIZE + EDITOR_BUTTON_PAD + 3)
 #define STATUS_HEIGHT 10
 
-/* The header bar and its buttons, in Graphics.hpp's drawHeaderTable colors: a face, a light edge and a shadow */
-#define COLOR_BAR_FACE 30
-#define COLOR_BAR_LIGHT COLOR_VGA_LIGHTEST_GRAY
-#define COLOR_BAR_SHADOW (COLOR_VGA_MEDIUM_DARK_GRAY + 5)
+/* The header bar and its buttons are drawn in lib/graphics.h's COLOR_BAR_FACE, COLOR_BAR_LIGHT and COLOR_BAR_SHADOW */
 
 /**
  * Around the text: between it and the header above, the gutter's line at its left and the status line below. At its

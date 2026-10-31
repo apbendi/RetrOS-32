@@ -482,6 +482,9 @@ Editor::Editor()
     memset(m_currentPath, 0, sizeof(m_currentPath));
 
     treeView = new TreeView(0, 0, m_treeWidth, c_height);
+    if (treeView != nullptr) {
+        treeView->setScrollable(true);
+    }
 
     /* A file that can't be read gives a placeholder, so no button is ever blank */
     for (int button = 0; button < EDITOR_BUTTON_COUNT; button++) {
@@ -1011,23 +1014,7 @@ void Editor::drawButton(int button, bool pressed)
 
     int y = EDITOR_BUTTON_Y;
     int size = EDITOR_BUTTON_SIZE;
-    color_t top_left = pressed ? COLOR_BLACK : COLOR_BAR_LIGHT;
-    color_t bottom_right = pressed ? COLOR_BAR_LIGHT : COLOR_BLACK;
-
-    gfx_draw_rectangle(x, y, size, size, COLOR_BAR_FACE);
-    gfx_draw_rectangle(x, y, size, 1, top_left);
-    gfx_draw_rectangle(x, y, 1, size, top_left);
-    gfx_draw_rectangle(x, y + size - 1, size, 1, bottom_right);
-    gfx_draw_rectangle(x + size - 1, y, 1, size, bottom_right);
-
-    /* A shadow inside the dark edges: the bottom and right when raised, the top and left when pressed */
-    if (pressed) {
-        gfx_draw_rectangle(x + 1, y + 1, size - 2, 1, COLOR_BAR_SHADOW);
-        gfx_draw_rectangle(x + 1, y + 1, 1, size - 2, COLOR_BAR_SHADOW);
-    } else {
-        gfx_draw_rectangle(x + 1, y + size - 2, size - 2, 1, COLOR_BAR_SHADOW);
-        gfx_draw_rectangle(x + size - 2, y + 1, 1, size - 2, COLOR_BAR_SHADOW);
-    }
+    gfx_draw_bevel(x, y, size, size, pressed);
 
     /* A pixel down and right when pressed, as if pushed in */
     const struct image* icon = &m_buttonIcons[button];
@@ -3239,6 +3226,16 @@ void Editor::EditorLoop()
                 m_pressOnTree = (int16_t)event.data < m_treeWidth - EDITOR_TREE_GRAB_LEFT;
             }
             if (treeResizeMouse(event)) {
+                break;
+            }
+
+            /* The tree's scroll bar. A press on it isn't on a row, so the click after its release opens nothing */
+            int tree_scroll = treeView->mouse(event);
+            if (tree_scroll & SCROLLBAR_TAKEN) {
+                m_pressOnTree = false;
+                if (tree_scroll & SCROLLBAR_SCROLLED) {
+                    drawTreePane();
+                }
                 break;
             }
 

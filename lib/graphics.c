@@ -201,6 +201,27 @@ int gfx_draw_rectangle(int x, int y, int width, int height, unsigned char color)
     return 0;
 }
 
+void gfx_draw_bevel(int x, int y, int width, int height, int pressed)
+{
+    unsigned char top_left = pressed ? COLOR_BLACK : COLOR_BAR_LIGHT;
+    unsigned char bottom_right = pressed ? COLOR_BAR_LIGHT : COLOR_BLACK;
+
+    gfx_draw_rectangle(x, y, width, height, COLOR_BAR_FACE);
+    gfx_draw_rectangle(x, y, width, 1, top_left);
+    gfx_draw_rectangle(x, y, 1, height, top_left);
+    gfx_draw_rectangle(x, y + height - 1, width, 1, bottom_right);
+    gfx_draw_rectangle(x + width - 1, y, 1, height, bottom_right);
+
+    /* A shadow inside the dark edges: the bottom and right when raised, the top and left when pressed */
+    if (pressed) {
+        gfx_draw_rectangle(x + 1, y + 1, width - 2, 1, COLOR_BAR_SHADOW);
+        gfx_draw_rectangle(x + 1, y + 1, 1, height - 2, COLOR_BAR_SHADOW);
+    } else {
+        gfx_draw_rectangle(x + 1, y + height - 2, width - 2, 1, COLOR_BAR_SHADOW);
+        gfx_draw_rectangle(x + width - 2, y + 1, 1, height - 2, COLOR_BAR_SHADOW);
+    }
+}
+
 int gfx_draw_text(int x, int y, const char* text, unsigned char color)
 {
     struct gfx_char c = {

@@ -48,7 +48,7 @@ KERNELOBJ := $(addprefix $(BUILD_DIR)/,kernel.o terminal.o helpers.o pci.o virtu
 KERNELOBJ += $(PROGRAMOBJ) $(GFXOBJ)
 
 BOOTOBJ := $(BUILD_DIR)/bootloader.o
-LIBOBJ := $(addprefix $(BUILD_DIR)/,printf.o syscall.o graphics.o netlib.o http.o)
+LIBOBJ := $(addprefix $(BUILD_DIR)/,printf.o syscall.o graphics.o scrollbar.o netlib.o http.o)
 KERNEL_SUPPORT := $(addprefix $(BUILD_DIR)/,kcrt0.o multiboot.o)
 
 ALL_OBJS := $(BOOTOBJ) $(KERNELOBJ) $(LIBOBJ) $(KERNEL_SUPPORT)
