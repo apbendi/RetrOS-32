@@ -80,6 +80,8 @@ struct pcb {
     uint32_t sleep;
     /* In kernel_wait: BLOCKED, and woken by pcb_wake or at sleep, whichever comes first */
     bool_t timed_wait;
+    /* In pcb_await: the thread it waits for, which wakes it on becoming a zombie (pcb_zombie) */
+    struct pcb* awaits;
     uint32_t stackptr;
     uint32_t* page_dir;
     uint32_t data_size;
@@ -176,6 +178,7 @@ error_t pcb_create_process(char* program, int args, char** argv, pcb_flag_t flag
 int pcb_await(int pid);
 error_t pcb_kill(int pid);
 void pcb_wake(volatile struct pcb* pcb);
+void pcb_zombie(struct pcb* pcb);
 
 void pcb_dbg_print(struct pcb* pcb);
 

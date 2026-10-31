@@ -35,9 +35,10 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
   - **Idling** (#197): the threads that run all the time wait when they have nothing to do, so the CPU halts while RetrOS is idle. In QEMU, an idle desktop takes about 4% of a host core.
     - `workd` blocks while its queue is empty. `work_queue_add` wakes it, including when the scheduler hands it a thread to clean up.
     - `netd` waits for packets to send or receive, and `wind` for something to draw, each for up to 10 ms (see "Where data comes in" and "Between frames").
+    - **`pcb_await`,** the shell waiting for a program, blocks until the thread is a zombie. `pcb_zombie`, which every exit and kill goes through, wakes the threads awaiting it.
     - `idled` never waits. Its loop, `kernel_idle`, looks with interrupts off for another thread that can run: one running, new or a zombie, or one whose sleep or `kernel_wait` has run out. If there's none, it halts the CPU until the next interrupt (`sti; hlt`, which no interrupt can come between); if there's one, it yields.
     - **Waking from a halt:** an interrupt that wakes a thread, like a key waking `wind`, ends the halt, and `idled` yields to the thread. A sleep or `kernel_wait` that runs out during a halt ends at the next timer interrupt, so up to 4 ms late.
-    - **A thread that waits by yielding in a loop** stays runnable, so the CPU can't halt while it waits. `pcb_await` (the shell waiting for a program) and the text shell's `kb_get_char` still do.
+    - **A thread that waits by yielding in a loop** stays runnable, so the CPU can't halt while it waits. The text shell's `kb_get_char` still does.
     - **`ps`'s USAGE column** leaves `idled` out, so on an idle system it's the share of the few ticks something else had, and a thread that wakes every 50 ms to check the time, like the Clock, can show most of them.
 - **Apps are processes.** `pcb_create_process` loads a flat binary at `0x1000000` into its own page directory and runs it in ring 3. Apps reach the kernel only through `int $48` (`lib/syscall.c`), drawing included.
 - **Any thread can be preempted.** The timer interrupt runs at 250 Hz (`TIMER_HZ`) and calls `kernel_yield()` on every tick, so a busy thread runs for up to 4 ms at a time. There's one CPU, so `ENTER_CRITICAL()`, which turns interrupts off, is what keeps other threads out.
@@ -199,7 +200,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **Closing it:** `ws_remove` leaves fullscreen before the window's buffer is freed.
   - **The taskbar** (`GFX_IS_IMMUATABLE`) doesn't go fullscreen.
   - **Copying it:** since the window draws into the composition buffer itself, the window server copies that buffer to the framebuffer only once a frame is complete, and clears the window's `changed` first. Copying mid-draw would put half-drawn frames on screen, so a full redraw or a selection drag would flicker.
-    - **A terminal's screen** (`frames_atomic`) draws a whole frame in one commit, with `drawing` set meanwhile, so it's copied as soon as `changed` is set. That covers a program drawing into a shell's terminal while the shell waits in `pcb_await`, where the owner is still `RUNNING`.
+    - **A terminal's screen** (`frames_atomic`) draws a whole frame in one commit, with `drawing` set meanwhile, so it's copied as soon as `changed` is set. That covers a program drawing into a shell's terminal while the shell waits in `pcb_await`, where the owner's state says nothing about the program's frame.
     - **Any other window** is copied once its owner waits for input or sleeps (`state != RUNNING`).
     - **The cursor** goes over the copy, never into the window's buffer, so it can't flash (#165; see "Copying to the screen").
     - **Interrupts are off** for the copy, so the owner can't start its next frame partway through it.

@@ -809,8 +809,9 @@ static int ws_draw(struct windowserver* ws)
              * Copying mid-draw would put half-drawn frames on screen, making a selection drag or a full redraw flicker.
              *
              * A terminal draws a whole frame in one commit, with drawing set meanwhile, so it's copied as soon as
-             * changed is set. That's needed when a program draws into a shell's terminal while the shell is running,
-             * waiting for it in pcb_await. Any other window is copied once its owner waits for input or sleeps.
+             * changed is set. That's needed when a program draws into a shell's terminal: the shell waits for it in
+             * pcb_await meanwhile, so its state says nothing about the program's frame. Any other window is copied
+             * once its owner waits for input or sleeps.
              *
              * Interrupts stay off for the copy, since the frame is only done while the owner can't run: otherwise it
              * could start its next frame partway through. The cursor goes over the copy, not into the window (#165).

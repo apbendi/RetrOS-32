@@ -345,7 +345,7 @@ error_t pcb_kill(int pid)
 		 * A program in user mode holds no kernel locks. A kernel thread is always in the kernel, with no safe point to
 		 * stop at, so one killed holding a lock leaves it taken: only the terminal's is released (terminal_release_window)
 		 */
-		pcb->state = ZOMBIE;
+		pcb_zombie(pcb);
 	}
 	LEAVE_CRITICAL();
 
@@ -366,6 +366,18 @@ void pcb_wake(volatile struct pcb* pcb)
 	asm volatile("pushfl; popl %0; cli" : "=r"(eflags) : : "memory");
 	if(pcb->state == BLOCKED) pcb->state = RUNNING;
 	asm volatile("pushl %0; popfl" : : "r"(eflags) : "memory", "cc");
+}
+
+/**
+ * Marks a thread a zombie, for the scheduler to hand to workd, and wakes the threads waiting for it in pcb_await. Every
+ * exit and kill goes through here.
+ */
+void pcb_zombie(struct pcb* pcb)
+{
+	pcb->state = ZOMBIE;
+	for (int i = 0; i < MAX_NUM_OF_PCBS; i++){
+		if(pcb_table[i].awaits == pcb) pcb_wake(&pcb_table[i]);
+	}
 }
 
 void Genesis()
@@ -396,18 +408,34 @@ struct pcb* pcb_get_by_name(char* name)
 	return NULL;
 }
 
+/**
+ * Waits until the thread with the pid has exited or been killed.
+ * @return 0, or -1 for a pid out of range, or if the caller is killed while it waits
+ */
 int pcb_await(int pid)
 {
 	if(pid < 0 || pid >= MAX_NUM_OF_PCBS) return -1;
-	while(
-		pcb_table[pid].state != STOPPED &&
-		pcb_table[pid].state != ZOMBIE
-	){
+
+	struct pcb* current = $process->current;
+	struct pcb* pcb = &pcb_table[pid];
+	int ret = 0;
+
+	/* pcb_zombie wakes it. With interrupts off, the thread can't end between the check and the block unnoticed. */
+	ENTER_CRITICAL();
+	while(pcb->state != STOPPED && pcb->state != ZOMBIE){
 		/* A kill waits for the call to return */
-		if($process->current->kill_pending) return -1;
+		if(current->kill_pending){
+			ret = -1;
+			break;
+		}
+		current->awaits = pcb;
+		current->state = BLOCKED;
 		kernel_yield();
 	}
-	return 0;
+	current->awaits = NULL;
+	LEAVE_CRITICAL();
+
+	return ret;
 }
 EXPORT_SYSCALL(SYSCALL_AWAIT_PROCESS, pcb_await);
 
@@ -454,7 +482,7 @@ int pcb_cleanup_routine(void* arg)
 	 */
 	for (int i = 0; i < MAX_NUM_OF_PCBS; i++){
 		if(pcb_table[i].parent == pcb && pcb_table[i].is_process == PCB_THREAD){
-			pcb_table[i].state = ZOMBIE;
+			pcb_zombie(&pcb_table[i]);
 		}
 	}
 
