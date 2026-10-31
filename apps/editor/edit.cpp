@@ -563,7 +563,8 @@ int Editor::visibleLines() const
 
 int Editor::visibleColumns() const
 {
-    int w = textClipWidth();
+    /* Short of the scroll bar's strip, whether or not the bar is shown */
+    int w = textClipWidth() - SCROLLBAR_WIDTH;
     if (w < 8) {
         return 1;
     }
@@ -1351,6 +1352,36 @@ void Editor::handleMouse(const struct gfx_event& event)
     reDraw(0, m_bufferHead);
 }
 
+/**
+ * Draws the text's scroll bar, if the text doesn't all fit, with its rows counted as the view lays them out. A view
+ * scrolled past the text's end, as F3 can, counts the empty rows it shows too, so the bar can scroll back from there.
+ */
+void Editor::drawTextScrollBar(int cols, int rows, int view_start)
+{
+    int total = rowsFrom(0, cols);
+    int first = total - rowsFrom(view_start, cols);
+    int text_h = c_height - HEADER_HEIGHT - STATUS_HEIGHT;
+
+    m_textBar.place(m_treeWidth + c_width - SCROLLBAR_WIDTH, HEADER_HEIGHT, text_h);
+    m_textBar.set(first + rows > total ? first + rows : total, rows, first);
+    m_textBar.draw();
+}
+
+/* Scrolls the view to start at row, counting the text's rows from its start, and leaves the cursor where it is */
+void Editor::scrollToRow(int row)
+{
+    int cols = visibleColumns();
+    int index = 0;
+    for (int r = 0; r < row; r++) {
+        int next = nextVisualRowStart(index, cols);
+        if (next <= index) {
+            break;
+        }
+        index = next;
+    }
+    setScrollFromIndex(index, cols);
+}
+
 /* While a drag is held above or below the text: scrolls a row that way, if there's more text there, and selects to the row that came into view */
 void Editor::dragScrollTick()
 {
@@ -1471,7 +1502,7 @@ void Editor::reDraw(int from, int to)
         int cy = TEXT_TOP + (cursor_row * TEXT_ROW_HEIGHT);
 
         /* At the end of a full row, the cursor is past it, in the right margin, which can be narrower than a character */
-        int right = m_treeWidth + c_width;
+        int right = m_treeWidth + c_width - SCROLLBAR_WIDTH;
         if (cx > text_x + (cols * 8) - 8 && cx < right) {
             gfx_draw_rectangle(cx, cy, minInt(8, right - cx), TEXT_ROW_HEIGHT, COLOR_VGA_LIGHT_GRAY);
         }
@@ -1492,6 +1523,8 @@ void Editor::reDraw(int from, int to)
             }
         }
     }
+
+    drawTextScrollBar(cols, rows, view_start);
 
     int line = 1;
     int colnum = 1;
@@ -3235,6 +3268,18 @@ void Editor::EditorLoop()
                 m_pressOnTree = false;
                 if (tree_scroll & SCROLLBAR_SCROLLED) {
                     drawTreePane();
+                }
+                break;
+            }
+
+            /* The text's scroll bar, which moves the view and leaves the cursor where it is, as F2 and F3 do */
+            int text_scroll = m_textBar.mouse(event);
+            if (text_scroll & SCROLLBAR_TAKEN) {
+                if (text_scroll & SCROLLBAR_SCROLLED) {
+                    scrollToRow(m_textBar.first());
+                    reDraw(0, m_bufferHead);
+                } else if (text_scroll & SCROLLBAR_REDRAW) {
+                    m_textBar.draw();
                 }
                 break;
             }

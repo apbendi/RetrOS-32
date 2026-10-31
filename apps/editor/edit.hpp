@@ -9,6 +9,7 @@
 #include <fs/fs.h>
 
 #include <utils/TreeView.hpp>
+#include <utils/ScrollBar.hpp>
 
 #define COLOR_BG COLOR_VGA_LIGHTEST_GRAY
 #define COLOR_TEXT COLOR_VGA_MEDIUM_DARK_GRAY
@@ -45,7 +46,7 @@
 
 /**
  * Around the text: between it and the header above, the gutter's line at its left and the status line below. At its
- * right, the window's edge is at least this far away, and further by what's left over from whole columns
+ * right, the text's scroll bar is at least this far away, and further by what's left over from whole columns
  */
 #define TEXT_PADDING 5
 /* The first row of text */
@@ -58,7 +59,7 @@
 #define ROPE_CHUNK_SIZE 256
 #define EDITOR_DEFAULT_TEXT_WIDTH 400
 #define EDITOR_DEFAULT_GUTTER_WIDTH 32
-#define EDITOR_DEFAULT_RIGHT_PANE_WIDTH (EDITOR_DEFAULT_TEXT_WIDTH + EDITOR_DEFAULT_GUTTER_WIDTH + (2 * TEXT_PADDING))
+#define EDITOR_DEFAULT_RIGHT_PANE_WIDTH (EDITOR_DEFAULT_TEXT_WIDTH + EDITOR_DEFAULT_GUTTER_WIDTH + (2 * TEXT_PADDING) + SCROLLBAR_WIDTH)
 #define EDITOR_DEFAULT_WINDOW_WIDTH (TREE_VIEW_WIDTH + EDITOR_DEFAULT_RIGHT_PANE_WIDTH)
 #define EDITOR_DEFAULT_HEIGHT 320
 
@@ -171,6 +172,8 @@ private:
     void drawButton(int button, bool pressed);
     bool buttonMouse(const struct gfx_event& event, int* clicked);
     void drawTreePane();
+    void drawTextScrollBar(int cols, int rows, int view_start);
+    void scrollToRow(int row);
     int clampTreeWidth(int width) const;
     void setTreeWidth(int width);
     bool treeResizeMouse(const struct gfx_event& event);
@@ -241,6 +244,11 @@ private:
     void undoFail();
 
     TreeView* treeView;
+    /**
+     * The text's scroll bar, along the window's right edge from the header to the status line. Its strip is kept
+     * whether or not it's shown, so the text doesn't rewrap when it comes and goes
+     */
+    ScrollBar m_textBar;
     /* The tree's width, and the window's, which the tree and the pane right of it share */
     int m_treeWidth;
     int m_windowWidth;
