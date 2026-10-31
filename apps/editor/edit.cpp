@@ -2996,13 +2996,12 @@ void Editor::New()
     Reset();
 }
 
-/* The Help screen, a row each, with "" for an empty row */
+/* The Help window's rows, with "" for an empty row */
 static const char* const editor_help[] = {
-    "Help",
     "Ctrl+S: Save file",
     "Ctrl+N: New file",
+    "Ctrl+H: Show this help",
     "F2/F3: Scroll up/down",
-    "Ctrl+H or Esc: Close help",
     "",
     "Arrow keys: Move cursor",
     "Home/End: Start/end of line",
@@ -3016,81 +3015,100 @@ static const char* const editor_help[] = {
     "Delete: Delete next character",
     "Enter: New line",
     "Tab: Insert spaces",
+    "",
     "Mouse: Click file in tree to open",
     "Drag over text: Select",
     "Shift+click: Select to there",
     "Double/triple click: Word/line",
+    "",
+    "Esc closes this window.",
 };
 
-void Editor::drawHelp()
-{
-    int x = textStartX();
+#define EDITOR_HELP_ROWS ((int)(sizeof(editor_help) / sizeof(editor_help[0])))
+/* Wide enough for the longest row, and tall enough for them all, as the taskbar's Readme lays them out */
+#define EDITOR_HELP_WIDTH 300
+#define EDITOR_HELP_HEIGHT (24 + (EDITOR_HELP_ROWS * 10))
 
-    gfx_draw_rectangle(x, HEADER_HEIGHT, textClipWidth(), c_height - HEADER_HEIGHT - STATUS_HEIGHT, COLOR_BG);
-    for (int row = 0; row < (int)(sizeof(editor_help) / sizeof(editor_help[0])); row++) {
-        gfx_draw_format_text(x, TEXT_TOP + (row * TEXT_ROW_HEIGHT) + TEXT_CHAR_Y, COLOR_TEXT, "%s", editor_help[row]);
+/* How long the Help window waits for an event before it looks whether the Editor wants it closed */
+#define EDITOR_HELP_POLL_MS 50
+
+/**
+ * The Help window's state, which its thread and the Editor share as the program's globals. editor_help_open is set by
+ * the Editor as it starts the thread, whose pid is editor_help_pid, and cleared by the thread as it closes. The Editor
+ * sets editor_help_close to have it close
+ */
+static volatile int editor_help_open = 0;
+static volatile int editor_help_pid = -1;
+static volatile int editor_help_close = 0;
+
+/**
+ * The Help window, drawn as the taskbar's Readme is (display_note in kernel/kthreads/about.c): the rows in a box, which
+ * Up and Down scroll when they don't all fit. Esc or its close button closes it. It runs on a thread of its own, which
+ * the Editor doesn't wait for, so the text can be edited while it's open, and it closes with the Editor.
+ */
+static void __editor_help_thread(void* arg)
+{
+    (void)arg;
+
+    Window help(EDITOR_HELP_WIDTH, EDITOR_HELP_HEIGHT, "Editor Help", 0);
+
+    int shown = (EDITOR_HELP_HEIGHT - 24) / 10;
+    int first = 0;
+    bool redraw = true;
+
+    while (!editor_help_close) {
+        if (redraw) {
+            help.drawRect(0, 0, EDITOR_HELP_WIDTH, EDITOR_HELP_HEIGHT, COLOR_BAR_FACE);
+            help.drawContouredBox(10, 10, EDITOR_HELP_WIDTH - 20, EDITOR_HELP_HEIGHT - 20, COLOR_BAR_LIGHT);
+            for (int row = 0; row < shown && first + row < EDITOR_HELP_ROWS; row++) {
+                help.drawText(12, 12 + (row * 10), editor_help[first + row], COLOR_BLACK);
+            }
+            redraw = false;
+        }
+
+        /* A little at a time, so a close the Editor asks for is seen within EDITOR_HELP_POLL_MS */
+        struct gfx_event event;
+        if (gfx_get_event(&event, GFX_EVENT_NONBLOCKING) < 0) {
+            sleep(EDITOR_HELP_POLL_MS);
+            continue;
+        }
+
+        if (event.event == GFX_EVENT_EXIT || (event.event == GFX_EVENT_KEYBOARD && event.data == 27)) {
+            break;
+        }
+
+        if (event.event == GFX_EVENT_KEYBOARD) {
+            if (event.data == KEY_DOWN && first + shown < EDITOR_HELP_ROWS) {
+                first++;
+                redraw = true;
+            } else if (event.data == KEY_UP && first > 0) {
+                first--;
+                redraw = true;
+            }
+        }
     }
+
+    editor_help_open = 0;
 }
 
 /**
- * Shows the help until Ctrl+H, Esc, q or the Help button closes it. New and Save, by key or button, close it too.
- * @return CTRLN or CTRLS for what to do once it's closed, or 0
+ * Opens the Help window in front. One already open may be behind the Editor, and a thread can't bring another's window
+ * to the front, so that one is closed first: the new one opens in front of every other window
  */
-unsigned char Editor::Help()
+void Editor::Help()
 {
-    reDrawHeader();
-    treeView->drawTree(this);
-    drawHelp();
+    if (editor_help_open) {
+        editor_help_close = 1;
+        invoke_syscall(SYSCALL_AWAIT_PROCESS, editor_help_pid, 0, 0);
+        editor_help_close = 0;
+    }
 
-    while (1) {
-        struct gfx_event event;
-        gfx_get_event(&event, GFX_EVENT_BLOCKING);
-
-        switch (event.event) {
-        case GFX_EVENT_KEYBOARD:
-            if (event.data == 'q' || event.data == CTRLH || event.data == 27) {
-                return 0;
-            }
-            if (event.data == CTRLN || event.data == CTRLS) {
-                return event.data;
-            }
-            break;
-
-        case GFX_EVENT_MOUSE_DOWN:
-        case GFX_EVENT_MOUSE_MOVE:
-        case GFX_EVENT_MOUSE_UP: {
-            int clicked = EDITOR_BUTTON_NONE;
-            if (buttonMouse(event, &clicked) && clicked != EDITOR_BUTTON_NONE) {
-                return clicked == EDITOR_BUTTON_HELP ? 0 : editor_button_keys[clicked];
-            }
-            break;
-        }
-
-        case GFX_EVENT_MOUSE:
-            if (event.data < TREE_VIEW_WIDTH) {
-                treeView->click(event.data, event.data2);
-                treeView->drawTree(this);
-            }
-            break;
-
-        case GFX_EVENT_RESOLUTION:
-            applyResolution(event.data, event.data2);
-            reDrawHeader();
-            treeView->drawTree(this);
-            /* reDraw paints the gutter, the margin and the status line around the help. A resize leaves new space black */
-            reDraw(0, m_bufferHead);
-            drawHelp();
-            break;
-
-        case GFX_EVENT_EXIT:
-            if (Quit()) {
-                return 0;
-            }
-            break;
-
-        default:
-            break;
-        }
+    editor_help_open = 1;
+    Thread help_thread(__editor_help_thread, 0);
+    editor_help_pid = help_thread.start(nullptr);
+    if (editor_help_pid < 0) {
+        editor_help_open = 0;
+        drawStatusLine(COLOR_VGA_RED, "Failed to open Help window.");
     }
 }
 
@@ -3436,19 +3454,10 @@ void Editor::handleKey(unsigned char c, int modifiers)
         reDraw(0, m_bufferHead);
         return;
 
-    case CTRLH: {
+    case CTRLH:
         m_preferredColumn = -1;
-        /* New and Save, by key or button, close the help, then do what they do */
-        unsigned char then = Help();
-        /* The text goes back over the help before either can put a dialog up in front of it */
-        reDraw(0, m_bufferHead);
-        if (then == CTRLN) {
-            New();
-        } else if (then == CTRLS) {
-            Save();
-        }
+        Help();
         break;
-    }
 
     case CTRLN:
         m_preferredColumn = -1;

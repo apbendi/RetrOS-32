@@ -102,7 +102,7 @@ public:
 
     bool Save();
     bool SaveAs();
-    unsigned char Help();
+    void Help();
     bool Open(char* path);
     void putChar(unsigned char c, int modifiers = 0);
     void Lex();
@@ -193,7 +193,6 @@ private:
     void getCursorLineCol(int& line, int& col) const;
     bool cursorDown();
     bool cursorUp();
-    void drawHelp();
     bool hasUnsavedChanges() const;
 
     void drawLineNumbers(const int* row_lines, int row_count);
