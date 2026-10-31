@@ -345,7 +345,7 @@ static void __editor_new_file_popup_thread(void* arg)
         popup.drawContouredRect(0, 0, 268, 112);
         popup.drawText(10, 8, "Save File As", COLOR_BLACK);
         popup.drawText(10, 20, "Path:", COLOR_BLACK);
-        popup.drawText(10, 56, "Enter=Save  Esc/F4=Cancel", COLOR_VGA_MEDIUM_DARK_GRAY);
+        popup.drawText(10, 56, "Enter=Save  Esc=Cancel", COLOR_VGA_MEDIUM_DARK_GRAY);
 
         if (status[0] != 0) {
             popup.drawText(10, 66, status, COLOR_VGA_RED);
@@ -368,7 +368,7 @@ static void __editor_new_file_popup_thread(void* arg)
                 break;
             }
 
-            if (event.data == 27 || event.data == KEY_F4) {
+            if (event.data == 27) {
                 action = EDITOR_NEW_FILE_POPUP_ACTION_CANCEL;
                 break;
             }
@@ -427,6 +427,10 @@ static void __editor_new_file_popup_thread(void* arg)
     }
 }
 
+/* Each header button's icon, in /sysutil/icons, and the key it presses, by EDITOR_BUTTON_* */
+static const char* const editor_button_icons[EDITOR_BUTTON_COUNT] = {"new_16", "save_16", "help_16"};
+static const unsigned char editor_button_keys[EDITOR_BUTTON_COUNT] = {CTRLN, CTRLS, CTRLH};
+
 Editor::Editor()
     : Window(EDITOR_DEFAULT_WINDOW_WIDTH, EDITOR_DEFAULT_HEIGHT, "Editor", 1)
 {
@@ -453,6 +457,8 @@ Editor::Editor()
     m_dragging = false;
     m_dragScroll = 0;
     m_dragX = 0;
+    m_pressedButton = EDITOR_BUTTON_NONE;
+    m_pressedShown = false;
     m_keepStatus = 0;
     scrollY = 0;
     m_scrollWrap = 0;
@@ -472,6 +478,11 @@ Editor::Editor()
 
     treeView = new TreeView(0, 0, TREE_VIEW_WIDTH, c_height);
 
+    /* A file that can't be read gives a placeholder, so no button is ever blank */
+    for (int button = 0; button < EDITOR_BUTTON_COUNT; button++) {
+        gfx_load_icon(editor_button_icons[button], &m_buttonIcons[button]);
+    }
+
     gfx_draw_rectangle(0, 0, EDITOR_DEFAULT_WINDOW_WIDTH, c_height, COLOR_BG);
     gfx_draw_format_text(20, 20, COLOR_VGA_MEDIUM_GRAY, "Loading...");
 
@@ -489,6 +500,10 @@ Editor::~Editor()
     if (treeView != nullptr) {
         delete treeView;
         treeView = nullptr;
+    }
+
+    for (int button = 0; button < EDITOR_BUTTON_COUNT; button++) {
+        gfx_free_icon(&m_buttonIcons[button]);
     }
 
     ropeClear();
@@ -516,12 +531,12 @@ int Editor::gutterWidth() const
 
 int Editor::textStartX() const
 {
-    return TREE_VIEW_WIDTH + gutterWidth() + TEXT_GAP_WIDTH;
+    return TREE_VIEW_WIDTH + gutterWidth() + TEXT_PADDING;
 }
 
 int Editor::textClipWidth() const
 {
-    int width = c_width - gutterWidth() - TEXT_GAP_WIDTH - TEXT_RIGHT_PADDING;
+    int width = c_width - gutterWidth() - (2 * TEXT_PADDING);
     if (width < 8) {
         width = 8;
     }
@@ -530,12 +545,12 @@ int Editor::textClipWidth() const
 
 int Editor::visibleLines() const
 {
-    int h = c_height - HEADER_HEIGHT - STATUS_HEIGHT;
-    if (h < 8) {
+    int h = c_height - TEXT_TOP - TEXT_PADDING - STATUS_HEIGHT;
+    if (h < TEXT_ROW_HEIGHT) {
         return 1;
     }
 
-    return h / 8;
+    return h / TEXT_ROW_HEIGHT;
 }
 
 int Editor::visibleColumns() const
@@ -872,7 +887,7 @@ void Editor::drawLineNumbers(const int* row_lines, int row_count)
             x = gutter_x + 1;
         }
 
-        gfx_draw_format_text(x, HEADER_HEIGHT + (row * 8), COLOR_VGA_MEDIUM_GRAY, "%d", line_no);
+        gfx_draw_format_text(x, TEXT_TOP + (row * TEXT_ROW_HEIGHT) + TEXT_CHAR_Y, COLOR_VGA_MEDIUM_GRAY, "%d", line_no);
     }
 }
 
@@ -899,7 +914,7 @@ void Editor::drawStatusLine(color_t color, const char* fmt, ...)
      * The whole row, under the gutter and the margin too, except the gutter's line, which drawLineNumbers draws down
      * to the bottom. The text starts further right as the gutter widens, and its old start would stay behind (#144)
      */
-    int line_x = x - TEXT_GAP_WIDTH - 1;
+    int line_x = x - TEXT_PADDING - 1;
     gfx_draw_rectangle(TREE_VIEW_WIDTH, y, line_x - TREE_VIEW_WIDTH, STATUS_HEIGHT, COLOR_BG);
     gfx_draw_rectangle(line_x + 1, y, TREE_VIEW_WIDTH + c_width - (line_x + 1), STATUS_HEIGHT, COLOR_BG);
 
@@ -917,47 +932,142 @@ void Editor::drawStatusLine(color_t color, const char* fmt, ...)
     m_keepStatus = color == COLOR_VGA_RED;
 }
 
+/* The bar above the text, drawn as Graphics.hpp's drawHeaderTable draws its shorter one, with the buttons */
 void Editor::reDrawHeader()
 {
-    gfx_draw_rectangle(TREE_VIEW_WIDTH, 0, c_width, HEADER_HEIGHT, COLOR_BG);
-    drawHeaderTable(TREE_VIEW_WIDTH, c_width);
+    int x = TREE_VIEW_WIDTH;
+    int w = c_width;
+    int face = HEADER_HEIGHT - 3;
 
-    const char* left_label = "F1 Save  F4 Open";
-    const char* right_label = "F9 Help";
+    gfx_draw_rectangle(x, 0, w, HEADER_HEIGHT, COLOR_BG);
+    gfx_draw_rectangle(x, 0, w, face, COLOR_BAR_FACE);
+    gfx_draw_rectangle(x + 1, 1, w - 1, 1, COLOR_BAR_LIGHT);
+    gfx_draw_rectangle(x + 1, 1, 1, face, COLOR_BAR_LIGHT);
+    gfx_draw_rectangle(x + w - 1, 1, 1, face, COLOR_BAR_SHADOW);
+    gfx_draw_rectangle(x + 1, face, w - 1, 1, COLOR_BAR_SHADOW);
+    gfx_draw_rectangle(x + 1, face + 1, w - 1, 1, COLOR_BLACK);
+    gfx_draw_rectangle(x + 1, face + 2, w - 1, 1, COLOR_BAR_LIGHT);
 
-    int content_left = TREE_VIEW_WIDTH + 4;
-    int content_right = TREE_VIEW_WIDTH + c_width - 4;
+    for (int button = 0; button < EDITOR_BUTTON_COUNT; button++) {
+        drawButton(button, button == m_pressedButton && m_pressedShown);
+    }
+}
 
-    int left_w = strlen(left_label) * 8;
-    int right_w = strlen(right_label) * 8;
+/**
+ * Where a header button goes across the window: New and Save from the bar's left, and Help at its right, with New and
+ * Help EDITOR_BUTTON_MARGIN in from the light line or shadow at that end. @return false for Help when the bar is too
+ * narrow for it beside Save
+ */
+bool Editor::buttonPosition(int button, int* x) const
+{
+    int left = TREE_VIEW_WIDTH + 1 + EDITOR_BUTTON_MARGIN;
 
-    int right_x = content_right - right_w;
-    if (right_x < content_left + left_w + 8) {
-        left_label = "F1 Save";
-        left_w = strlen(left_label) * 8;
+    switch (button) {
+    case EDITOR_BUTTON_NEW:
+        *x = left;
+        return true;
+
+    case EDITOR_BUTTON_SAVE:
+        *x = left + EDITOR_BUTTON_SIZE + EDITOR_BUTTON_GAP;
+        return true;
+
+    case EDITOR_BUTTON_HELP:
+        *x = TREE_VIEW_WIDTH + c_width - EDITOR_BUTTON_MARGIN - EDITOR_BUTTON_SIZE;
+        return *x >= left + 2 * (EDITOR_BUTTON_SIZE + EDITOR_BUTTON_GAP);
+
+    default:
+        return false;
+    }
+}
+
+/* The header button at x, y in the window, or EDITOR_BUTTON_NONE */
+int Editor::buttonAt(int x, int y) const
+{
+    if (y < EDITOR_BUTTON_Y || y >= EDITOR_BUTTON_Y + EDITOR_BUTTON_SIZE) {
+        return EDITOR_BUTTON_NONE;
     }
 
-    right_w = strlen(right_label) * 8;
-    right_x = content_right - right_w;
-    if (right_x < content_left + left_w + 8) {
-        right_label = "F9";
-        right_w = strlen(right_label) * 8;
-        right_x = content_right - right_w;
+    for (int button = 0; button < EDITOR_BUTTON_COUNT; button++) {
+        int left = 0;
+        if (buttonPosition(button, &left) && x >= left && x < left + EDITOR_BUTTON_SIZE) {
+            return button;
+        }
+    }
+    return EDITOR_BUTTON_NONE;
+}
+
+/* Draws a header button raised, or pushed in while it's pressed, with its icon in the middle */
+void Editor::drawButton(int button, bool pressed)
+{
+    int x = 0;
+    if (!buttonPosition(button, &x)) {
+        return;
     }
 
-    if (right_x < content_left + left_w + 8) {
-        left_label = "";
-        left_w = 0;
+    int y = EDITOR_BUTTON_Y;
+    int size = EDITOR_BUTTON_SIZE;
+    color_t top_left = pressed ? COLOR_BLACK : COLOR_BAR_LIGHT;
+    color_t bottom_right = pressed ? COLOR_BAR_LIGHT : COLOR_BLACK;
+
+    gfx_draw_rectangle(x, y, size, size, COLOR_BAR_FACE);
+    gfx_draw_rectangle(x, y, size, 1, top_left);
+    gfx_draw_rectangle(x, y, 1, size, top_left);
+    gfx_draw_rectangle(x, y + size - 1, size, 1, bottom_right);
+    gfx_draw_rectangle(x + size - 1, y, 1, size, bottom_right);
+
+    /* A shadow inside the dark edges: the bottom and right when raised, the top and left when pressed */
+    if (pressed) {
+        gfx_draw_rectangle(x + 1, y + 1, size - 2, 1, COLOR_BAR_SHADOW);
+        gfx_draw_rectangle(x + 1, y + 1, 1, size - 2, COLOR_BAR_SHADOW);
+    } else {
+        gfx_draw_rectangle(x + 1, y + size - 2, size - 2, 1, COLOR_BAR_SHADOW);
+        gfx_draw_rectangle(x + size - 2, y + 1, 1, size - 2, COLOR_BAR_SHADOW);
     }
 
-    if (right_x < content_left) {
-        right_x = content_left;
+    /* A pixel down and right when pressed, as if pushed in */
+    const struct image* icon = &m_buttonIcons[button];
+    int shift = pressed ? 1 : 0;
+    drawImage(x + (size - icon->width) / 2 + shift, y + (size - icon->height) / 2 + shift, icon);
+}
+
+/**
+ * Presses, drags and releases for the header's buttons. A press on one draws it pushed in while the mouse stays over it,
+ * and a release over it clicks it.
+ * @return whether the event was the buttons', not the text's. clicked gets the button clicked, or EDITOR_BUTTON_NONE
+ */
+bool Editor::buttonMouse(const struct gfx_event& event, int* clicked)
+{
+    int x = (int16_t)event.data;
+    int y = (int16_t)event.data2;
+    *clicked = EDITOR_BUTTON_NONE;
+
+    if (event.event == GFX_EVENT_MOUSE_DOWN) {
+        m_pressedButton = buttonAt(x, y);
+        if (m_pressedButton == EDITOR_BUTTON_NONE) {
+            return false;
+        }
+        m_pressedShown = true;
+        drawButton(m_pressedButton, true);
+        return true;
     }
 
-    if (left_w > 0) {
-        gfx_draw_format_text(content_left, 2, COLOR_BLACK, "%s", left_label);
+    if (m_pressedButton == EDITOR_BUTTON_NONE) {
+        return false;
     }
-    gfx_draw_format_text(right_x, 2, COLOR_BLACK, "%s", right_label);
+
+    bool over = buttonAt(x, y) == m_pressedButton;
+    if (event.event == GFX_EVENT_MOUSE_UP) {
+        if (over) {
+            *clicked = m_pressedButton;
+        }
+        drawButton(m_pressedButton, false);
+        m_pressedButton = EDITOR_BUTTON_NONE;
+        m_pressedShown = false;
+    } else if (over != m_pressedShown) {
+        m_pressedShown = over;
+        drawButton(m_pressedButton, over);
+    }
+    return true;
 }
 
 /**
@@ -978,7 +1088,7 @@ void Editor::drawSelection(int view_start, int cols, int rows, int text_x)
     int run_to = 0;
     auto drawRun = [&]() {
         if (run_row >= 0 && run_to > run_from) {
-            gfx_draw_rectangle(text_x + (run_from * 8), HEADER_HEIGHT + (run_row * 8), (run_to - run_from) * 8, 8, COLOR_SELECTED);
+            gfx_draw_rectangle(text_x + (run_from * 8), TEXT_TOP + (run_row * TEXT_ROW_HEIGHT), (run_to - run_from) * 8, TEXT_ROW_HEIGHT, COLOR_SELECTED);
         }
         run_row = -1;
     };
@@ -1025,7 +1135,7 @@ int Editor::indexAtPoint(int x, int y) const
     int cols = visibleColumns();
     int rows = visibleLines();
 
-    int row = y < HEADER_HEIGHT ? 0 : (y - HEADER_HEIGHT) / 8;
+    int row = y < TEXT_TOP ? 0 : (y - TEXT_TOP) / TEXT_ROW_HEIGHT;
     if (row >= rows) {
         row = rows - 1;
     }
@@ -1192,7 +1302,7 @@ void Editor::dragScrollTick()
         scroll(m_dragScroll);
     }
 
-    int y = m_dragScroll < 0 ? HEADER_HEIGHT : HEADER_HEIGHT + ((rows - 1) * 8);
+    int y = m_dragScroll < 0 ? TEXT_TOP : TEXT_TOP + ((rows - 1) * TEXT_ROW_HEIGHT);
     m_bufferEdit = indexAtPoint(m_dragX, y);
     m_preferredColumn = -1;
     reDraw(0, m_bufferHead);
@@ -1221,9 +1331,9 @@ void Editor::reDraw(int from, int to)
         text_h = 8;
     }
 
-    /* From the gutter's line to the window's edge, so the gap before the text and the margin after it are painted
-     * too. Otherwise a resize leaves them black, and a narrower gutter leaves its old digits in the gap (#144) */
-    int pane_x = text_x - TEXT_GAP_WIDTH;
+    /* From the gutter's line to the window's edge, under the header to the status line, so the padding around the text
+     * is painted too. Otherwise a resize leaves it black, and a narrower gutter leaves its old digits in it (#144) */
+    int pane_x = text_x - TEXT_PADDING;
     gfx_draw_rectangle(pane_x, HEADER_HEIGHT, TREE_VIEW_WIDTH + c_width - pane_x, text_h, COLOR_BG);
 
     int draw_rows = rows;
@@ -1284,7 +1394,7 @@ void Editor::reDraw(int from, int to)
             ch = '?';
         }
 
-        gfx_draw_char(text_x + (col * 8), HEADER_HEIGHT + (row * 8), ch, m_textColor);
+        gfx_draw_char(text_x + (col * 8), TEXT_TOP + (row * TEXT_ROW_HEIGHT) + TEXT_CHAR_Y, ch, m_textColor);
         col++;
     }
 
@@ -1296,16 +1406,16 @@ void Editor::reDraw(int from, int to)
 
     if (cursor_row >= 0 && cursor_row < draw_rows) {
         int cx = text_x + (cursor_col * 8);
-        int cy = HEADER_HEIGHT + (cursor_row * 8);
+        int cy = TEXT_TOP + (cursor_row * TEXT_ROW_HEIGHT);
 
-        /* At the end of a full row, the cursor is past it, in the right margin, which is narrower than a character */
+        /* At the end of a full row, the cursor is past it, in the right margin, which can be narrower than a character */
         int right = TREE_VIEW_WIDTH + c_width;
         if (cx > text_x + (cols * 8) - 8 && cx < right) {
-            gfx_draw_rectangle(cx, cy, minInt(8, right - cx), 8, COLOR_VGA_LIGHT_GRAY);
+            gfx_draw_rectangle(cx, cy, minInt(8, right - cx), TEXT_ROW_HEIGHT, COLOR_VGA_LIGHT_GRAY);
         }
 
         if (cx <= text_x + (cols * 8) - 8) {
-            gfx_draw_rectangle(cx, cy, 8, 8, COLOR_VGA_LIGHT_GRAY);
+            gfx_draw_rectangle(cx, cy, 8, TEXT_ROW_HEIGHT, COLOR_VGA_LIGHT_GRAY);
 
             if (m_bufferEdit < m_bufferHead && m_textBuffer[m_bufferEdit] != '\n') {
                 unsigned char ch = m_textBuffer[m_bufferEdit];
@@ -1315,7 +1425,7 @@ void Editor::reDraw(int from, int to)
                     } else {
                         setColor(COLOR_TEXT);
                     }
-                    gfx_draw_char(cx, cy, ch, m_textColor);
+                    gfx_draw_char(cx, cy + TEXT_CHAR_Y, ch, m_textColor);
                 }
             }
         }
@@ -1386,15 +1496,15 @@ void Editor::drawChar(unsigned char c, color_t bg)
     }
 
     int drawX = textStartX() + (m_x * 8);
-    int drawY = HEADER_HEIGHT + (m_y * 8);
+    int drawY = TEXT_TOP + (m_y * TEXT_ROW_HEIGHT);
 
-    gfx_draw_rectangle(drawX, drawY, 8, 8, bg);
+    gfx_draw_rectangle(drawX, drawY, 8, TEXT_ROW_HEIGHT, bg);
 
     if (c < 32 || c > 126) {
         c = '?';
     }
 
-    gfx_draw_char(drawX, drawY, c, m_textColor);
+    gfx_draw_char(drawX, drawY + TEXT_CHAR_Y, c, m_textColor);
     m_x++;
 }
 
@@ -2666,7 +2776,7 @@ bool Editor::Open(char* path)
     reDrawHeader();
     reDraw(0, m_bufferHead);
     if (is_new) {
-        drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "New file: F1 saves it to disk.");
+        drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "New file: Ctrl+S saves it to disk.");
         m_keepStatus = 1;
     }
     if (m_readOnly) {
@@ -2871,392 +2981,28 @@ bool Editor::showNewFileDialog(char* path, int path_size)
     return true;
 }
 
-void Editor::FileChooser()
+/* Starts an empty, untitled text, which the first save names. Unsaved changes are asked about first */
+void Editor::New()
 {
-    char selected_file[FS_PATH_MAX];
-    memset(selected_file, 0, sizeof(selected_file));
-
-    enum {
-        CHOOSER_ACTION_NONE = 0,
-        CHOOSER_ACTION_OPEN = 1,
-        CHOOSER_ACTION_NEW = 2,
-        CHOOSER_ACTION_CANCEL = 3
-    };
-
-    volatile int chooser_action = CHOOSER_ACTION_NONE;
-    WidgetManager* chooser_widgets = nullptr;
-    Button* open_button = nullptr;
-
-    char open_label[] = "Open";
-    char new_label[] = "New File";
-    char cancel_label[] = "Cancel";
-
-    int cached_panel_x = -1;
-    int cached_panel_y = -1;
-    int cached_panel_w = -1;
-    int cached_panel_h = -1;
-
-    auto freeChooserWidgets = [&]() {
-        if (chooser_widgets != nullptr) {
-            delete chooser_widgets;
-            chooser_widgets = nullptr;
-            open_button = nullptr;
-        }
-    };
-
-    auto rebuildChooserWidgets = [&](int panel_x, int panel_y, int panel_w, int panel_h) {
-        freeChooserWidgets();
-        chooser_action = CHOOSER_ACTION_NONE;
-
-        chooser_widgets = new WidgetManager();
-        if (chooser_widgets == nullptr) {
-            return;
-        }
-
-        int button_h = 14;
-        int button_w = 82;
-        int button_gap = 6;
-
-        if (panel_w >= 170) {
-            if ((button_w * 3) + (button_gap * 2) > panel_w - 8) {
-                button_w = (panel_w - 8 - (button_gap * 2)) / 3;
-                if (button_w < 44) {
-                    button_w = 44;
-                }
-            }
-
-            int content_w = (button_w * 3) + (button_gap * 2);
-            int layout_x = panel_x + (panel_w - content_w) / 2;
-            if (layout_x < panel_x + 2) {
-                layout_x = panel_x + 2;
-            }
-
-            int layout_y = panel_y + panel_h - button_h - 8;
-            if (layout_y < panel_y + 18) {
-                layout_y = panel_y + 18;
-            }
-
-            Layout* actions = new Layout(layout_x, layout_y, content_w + 4, button_h + 4, HORIZONTAL, LAYOUT_FLAG_NONE);
-            if (actions == nullptr) {
-                return;
-            }
-
-            open_button = new Button(button_w, button_h, open_label, Function<void()>([&chooser_action]() {
-                chooser_action = CHOOSER_ACTION_OPEN;
-            }));
-            Button* new_button = new Button(button_w, button_h, new_label, Function<void()>([&chooser_action]() {
-                chooser_action = CHOOSER_ACTION_NEW;
-            }));
-            Button* cancel_button = new Button(button_w, button_h, cancel_label, Function<void()>([&chooser_action]() {
-                chooser_action = CHOOSER_ACTION_CANCEL;
-            }));
-            if (open_button == nullptr || new_button == nullptr || cancel_button == nullptr) {
-                if (open_button != nullptr) {
-                    delete open_button;
-                }
-                if (new_button != nullptr) {
-                    delete new_button;
-                }
-                if (cancel_button != nullptr) {
-                    delete cancel_button;
-                }
-                delete actions;
-                open_button = nullptr;
-                return;
-            }
-
-            actions->addWidget(open_button, LEFT);
-            actions->addWidget(new_button, LEFT);
-            actions->addWidget(cancel_button, LEFT);
-            chooser_widgets->addLayout(actions);
-        } else {
-            button_w = panel_w - 6;
-            if (button_w < 24) {
-                button_w = 24;
-            }
-
-            int content_h = (button_h * 3) + 8;
-            int layout_y = panel_y + panel_h - content_h - 6;
-            if (layout_y < panel_y + 18) {
-                layout_y = panel_y + 18;
-            }
-
-            Layout* actions = new Layout(panel_x + 2, layout_y, button_w + 4, content_h, VERTICAL, LAYOUT_FLAG_NONE);
-            if (actions == nullptr) {
-                return;
-            }
-
-            open_button = new Button(button_w, button_h, open_label, Function<void()>([&chooser_action]() {
-                chooser_action = CHOOSER_ACTION_OPEN;
-            }));
-            Button* new_button = new Button(button_w, button_h, new_label, Function<void()>([&chooser_action]() {
-                chooser_action = CHOOSER_ACTION_NEW;
-            }));
-            Button* cancel_button = new Button(button_w, button_h, cancel_label, Function<void()>([&chooser_action]() {
-                chooser_action = CHOOSER_ACTION_CANCEL;
-            }));
-            if (open_button == nullptr || new_button == nullptr || cancel_button == nullptr) {
-                if (open_button != nullptr) {
-                    delete open_button;
-                }
-                if (new_button != nullptr) {
-                    delete new_button;
-                }
-                if (cancel_button != nullptr) {
-                    delete cancel_button;
-                }
-                delete actions;
-                open_button = nullptr;
-                return;
-            }
-
-            actions->addWidget(open_button, LEFT);
-            actions->addWidget(new_button, LEFT);
-            actions->addWidget(cancel_button, LEFT);
-            chooser_widgets->addLayout(actions);
-        }
-    };
-
-    /**
-     * Draws text from y in rows of at most max_chars, broken at spaces, or inside a word longer than a row, while a
-     * row fits above max_y. @return the y after the last row drawn
-     */
-    auto drawWrapped = [&](int x, int y, int max_chars, int max_y, color_t color, const char* text) {
-        char row[128];
-        if (max_chars > (int)sizeof(row) - 1) {
-            max_chars = sizeof(row) - 1;
-        }
-
-        while (*text != 0 && y + 8 <= max_y) {
-            int take = strlen(text);
-            if (take > max_chars) {
-                /* Up to the last space that fits, when the row has one */
-                int space = max_chars;
-                while (space > 0 && text[space] != ' ') {
-                    space--;
-                }
-                take = space > 0 ? space : max_chars;
-            }
-
-            memcpy(row, text, take);
-            row[take] = 0;
-            gfx_draw_format_text(x, y, color, "%s", row);
-
-            text += take;
-            while (*text == ' ') {
-                text++;
-            }
-            y += 10;
-        }
-        return y;
-    };
-
-    auto drawChooserPanel = [&](int panel_x, int panel_y, int panel_w, int panel_h) {
-        gfx_draw_rectangle(panel_x, panel_y, panel_w, panel_h, COLOR_BG);
-        /* No file's text is showing, so neither are its line numbers. The gutter's line stays (#145) */
-        gfx_draw_rectangle(TREE_VIEW_WIDTH, panel_y, panel_x - TEXT_GAP_WIDTH - 1 - TREE_VIEW_WIDTH, panel_h, COLOR_BG);
-
-        /* Every row stays inside the panel, with 4 px on each side: the margin past it is painted only by reDraw */
-        int row_chars = (panel_w - 8) / 8;
-        if (row_chars < 1) {
-            row_chars = 1;
-        }
-        int bottom = panel_y + panel_h;
-        int y = drawWrapped(panel_x + 4, panel_y + 4, row_chars, bottom, COLOR_TEXT, "File Browser");
-        y = drawWrapped(panel_x + 4, y, row_chars, bottom, COLOR_TEXT, "Pick file from tree, then Open. New File starts an empty one.");
-
-        /* The name is cut short with "..." so the whole line fits a row */
-        const char* prefix = "Selected: ";
-        int prefix_len = strlen(prefix);
-        char selected_line[160];
-        memset(selected_line, 0, sizeof(selected_line));
-        memcpy(selected_line, prefix, prefix_len);
-        char* selected_label = selected_line + prefix_len;
-        int label_size = sizeof(selected_line) - prefix_len;
-
-        if (selected_file[0] == 0) {
-            strncpy(selected_label, "(none)", (uint32_t)(label_size - 1));
-        } else {
-            int max_chars = row_chars - prefix_len;
-            if (max_chars < 1) {
-                max_chars = 1;
-            }
-
-            int name_len = strlen(selected_file);
-            if (name_len <= max_chars) {
-                strncpy(selected_label, selected_file, (uint32_t)(label_size - 1));
-            } else if (max_chars > 3) {
-                int keep = max_chars - 3;
-                if (keep > label_size - 4) {
-                    keep = label_size - 4;
-                }
-
-                strncpy(selected_label, selected_file, (uint32_t)keep);
-                selected_label[keep] = '.';
-                selected_label[keep + 1] = '.';
-                selected_label[keep + 2] = '.';
-                selected_label[keep + 3] = 0;
-            } else {
-                strncpy(selected_label, "...", (uint32_t)(label_size - 1));
-            }
-        }
-
-        drawWrapped(panel_x + 4, y + 2, row_chars, bottom, COLOR_VGA_MEDIUM_DARK_GRAY, selected_line);
-    };
-
-    reDrawHeader();
-    treeView->drawTree(this);
-    reDraw(0, m_bufferHead);
-
-    while (1) {
-        int panel_x = textStartX();
-        int panel_y = HEADER_HEIGHT;
-        int panel_w = textClipWidth();
-        int panel_h = c_height - HEADER_HEIGHT - STATUS_HEIGHT;
-        if (panel_h < 28) {
-            panel_h = 28;
-        }
-
-        if (chooser_widgets == nullptr ||
-            panel_x != cached_panel_x || panel_y != cached_panel_y ||
-            panel_w != cached_panel_w || panel_h != cached_panel_h) {
-            rebuildChooserWidgets(panel_x, panel_y, panel_w, panel_h);
-            cached_panel_x = panel_x;
-            cached_panel_y = panel_y;
-            cached_panel_w = panel_w;
-            cached_panel_h = panel_h;
-        }
-
-        if (open_button != nullptr) {
-            if (selected_file[0] != 0) {
-                open_button->enable();
-            } else {
-                open_button->disable();
-            }
-        }
-
-        drawChooserPanel(panel_x, panel_y, panel_w, panel_h);
-        if (chooser_widgets != nullptr) {
-            chooser_widgets->draw(this);
-        }
-
-        struct gfx_event event;
-        gfx_get_event(&event, GFX_EVENT_BLOCKING);
-
-        switch (event.event) {
-        case GFX_EVENT_KEYBOARD:
-            if (event.data == KEY_F4 || event.data == 27) {
-                freeChooserWidgets();
-                reDrawHeader();
-                reDraw(0, m_bufferHead);
-                return;
-            }
-
-            if (event.data == '\n' || event.data == 'o' || event.data == 'O') {
-                chooser_action = CHOOSER_ACTION_OPEN;
-            }
-
-            if (event.data == 'n' || event.data == 'N') {
-                chooser_action = CHOOSER_ACTION_NEW;
-            }
-            break;
-
-        case GFX_EVENT_RESOLUTION:
-            applyResolution(event.data, event.data2);
-            m_keepStatus = 0;
-            reDrawHeader();
-            treeView->drawTree(this);
-            reDraw(0, m_bufferHead);
-            cached_panel_x = -1;
-            cached_panel_y = -1;
-            cached_panel_w = -1;
-            cached_panel_h = -1;
-            break;
-
-        case GFX_EVENT_MOUSE:
-            if (event.data < TREE_VIEW_WIDTH) {
-                const char* file = treeView->click(event.data, event.data2);
-                treeView->drawTree(this);
-                if (file != nullptr) {
-                    strncpy(selected_file, file, (uint32_t)(sizeof(selected_file) - 1));
-                    selected_file[sizeof(selected_file) - 1] = 0;
-                    drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "Selected %s", selected_file);
-                }
-            } else {
-                if (chooser_widgets != nullptr) {
-                    chooser_widgets->Mouse(event.data, event.data2);
-                }
-            }
-            break;
-
-        case GFX_EVENT_EXIT:
-            if (Quit()) {
-                freeChooserWidgets();
-                return;
-            }
-            break;
-
-        default:
-            break;
-        }
-
-        if (chooser_action == CHOOSER_ACTION_OPEN) {
-            chooser_action = CHOOSER_ACTION_NONE;
-            if (selected_file[0] == 0) {
-                drawStatusLine(COLOR_VGA_RED, "Select a file from tree first.");
-                continue;
-            }
-
-            if (!Open(selected_file)) {
-                reDrawHeader();
-                treeView->drawTree(this);
-                reDraw(0, m_bufferHead);
-                continue;
-            }
-
-            freeChooserWidgets();
-            reDrawHeader();
-            reDraw(0, m_bufferHead);
-            return;
-        }
-
-        if (chooser_action == CHOOSER_ACTION_NEW) {
-            chooser_action = CHOOSER_ACTION_NONE;
-
-            /* An empty, untitled text, which the first save names. Unsaved changes are asked about first */
-            if (!SaveMsg()) {
-                continue;
-            }
-            if (m_fd >= 0) {
-                fclose(m_fd);
-                m_fd = -1;
-            }
-            setTitle("Editor");
-            Reset();
-
-            freeChooserWidgets();
-            reDrawHeader();
-            reDraw(0, m_bufferHead);
-            return;
-        }
-
-        if (chooser_action == CHOOSER_ACTION_CANCEL) {
-            chooser_action = CHOOSER_ACTION_NONE;
-            freeChooserWidgets();
-            reDrawHeader();
-            reDraw(0, m_bufferHead);
-            return;
-        }
+    if (!SaveMsg()) {
+        return;
     }
+
+    if (m_fd >= 0) {
+        fclose(m_fd);
+        m_fd = -1;
+    }
+    setTitle("Editor");
+    Reset();
 }
 
 /* The Help screen, a row each, with "" for an empty row */
 static const char* const editor_help[] = {
     "Help",
-    "F1: Save file",
-    "F4: Open/create file",
+    "Ctrl+S: Save file",
+    "Ctrl+N: New file",
     "F2/F3: Scroll up/down",
-    "F9 or Esc: Close help",
+    "Ctrl+H or Esc: Close help",
     "",
     "Arrow keys: Move cursor",
     "Home/End: Start/end of line",
@@ -3282,11 +3028,15 @@ void Editor::drawHelp()
 
     gfx_draw_rectangle(x, HEADER_HEIGHT, textClipWidth(), c_height - HEADER_HEIGHT - STATUS_HEIGHT, COLOR_BG);
     for (int row = 0; row < (int)(sizeof(editor_help) / sizeof(editor_help[0])); row++) {
-        gfx_draw_format_text(x, HEADER_HEIGHT + (row * 8), COLOR_TEXT, "%s", editor_help[row]);
+        gfx_draw_format_text(x, TEXT_TOP + (row * TEXT_ROW_HEIGHT) + TEXT_CHAR_Y, COLOR_TEXT, "%s", editor_help[row]);
     }
 }
 
-void Editor::Help()
+/**
+ * Shows the help until Ctrl+H, Esc, q or the Help button closes it. New and Save, by key or button, close it too.
+ * @return CTRLN or CTRLS for what to do once it's closed, or 0
+ */
+unsigned char Editor::Help()
 {
     reDrawHeader();
     treeView->drawTree(this);
@@ -3298,10 +3048,23 @@ void Editor::Help()
 
         switch (event.event) {
         case GFX_EVENT_KEYBOARD:
-            if (event.data == 'q' || event.data == KEY_F9 || event.data == 27) {
-                return;
+            if (event.data == 'q' || event.data == CTRLH || event.data == 27) {
+                return 0;
+            }
+            if (event.data == CTRLN || event.data == CTRLS) {
+                return event.data;
             }
             break;
+
+        case GFX_EVENT_MOUSE_DOWN:
+        case GFX_EVENT_MOUSE_MOVE:
+        case GFX_EVENT_MOUSE_UP: {
+            int clicked = EDITOR_BUTTON_NONE;
+            if (buttonMouse(event, &clicked) && clicked != EDITOR_BUTTON_NONE) {
+                return clicked == EDITOR_BUTTON_HELP ? 0 : editor_button_keys[clicked];
+            }
+            break;
+        }
 
         case GFX_EVENT_MOUSE:
             if (event.data < TREE_VIEW_WIDTH) {
@@ -3321,7 +3084,7 @@ void Editor::Help()
 
         case GFX_EVENT_EXIT:
             if (Quit()) {
-                return;
+                return 0;
             }
             break;
 
@@ -3361,9 +3124,16 @@ void Editor::EditorLoop()
 
         case GFX_EVENT_MOUSE_DOWN:
         case GFX_EVENT_MOUSE_MOVE:
-        case GFX_EVENT_MOUSE_UP:
-            handleMouse(event);
+        case GFX_EVENT_MOUSE_UP: {
+            /* A button clicked presses its key, so it does just what the key does */
+            int clicked = EDITOR_BUTTON_NONE;
+            if (!buttonMouse(event, &clicked)) {
+                handleMouse(event);
+            } else if (clicked != EDITOR_BUTTON_NONE) {
+                putChar(editor_button_keys[clicked]);
+            }
             break;
+        }
 
         case GFX_EVENT_MOUSE:
             if (event.data < TREE_VIEW_WIDTH) {
@@ -3666,17 +3436,26 @@ void Editor::handleKey(unsigned char c, int modifiers)
         reDraw(0, m_bufferHead);
         return;
 
-    case KEY_F9:
+    case CTRLH: {
         m_preferredColumn = -1;
-        Help();
+        /* New and Save, by key or button, close the help, then do what they do */
+        unsigned char then = Help();
+        /* The text goes back over the help before either can put a dialog up in front of it */
+        reDraw(0, m_bufferHead);
+        if (then == CTRLN) {
+            New();
+        } else if (then == CTRLS) {
+            Save();
+        }
+        break;
+    }
+
+    case CTRLN:
+        m_preferredColumn = -1;
+        New();
         break;
 
-    case KEY_F4:
-        m_preferredColumn = -1;
-        FileChooser();
-        break;
-
-    case KEY_F1:
+    case CTRLS:
         m_preferredColumn = -1;
         Save();
         break;

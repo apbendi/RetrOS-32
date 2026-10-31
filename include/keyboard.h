@@ -45,6 +45,9 @@
 #define CTRLC 227
 #define CTRLD 228
 #define CTRLE 229
+#define CTRLH 232
+#define CTRLN 238
+#define CTRLS 243
 #define CTRLV 246
 #define CTRLX 248
 #define CTRLY 249

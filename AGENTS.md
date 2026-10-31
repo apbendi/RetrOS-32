@@ -236,7 +236,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **What's there:** the mouse cursor, the message boxes' icons (`info_32`, `warning_32`, `error_32`), login's `computer_icon`, since login runs before any file system when there's no disk, and `missing_image`, the placeholder for an image that can't be loaded.
   - **How they're built:** the build turns them into C arrays, `bin/gen/images.c`, never committed. `images.h` declares each as `const struct image NAME`, named after its file, with `IMAGE_NAME_WIDTH` and `IMAGE_NAME_HEIGHT`.
   - **To change one,** edit its BMP and rebuild. **To add one,** add a BMP whose name is a C identifier, and include `<images.h>`. Only add one there if it's needed without a disk.
-- **Images loaded at run time** are `rootfs/sysutil/icons/*.bmp`, `/sysutil/icons/` on the disk (`ICONS_DIR`), shared by the kernel and apps: the menus' and SysInfo's icons, the About logo, and the file trees' and Finder's icons.
+- **Images loaded at run time** are `rootfs/sysutil/icons/*.bmp`, `/sysutil/icons/` on the disk (`ICONS_DIR`), shared by the kernel and apps: the menus' and SysInfo's icons, the About logo, the file trees' and Finder's icons, and the Editor's buttons.
   - **In the kernel:** `icon_get("NAME")` (`include/gfx/icons.h`, `graphics/icons.c`) reads `NAME.bmp` the first time it's asked for, and keeps it.
   - **When one can't be read:** a missing or bad file gives `missing_image`, with a warning in the log, and that's kept too, so it's read, and warned about, once.
   - **To change one,** edit its BMP; `make img` copies it onto the disk, with no kernel rebuild.

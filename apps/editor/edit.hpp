@@ -17,22 +17,48 @@
 #define COLOR_SELECTED 80
 
 #define TREE_VIEW_WIDTH 130
-#define HEADER_HEIGHT 13
+/**
+ * The header's buttons: squares, each with an icon from /sysutil/icons, with EDITOR_BUTTON_PAD of the bar above and
+ * below them. New's left side is EDITOR_BUTTON_MARGIN in from the bar's left edge, and Help's right side as far in
+ * from its right edge
+ */
+#define EDITOR_BUTTON_SIZE 20
+#define EDITOR_BUTTON_PAD 2
+#define EDITOR_BUTTON_MARGIN 5
+#define EDITOR_BUTTON_GAP 2
+/* Below the bar's top edge, the face and its light line */
+#define EDITOR_BUTTON_Y (2 + EDITOR_BUTTON_PAD)
+
+/* The bar above the text, with the New, Save and Help buttons: the buttons and their padding, between its edges */
+#define HEADER_HEIGHT (EDITOR_BUTTON_Y + EDITOR_BUTTON_SIZE + EDITOR_BUTTON_PAD + 3)
 #define STATUS_HEIGHT 10
 
-#define TEXT_GAP_WIDTH 1
-#define TEXT_RIGHT_PADDING 4
+/* The header bar and its buttons, in Graphics.hpp's drawHeaderTable colors: a face, a light edge and a shadow */
+#define COLOR_BAR_FACE 30
+#define COLOR_BAR_LIGHT COLOR_VGA_LIGHTEST_GRAY
+#define COLOR_BAR_SHADOW (COLOR_VGA_MEDIUM_DARK_GRAY + 5)
+
+/**
+ * Around the text: between it and the header above, the gutter's line at its left and the status line below. At its
+ * right, the window's edge is at least this far away, and further by what's left over from whole columns
+ */
+#define TEXT_PADDING 5
+/* The first row of text */
+#define TEXT_TOP (HEADER_HEIGHT + TEXT_PADDING)
+/* A row of text: a character's 8 pixels, with the space between rows split above and below them */
+#define TEXT_ROW_HEIGHT 10
+#define TEXT_CHAR_Y ((TEXT_ROW_HEIGHT - 8) / 2)
 
 #define EDITOR_BUFFER_SIZE (64 * 1024)
 #define ROPE_CHUNK_SIZE 256
 #define EDITOR_DEFAULT_TEXT_WIDTH 400
 #define EDITOR_DEFAULT_GUTTER_WIDTH 32
-#define EDITOR_DEFAULT_RIGHT_PANE_WIDTH (EDITOR_DEFAULT_TEXT_WIDTH + EDITOR_DEFAULT_GUTTER_WIDTH + TEXT_GAP_WIDTH + TEXT_RIGHT_PADDING)
+#define EDITOR_DEFAULT_RIGHT_PANE_WIDTH (EDITOR_DEFAULT_TEXT_WIDTH + EDITOR_DEFAULT_GUTTER_WIDTH + (2 * TEXT_PADDING))
 #define EDITOR_DEFAULT_WINDOW_WIDTH (TREE_VIEW_WIDTH + EDITOR_DEFAULT_RIGHT_PANE_WIDTH)
 #define EDITOR_DEFAULT_HEIGHT 320
 
 #define EDITOR_MIN_RIGHT_PANE_WIDTH 48
-#define EDITOR_MIN_HEIGHT (HEADER_HEIGHT + STATUS_HEIGHT + 8)
+#define EDITOR_MIN_HEIGHT (HEADER_HEIGHT + STATUS_HEIGHT + (2 * TEXT_PADDING) + TEXT_ROW_HEIGHT)
 #define EDITOR_MAX_VIEW_ROWS 1024
 /* How often a drag held above or below the text scrolls it a row */
 #define EDITOR_DRAG_SCROLL_MS 50
@@ -55,6 +81,15 @@ enum {
     EDITOR_UNDO_ALONE
 };
 
+/* The header's buttons: New and Save from the left, and Help at the right */
+enum {
+    EDITOR_BUTTON_NONE = -1,
+    EDITOR_BUTTON_NEW,
+    EDITOR_BUTTON_SAVE,
+    EDITOR_BUTTON_HELP,
+    EDITOR_BUTTON_COUNT
+};
+
 struct keyword {
     char word[10];
     color_t color;
@@ -67,7 +102,7 @@ public:
 
     bool Save();
     bool SaveAs();
-    void Help();
+    unsigned char Help();
     bool Open(char* path);
     void putChar(unsigned char c, int modifiers = 0);
     void Lex();
@@ -77,7 +112,7 @@ public:
 
     void drawChar(unsigned char c, color_t bg);
     void EditorLoop();
-    void FileChooser();
+    void New();
     void setColor(color_t color);
     void Reset();
     void reDrawHeader();
@@ -126,6 +161,10 @@ private:
 
     int indexAtPoint(int x, int y) const;
     void handleMouse(const struct gfx_event& event);
+    bool buttonPosition(int button, int* x) const;
+    int buttonAt(int x, int y) const;
+    void drawButton(int button, bool pressed);
+    bool buttonMouse(const struct gfx_event& event, int* clicked);
     void selectAround(int index, bool line);
     void dragScrollTick();
 
@@ -194,6 +233,11 @@ private:
     void undoFail();
 
     TreeView* treeView;
+    /* The header buttons' icons, by EDITOR_BUTTON_* */
+    struct image m_buttonIcons[EDITOR_BUTTON_COUNT];
+    /* The button a press started on, until its release; EDITOR_BUTTON_NONE for none. It's drawn pressed while the mouse is over it */
+    int m_pressedButton;
+    bool m_pressedShown;
 
     int m_fd;
     unsigned char* m_textBuffer;
