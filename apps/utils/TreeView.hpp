@@ -17,11 +17,14 @@
 #include <utils/cppUtils.hpp>
 #include <lib/syscall.h>
 #include <utils/Function.hpp>
+#include <libc.h>
 
 #include <fs/fs.h>
 
 /* How many directories deep the tree is read */
 #define TREE_VIEW_MAX_DEPTH 8
+/* Behind the highlighted file's row: the pale blue the Editor draws behind selected text */
+#define TREE_VIEW_HIGHLIGHT 80
 
 /**
  * @brief A tree view widget
@@ -66,7 +69,8 @@ public:
         delete path;
     }
 
-    void drawTree(Window* window) {
+    /* highlight is a file's full path, whose row is drawn highlighted when it shows, or nullptr for none */
+    void drawTree(Window* window, const char* highlight = nullptr) {
         /* Draw the tree view background */
         window->drawContouredRect(x, y, width, height);
         window->drawContouredBox(8, 12, width - 16, height-20, COLOR_WHITE);
@@ -74,7 +78,19 @@ public:
         window->drawFormatText(2, 2, COLOR_BLACK, "Tree View");
         int row = 0;
         int max_rows = visibleRows();
-        drawTreeRecursive(&root, 1, &row, -1, max_rows);
+        drawTreeRecursive(&root, 1, &row, -1, max_rows, highlight);
+    }
+
+    /**
+     * Expands the directories that hold path, a file's full path, so its row shows, if the tree has the file. A row
+     * past the tree's bottom still doesn't.
+     * @return whether the tree has it
+     */
+    bool reveal(const char* path) {
+        if (path == nullptr || path[0] == 0) {
+            return false;
+        }
+        return revealIn(&root, path);
     }
 
     void resize(int newWidth, int newHeight) {
@@ -166,6 +182,40 @@ private:
             }
         }
         return nullptr;
+    }
+
+    /**
+     * Whether path is name, or with prefix set, starts with it, ignoring case as FAT does. A node's name is its full
+     * path, a directory's with a "/" after it, so a path that starts with a directory's name is inside it.
+     */
+    static bool pathMatches(const char* path, const char* name, bool prefix)
+    {
+        int i = 0;
+        for (; name[i] != 0; i++) {
+            if (tolower(path[i]) != tolower(name[i])) {
+                return false;
+            }
+        }
+        return prefix || path[i] == 0;
+    }
+
+    bool revealIn(struct TreeNode* node, const char* path)
+    {
+        for (int i = 0; i < node->childrenCount; i++) {
+            struct TreeNode* child = &node->children[i];
+            const char* name = child->name->getData();
+
+            if (!child->isDirectory) {
+                if (pathMatches(path, name, false)) {
+                    return true;
+                }
+            } else if (pathMatches(path, name, true) && revealIn(child, path)) {
+                /* Only once the file is found, so a path the tree doesn't have expands nothing */
+                child->isExpanded = 1;
+                return true;
+            }
+        }
+        return false;
     }
 
     int visibleRows() const
@@ -387,7 +437,7 @@ private:
     }
 
 
-    void drawTreeRecursive(struct TreeNode* node, int depth, int* row, int parent_row, int max_rows)
+    void drawTreeRecursive(struct TreeNode* node, int depth, int* row, int parent_row, int max_rows, const char* highlight)
     {
         for (int i = 0; i < node->childrenCount; i++) {
             if (*row >= max_rows) {
@@ -403,17 +453,32 @@ private:
                 return;
             }
 
+            /* The highlighted file's row, from just left of its icon to the box's right side, under the line to it */
+            if (!child->isDirectory && highlight != nullptr && pathMatches(highlight, child->name->getData(), false)) {
+                int left = current_x - 2;
+                int right = width - 10;
+                if (right > left) {
+                    gfx_draw_rectangle(left, current_y, right - left, 16, TREE_VIEW_HIGHLIGHT);
+                }
+            }
+
             if (child->isDirectory && current_x + 16 < width - 8) {
                 drawIcon(current_x, current_y, &folderIcon);
             } else if (current_x + 16 < width - 8) {
                 drawIcon(current_x, current_y, &fileIcon);
             }
 
-            const char* name = child->name->getData();
-            /* Only use name from last / */
-            for (int j = 0; j < strlen(name)-1; j++) {
-                if (name[j] == '/') {
-                    name = name + j + 1;
+            /**
+             * Only the name after the last /, not counting a directory's own at the end. Searched in the full path:
+             * moving name forward while counting j from its old start skipped slashes, so /lib/tcc/libtcc1.a showed
+             * as tcc/libtcc1.a
+             */
+            const char* full = child->name->getData();
+            const char* name = full;
+            int full_len = strlen(full);
+            for (int j = 0; j < full_len - 1; j++) {
+                if (full[j] == '/') {
+                    name = full + j + 1;
                 }
             }
 
@@ -452,7 +517,7 @@ private:
 
             (*row)++;
             if (child->isExpanded && child->isDirectory) {
-                drawTreeRecursive(child, depth + 1, row, current_row, max_rows);
+                drawTreeRecursive(child, depth + 1, row, current_row, max_rows, highlight);
             }
         }
     }

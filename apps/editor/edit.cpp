@@ -1078,7 +1078,7 @@ bool Editor::buttonMouse(const struct gfx_event& event, int* clicked)
 /* The tree, and the grip on its right border: three short lines in the middle of the gray between its box and its edge */
 void Editor::drawTreePane()
 {
-    treeView->drawTree(this);
+    treeView->drawTree(this, m_currentPath);
 
     int y = (c_height - EDITOR_TREE_GRIP_LENGTH) / 2;
     for (int line = 0; line < 3; line++) {
@@ -2713,6 +2713,8 @@ void Editor::Reset()
     m_scrollWrap = 0;
     m_currentPath[0] = 0;
 
+    /* Without a path, no file in the tree is highlighted */
+    drawTreePane();
     reDrawHeader();
     reDraw(0, 0);
 }
@@ -2759,15 +2761,19 @@ bool Editor::Open(char* path)
         return false;
     }
 
-    /* Unsaved changes count whether or not the file is on disk yet. Saving reopens m_fd, so it's closed after this */
-    if (!SaveMsg()) {
-        reDraw(0, m_bufferHead);
-        return false;
-    }
-
+    /**
+     * Copied before the save question: saving a new file reloads the tree, which frees the name a click on it passed
+     * as path
+     */
     static char absolute[FS_PATH_MAX];
     if (editor_absolute_path(path, absolute) < 0) {
         drawStatusLine(COLOR_VGA_RED, "Can't open %s: the path is too long.", path);
+        return false;
+    }
+
+    /* Unsaved changes count whether or not the file is on disk yet. Saving reopens m_fd, so it's closed after this */
+    if (!SaveMsg()) {
+        reDraw(0, m_bufferHead);
         return false;
     }
 
@@ -2848,6 +2854,11 @@ bool Editor::Open(char* path)
     m_preferredColumn = -1;
     m_selAnchor = -1;
 
+    /* However it was opened, the file's row in the tree shows, highlighted, if the tree has it */
+    if (treeView != nullptr) {
+        treeView->reveal(m_currentPath);
+    }
+    drawTreePane();
     reDrawHeader();
     reDraw(0, m_bufferHead);
     if (is_new) {
@@ -2973,7 +2984,9 @@ bool Editor::Save()
     m_undoSaved = m_undoDone;
     m_undoJoin = EDITOR_UNDO_CLOSED;
     if (creates && treeView != nullptr) {
+        /* Reloading collapses every directory, so the new file's are expanded again */
         treeView->refresh();
+        treeView->reveal(m_currentPath);
         drawTreePane();
     }
     reDraw(0, m_bufferHead);
