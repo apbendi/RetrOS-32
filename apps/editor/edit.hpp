@@ -16,7 +16,15 @@
 /* Behind selected text: a pale blue in the standard VGA palette */
 #define COLOR_SELECTED 80
 
+/* The tree's width when the Editor opens. Dragging its right border changes it, down to EDITOR_TREE_MIN_WIDTH */
 #define TREE_VIEW_WIDTH 130
+/* The narrowest the tree can be: wide enough for its "Tree View" label, which isn't cut short */
+#define EDITOR_TREE_MIN_WIDTH 80
+/* A press this far left of the tree's edge, across its gray border, or this far right, into the gutter, drags it */
+#define EDITOR_TREE_GRAB_LEFT 8
+#define EDITOR_TREE_GRAB_RIGHT 2
+/* The grip on the tree's border that shows it can be dragged: three lines this long */
+#define EDITOR_TREE_GRIP_LENGTH 12
 /**
  * The header's buttons: squares, each with an icon from /sysutil/icons, with EDITOR_BUTTON_PAD of the bar above and
  * below them. New's left side is EDITOR_BUTTON_MARGIN in from the bar's left edge, and Help's right side as far in
@@ -165,6 +173,10 @@ private:
     int buttonAt(int x, int y) const;
     void drawButton(int button, bool pressed);
     bool buttonMouse(const struct gfx_event& event, int* clicked);
+    void drawTreePane();
+    int clampTreeWidth(int width) const;
+    void setTreeWidth(int width);
+    bool treeResizeMouse(const struct gfx_event& event);
     void selectAround(int index, bool line);
     void dragScrollTick();
 
@@ -232,6 +244,18 @@ private:
     void undoFail();
 
     TreeView* treeView;
+    /* The tree's width, and the window's, which the tree and the pane right of it share */
+    int m_treeWidth;
+    int m_windowWidth;
+    /* Set from a press on the tree's border until its release. m_treeGrabX is where the press was, from the border */
+    bool m_resizingTree;
+    int m_treeGrabX;
+    /**
+     * The last press was on the tree, not its border. A click comes after every release, where the mouse is, and the
+     * tree picks its row by height alone, so it takes only clicks whose press was on it too: a drag from the text, a
+     * button or the border, released over it, would open a file
+     */
+    bool m_pressOnTree;
     /* The header buttons' icons, by EDITOR_BUTTON_* */
     struct image m_buttonIcons[EDITOR_BUTTON_COUNT];
     /* The button a press started on, until its release; EDITOR_BUTTON_NONE for none. It's drawn pressed while the mouse is over it */

@@ -459,6 +459,11 @@ Editor::Editor()
     m_dragX = 0;
     m_pressedButton = EDITOR_BUTTON_NONE;
     m_pressedShown = false;
+    m_treeWidth = TREE_VIEW_WIDTH;
+    m_windowWidth = EDITOR_DEFAULT_WINDOW_WIDTH;
+    m_resizingTree = false;
+    m_treeGrabX = 0;
+    m_pressOnTree = false;
     m_keepStatus = 0;
     scrollY = 0;
     m_scrollWrap = 0;
@@ -476,7 +481,7 @@ Editor::Editor()
     memset(m_textBuffer, 0, m_bufferSize);
     memset(m_currentPath, 0, sizeof(m_currentPath));
 
-    treeView = new TreeView(0, 0, TREE_VIEW_WIDTH, c_height);
+    treeView = new TreeView(0, 0, m_treeWidth, c_height);
 
     /* A file that can't be read gives a placeholder, so no button is ever blank */
     for (int button = 0; button < EDITOR_BUTTON_COUNT; button++) {
@@ -531,7 +536,7 @@ int Editor::gutterWidth() const
 
 int Editor::textStartX() const
 {
-    return TREE_VIEW_WIDTH + gutterWidth() + TEXT_PADDING;
+    return m_treeWidth + gutterWidth() + TEXT_PADDING;
 }
 
 int Editor::textClipWidth() const
@@ -857,7 +862,7 @@ void Editor::ensureCursorVisible(int cols, int rows)
 
 void Editor::drawLineNumbers(const int* row_lines, int row_count)
 {
-    int gutter_x = TREE_VIEW_WIDTH;
+    int gutter_x = m_treeWidth;
     int gutter_w = gutterWidth();
 
     int text_h = c_height - HEADER_HEIGHT - STATUS_HEIGHT;
@@ -915,8 +920,8 @@ void Editor::drawStatusLine(color_t color, const char* fmt, ...)
      * to the bottom. The text starts further right as the gutter widens, and its old start would stay behind (#144)
      */
     int line_x = x - TEXT_PADDING - 1;
-    gfx_draw_rectangle(TREE_VIEW_WIDTH, y, line_x - TREE_VIEW_WIDTH, STATUS_HEIGHT, COLOR_BG);
-    gfx_draw_rectangle(line_x + 1, y, TREE_VIEW_WIDTH + c_width - (line_x + 1), STATUS_HEIGHT, COLOR_BG);
+    gfx_draw_rectangle(m_treeWidth, y, line_x - m_treeWidth, STATUS_HEIGHT, COLOR_BG);
+    gfx_draw_rectangle(line_x + 1, y, m_treeWidth + c_width - (line_x + 1), STATUS_HEIGHT, COLOR_BG);
 
     int max_chars = w / 8;
     if (max_chars < 1) {
@@ -935,7 +940,7 @@ void Editor::drawStatusLine(color_t color, const char* fmt, ...)
 /* The bar above the text, drawn as Graphics.hpp's drawHeaderTable draws its shorter one, with the buttons */
 void Editor::reDrawHeader()
 {
-    int x = TREE_VIEW_WIDTH;
+    int x = m_treeWidth;
     int w = c_width;
     int face = HEADER_HEIGHT - 3;
 
@@ -960,7 +965,7 @@ void Editor::reDrawHeader()
  */
 bool Editor::buttonPosition(int button, int* x) const
 {
-    int left = TREE_VIEW_WIDTH + 1 + EDITOR_BUTTON_MARGIN;
+    int left = m_treeWidth + 1 + EDITOR_BUTTON_MARGIN;
 
     switch (button) {
     case EDITOR_BUTTON_NEW:
@@ -972,7 +977,7 @@ bool Editor::buttonPosition(int button, int* x) const
         return true;
 
     case EDITOR_BUTTON_HELP:
-        *x = TREE_VIEW_WIDTH + c_width - EDITOR_BUTTON_MARGIN - EDITOR_BUTTON_SIZE;
+        *x = m_treeWidth + c_width - EDITOR_BUTTON_MARGIN - EDITOR_BUTTON_SIZE;
         return *x >= left + 2 * (EDITOR_BUTTON_SIZE + EDITOR_BUTTON_GAP);
 
     default:
@@ -1066,6 +1071,76 @@ bool Editor::buttonMouse(const struct gfx_event& event, int* clicked)
     } else if (over != m_pressedShown) {
         m_pressedShown = over;
         drawButton(m_pressedButton, over);
+    }
+    return true;
+}
+
+/* The tree, and the grip on its right border: three short lines in the middle of the gray between its box and its edge */
+void Editor::drawTreePane()
+{
+    treeView->drawTree(this);
+
+    int y = (c_height - EDITOR_TREE_GRIP_LENGTH) / 2;
+    for (int line = 0; line < 3; line++) {
+        gfx_draw_rectangle(m_treeWidth - 7 + (line * 2), y, 1, EDITOR_TREE_GRIP_LENGTH, COLOR_BAR_SHADOW);
+    }
+}
+
+/* width, kept between EDITOR_TREE_MIN_WIDTH and what leaves the pane right of the tree its least, EDITOR_MIN_RIGHT_PANE_WIDTH */
+int Editor::clampTreeWidth(int width) const
+{
+    int widest = m_windowWidth - EDITOR_MIN_RIGHT_PANE_WIDTH;
+    if (width > widest) {
+        width = widest;
+    }
+    if (width < EDITOR_TREE_MIN_WIDTH) {
+        width = EDITOR_TREE_MIN_WIDTH;
+    }
+    return width;
+}
+
+/* Makes the tree width wide, as far as it can go, and the pane right of it the rest of the window, and redraws them */
+void Editor::setTreeWidth(int width)
+{
+    width = clampTreeWidth(width);
+    if (width == m_treeWidth) {
+        return;
+    }
+
+    m_treeWidth = width;
+    applyResolution(m_windowWidth, c_height);
+
+    drawTreePane();
+    reDrawHeader();
+    reDraw(0, m_bufferHead);
+}
+
+/**
+ * Presses, drags and releases on the tree's right border, which drag it wider or narrower as they go.
+ * @return whether the event was the border's, not the buttons' or the text's
+ */
+bool Editor::treeResizeMouse(const struct gfx_event& event)
+{
+    int x = (int16_t)event.data;
+
+    if (event.event == GFX_EVENT_MOUSE_DOWN) {
+        if (x < m_treeWidth - EDITOR_TREE_GRAB_LEFT || x >= m_treeWidth + EDITOR_TREE_GRAB_RIGHT) {
+            return false;
+        }
+        m_resizingTree = true;
+        m_treeGrabX = x - m_treeWidth;
+        return true;
+    }
+
+    if (!m_resizingTree) {
+        return false;
+    }
+
+    /* The point that was pressed stays under the mouse */
+    setTreeWidth(x - m_treeGrabX);
+
+    if (event.event == GFX_EVENT_MOUSE_UP) {
+        m_resizingTree = false;
     }
     return true;
 }
@@ -1236,7 +1311,7 @@ void Editor::handleMouse(const struct gfx_event& event)
 
     switch (event.event) {
     case GFX_EVENT_MOUSE_DOWN:
-        if (x < TREE_VIEW_WIDTH || y < HEADER_HEIGHT || y >= text_bottom) {
+        if (x < m_treeWidth || y < HEADER_HEIGHT || y >= text_bottom) {
             return;
         }
 
@@ -1334,7 +1409,7 @@ void Editor::reDraw(int from, int to)
     /* From the gutter's line to the window's edge, under the header to the status line, so the padding around the text
      * is painted too. Otherwise a resize leaves it black, and a narrower gutter leaves its old digits in it (#144) */
     int pane_x = text_x - TEXT_PADDING;
-    gfx_draw_rectangle(pane_x, HEADER_HEIGHT, TREE_VIEW_WIDTH + c_width - pane_x, text_h, COLOR_BG);
+    gfx_draw_rectangle(pane_x, HEADER_HEIGHT, m_treeWidth + c_width - pane_x, text_h, COLOR_BG);
 
     int draw_rows = rows;
     if (draw_rows > EDITOR_MAX_VIEW_ROWS) {
@@ -1409,7 +1484,7 @@ void Editor::reDraw(int from, int to)
         int cy = TEXT_TOP + (cursor_row * TEXT_ROW_HEIGHT);
 
         /* At the end of a full row, the cursor is past it, in the right margin, which can be narrower than a character */
-        int right = TREE_VIEW_WIDTH + c_width;
+        int right = m_treeWidth + c_width;
         if (cx > text_x + (cols * 8) - 8 && cx < right) {
             gfx_draw_rectangle(cx, cy, minInt(8, right - cx), TEXT_ROW_HEIGHT, COLOR_VGA_LIGHT_GRAY);
         }
@@ -2899,7 +2974,7 @@ bool Editor::Save()
     m_undoJoin = EDITOR_UNDO_CLOSED;
     if (creates && treeView != nullptr) {
         treeView->refresh();
-        treeView->drawTree(this);
+        drawTreePane();
     }
     reDraw(0, m_bufferHead);
     return true;
@@ -2907,7 +2982,11 @@ bool Editor::Save()
 
 void Editor::applyResolution(int window_width, int window_height)
 {
-    c_width = window_width - TREE_VIEW_WIDTH;
+    /* The tree keeps its width, unless the window is now too narrow for it */
+    m_windowWidth = window_width;
+    m_treeWidth = clampTreeWidth(m_treeWidth);
+
+    c_width = window_width - m_treeWidth;
     if (c_width < EDITOR_MIN_RIGHT_PANE_WIDTH) {
         c_width = EDITOR_MIN_RIGHT_PANE_WIDTH;
     }
@@ -2918,7 +2997,7 @@ void Editor::applyResolution(int window_width, int window_height)
     }
 
     if (treeView != nullptr) {
-        treeView->resize(TREE_VIEW_WIDTH, c_height);
+        treeView->resize(m_treeWidth, c_height);
     }
 
     int cols = visibleColumns();
@@ -3115,7 +3194,7 @@ void Editor::Help()
 void Editor::EditorLoop()
 {
     reDrawHeader();
-    treeView->drawTree(this);
+    drawTreePane();
     reDraw(0, m_bufferHead);
 
     while (1) {
@@ -3143,6 +3222,13 @@ void Editor::EditorLoop()
         case GFX_EVENT_MOUSE_DOWN:
         case GFX_EVENT_MOUSE_MOVE:
         case GFX_EVENT_MOUSE_UP: {
+            if (event.event == GFX_EVENT_MOUSE_DOWN) {
+                m_pressOnTree = (int16_t)event.data < m_treeWidth - EDITOR_TREE_GRAB_LEFT;
+            }
+            if (treeResizeMouse(event)) {
+                break;
+            }
+
             /* A button clicked presses its key, so it does just what the key does */
             int clicked = EDITOR_BUTTON_NONE;
             if (!buttonMouse(event, &clicked)) {
@@ -3154,9 +3240,9 @@ void Editor::EditorLoop()
         }
 
         case GFX_EVENT_MOUSE:
-            if (event.data < TREE_VIEW_WIDTH) {
+            if (m_pressOnTree && event.data < m_treeWidth) {
                 const char* file = treeView->click(event.data, event.data2);
-                treeView->drawTree(this);
+                drawTreePane();
                 if (file != nullptr) {
                     Open((char*)file);
                 }
@@ -3168,7 +3254,7 @@ void Editor::EditorLoop()
         case GFX_EVENT_RESOLUTION:
             applyResolution(event.data, event.data2);
             reDrawHeader();
-            treeView->drawTree(this);
+            drawTreePane();
             reDraw(0, m_bufferHead);
             break;
 
