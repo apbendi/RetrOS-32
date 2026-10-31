@@ -32,6 +32,11 @@ static struct kb_key kb_buffer[KB_BUFFER_SIZE];
 static volatile int kb_buffer_head = 0;
 static volatile int kb_buffer_tail = 0;
 
+/* The thread waiting in kb_get_char for a key, which kb_add_char wakes */
+static struct pcb* volatile kb_waiter = NULL;
+/* A second thread waiting at once takes the first's place, so each also looks for a key this often */
+#define KB_WAIT_MS 100
+
 static const unsigned char kbdus[128] = {
     0,          27,          '1', '2', '3',  '4', '5', '6', '7',  '8', /* 9 */
     '9',        '0',         '-', '=', '\b', /* Backspace */
@@ -130,13 +135,23 @@ int kb_get_key(struct kb_key* key) {
 /* Whether kb_get_key has a key to take */
 int kb_has_key(void) { return kb_buffer_head != kb_buffer_tail; }
 
+/* Takes the oldest key typed. With spin, waits for one, unless the caller is killed meanwhile. @return 0 for none */
 unsigned char kb_get_char(int spin) {
   struct kb_key key;
   while (!kb_get_key(&key)) {
-    if (!spin) {
+    /* A program killed while it waits exits when the call returns (pcb_kill) */
+    if (!spin || $process->current->kill_pending) {
       return 0;
     }
-    kernel_yield();
+
+    /* With interrupts off, a key can't come between the check and the wait unnoticed */
+    ENTER_CRITICAL();
+    if (!kb_has_key()) {
+      kb_waiter = $process->current;
+      kernel_wait(KB_WAIT_MS);
+      if (kb_waiter == $process->current) kb_waiter = NULL;
+    }
+    LEAVE_CRITICAL();
   }
   return key.key;
 }
@@ -151,6 +166,8 @@ static void kb_add_char(unsigned char c) {
   kb_buffer[kb_buffer_head].modifiers = kb_get_modifiers();
   kb_buffer_head = next_head;
   gfx_composition_wake();
+  /* A thread in kb_get_char: in text mode, where no window server takes the keys */
+  if (kb_waiter != NULL) pcb_wake(kb_waiter);
 }
 
 /* The window server's shortcuts (#89), or 0. Any other Alt+key sends the key alone. */
