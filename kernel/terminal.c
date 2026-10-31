@@ -461,6 +461,8 @@ static int __terminal_scan_textmode(struct terminal* term, ubyte_t* data, int si
 	int length = 0;
 	while (1){
 		ubyte_t c = scr_keyboard_get(1);
+		/* A program killed while it reads exits when the read returns (pcb_kill) */
+		if($process->current->kill_pending) return -1;
 		if(c == 0) continue;
 
 		if(c == CTRLC){
