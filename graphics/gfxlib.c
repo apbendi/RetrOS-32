@@ -176,16 +176,21 @@ int kernel_gfx_draw_rectangle(struct window* w, int x, int y, int width, int hei
 
 	spin_lock(&w->buffer_lock);
 
-	/* only draw rectangle inside window */
-	if(x < 0 || y < 0 || x+width > w->inner_width || y+height > w->inner_height){
+	/* only draw rectangle inside window. Compared without adding, so an app's huge width can't wrap around and fit */
+	if(x < 0 || y < 0 || width > w->inner_width - x || height > w->inner_height - y){
 		spin_unlock(&w->buffer_lock);
 		return -2;
 	}
 
-	int i, j;
-	for (j = y; j < (y+height); j++)
-		for (i = x; i < (x+width); i++)
-			putpixel(w->inner, i, j, color, w->pitch);
+	/**
+	 * A row at a time: a window's buffer is a byte a pixel, pitch bytes a row. Setting each pixel with putpixel took 15
+	 * instructions a pixel, and the Editor fills 140,000 to 250,000 pixels a frame. An empty or negative size draws
+	 * nothing, as the loops did.
+	 */
+	uint8_t* row = w->inner + y*w->pitch + x;
+	for(int j = 0; j < height && width > 0; j++, row += w->pitch){
+		memset(row, color, width);
+	}
 
 	spin_unlock(&w->buffer_lock);
 	return 0;

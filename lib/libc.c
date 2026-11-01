@@ -401,7 +401,8 @@ inline void* memset(void *dest, int val, int n)
 	uint32_t* dest32    = (uint32_t*) dest;
 	uint8_t* dest8      = ((uint8_t*) dest) + num_dwords * 4;
 	uint8_t val8        = (uint8_t) val;
-	uint32_t val32      = val|(val << 8) | (val << 16) | (val << 24);
+	/* From the byte, unsigned: val << 24 overflowed an int from 128 up, and a val over 255 gave other words than bytes */
+	uint32_t val32      = val8 * 0x01010101u;
 	uint32_t i;
 
 	for (i=0; i < num_dwords; i++){

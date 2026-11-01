@@ -213,6 +213,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **`gfx_draw_window`** copies only the part of a window's content inside the clip rectangle, and skips a window outside it. `gfx_window_extent` gives the rectangle a window can draw into, which is never smaller than what it draws.
   - **`putpixel` isn't clipped,** because it also draws into windows' own buffers. Use it only with a size check of your own, as the `kernel_gfx_*` functions do.
 - **The window drawing functions** in `gfxlib.c` (`kernel_gfx_*`) check against the window's content size. Lines and circles clip every pixel.
+  - **Rectangles** are filled a row at a time with `memset`, so their check compares `width` with `inner_width - x` rather than adding `x + width`: an app's huge width would wrap around, pass, and be written.
 - **Images:** `kernel_gfx_draw_image` (`w->draw->image`) draws a `struct image` into a window, clipped to its content, leaving it as it is where the image is `COLOR_TRANSPARENT`.
   - **Apps** draw one in a single system call, `gfx_draw_image` (`Window::drawImage`).
   - **The kernel checks first** that the arguments and every pixel are in the app's memory (`user_memory_validate`), and refuses sides over `GFX_IMAGE_MAX_SIDE`, 1,024.
