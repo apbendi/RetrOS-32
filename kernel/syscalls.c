@@ -20,6 +20,7 @@
 #include <keyboard.h>
 #include <memory.h>
 #include <errors.h>
+#include <gfx/gfxlib.h>
 
 syscall_t syscall[255];
 
@@ -88,6 +89,17 @@ static int sys_system(const char *command)
 	return exec_cmd((char*)command);
 }
 EXPORT_SYSCALL(SYSCALL_SYSTEM, sys_system);
+
+/* An app's sleep ends the frame it has drawn, if any, so the window server shows it while the app sleeps */
+static int sys_sleep(int ms)
+{
+	if($process->current->gfx_window != NULL){
+		gfx_frame_end($process->current->gfx_window);
+	}
+	kernel_sleep(ms);
+	return 0;
+}
+EXPORT_SYSCALL(SYSCALL_SLEEP, sys_sleep);
 
 
 int system_call(int index, int arg1, int arg2, int arg3)

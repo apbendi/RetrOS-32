@@ -173,13 +173,20 @@ struct window {
     struct gfx_rect drawn;
 
     /**
-     * Set while the window is a terminal's screen. A terminal draws a whole frame in one commit, clearing changed
-     * first and setting it after, so the window server can copy it once changed is set even while its owner runs.
+     * Set while a frame is partway drawn into the window: from an app's first draw call to the event read or sleep
+     * that ends its frame, or through a terminal's commit (gfx_frame_begin, gfx_frame_end). The window server shows
+     * the window only once it's clear, so a half-drawn frame never reaches the screen, unless the frame takes longer
+     * than WS_FRAME_MAX_MS. drawing_since is when it began, which the window server moves on each time it shows one
+     * that long.
      */
-    bool_t frames_atomic;
-
-    /* Set while a terminal's commit is drawing into the window, so the window server doesn't copy a half-drawn frame */
     bool_t drawing;
+    uint32_t drawing_since;
+
+    /**
+     * The app thread that ended its frame by reading an event, waiting until the window server has shown it, so it
+     * doesn't start its next frame while the window server copies this one (gfx_present). NULL when none is.
+     */
+    struct pcb* presenter;
 };
 
 

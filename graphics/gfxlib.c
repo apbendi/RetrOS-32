@@ -19,6 +19,7 @@
 #include <scheduler.h>
 #include <kutils.h>
 #include <gfx/composition.h>
+#include <timer.h>
 
 /**
  * Every function here that writes a window's pixels holds w->buffer_lock from its bounds check
@@ -290,6 +291,65 @@ void gfx_commit()
 		return;
 	$process->current->gfx_window->changed = 1;
 	gfx_composition_wake();
+}
+
+/**
+ * Marks w as partway through drawing a frame, which the window server doesn't show until gfx_frame_end (window.h's
+ * drawing). Called before the frame's pixels are written: an app's draw calls (gfx_syscall_hook) and a terminal's
+ * commit. The time is set first, so the window server never sees drawing with an old one.
+ */
+void gfx_frame_begin(struct window* w)
+{
+	if(w->drawing){
+		return;
+	}
+	w->drawing_since = timer_get_ms();
+	COMPILER_BARRIER();
+	w->drawing = true;
+}
+
+/* Ends the frame w is partway through drawing, if it is, so the window server shows it */
+void gfx_frame_end(struct window* w)
+{
+	if(!w->drawing){
+		return;
+	}
+	w->changed = 1;
+	w->drawing = false;
+	gfx_composition_wake();
+}
+
+/**
+ * Ends an app's frame as it reads its next event, and waits until the window server has shown it, up to
+ * GFX_PRESENT_WAIT_MS. Otherwise, with an event already waiting, as during a drag, the app would start its next frame
+ * before the window server ran, and the window would stay partway drawn for as long as the drag went on.
+ *
+ * The window server lets it go after copying the frame, or at once if the window isn't on screen (__ws_release_presenters).
+ * Events pushed to the window wake its owner too, so it waits again until presenter is cleared. With interrupts off
+ * from the frame's end to the wait, the window server can't take the frame before presenter is set.
+ */
+void gfx_present(void)
+{
+	struct pcb* current = $process->current;
+	struct window* w = current->gfx_window;
+	if(w == NULL || !w->drawing){
+		return;
+	}
+
+	uint32_t deadline = timer_get_ms() + GFX_PRESENT_WAIT_MS;
+
+	ENTER_CRITICAL();
+	w->presenter = current;
+	gfx_frame_end(w);
+	while(w->presenter == current && !current->kill_pending){
+		int left = (int)(deadline - timer_get_ms());
+		if(left <= 0){
+			break;
+		}
+		kernel_wait(left);
+	}
+	w->presenter = NULL;
+	LEAVE_CRITICAL();
 }
 
 /**

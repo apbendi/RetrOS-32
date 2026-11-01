@@ -14,6 +14,8 @@
 #define WS_DAMAGE_MAX 8
 /* The longest the window server waits between frames when nothing has woken it, under a 60 Hz frame (#199) */
 #define WS_WAIT_MS 10
+/* The longest a window partway through drawing a frame is kept off screen, for an app that draws without ending it */
+#define WS_FRAME_MAX_MS 100
 #define WS_VALIDATE(ws) if((ws)->ops == NULL || (ws)->ops->add == NULL || (ws)->ops->remove == NULL || (ws)->ops->draw == NULL) { return -ERROR_OPS_CORRUPTED; }
 #define WS_VALIDATE_FLAGS(ws) if((ws)->flags & ~(WINDOW_SERVER_INITIALIZED)) { return -ERROR_INVALID_ARGUMENTS; }
 

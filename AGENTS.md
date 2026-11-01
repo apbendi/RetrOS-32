@@ -200,12 +200,9 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **No resizing:** while `is_fullscreen` is set, `gfx_window_resize` refuses, since it would free the composition buffer.
   - **Closing it:** `ws_remove` leaves fullscreen before the window's buffer is freed.
   - **The taskbar** (`GFX_IS_IMMUATABLE`) doesn't go fullscreen.
-  - **Copying it:** since the window draws into the composition buffer itself, the window server copies that buffer to the framebuffer only once a frame is complete, and clears the window's `changed` first. Copying mid-draw would put half-drawn frames on screen, so a full redraw or a selection drag would flicker.
-    - **A terminal's screen** (`frames_atomic`) draws a whole frame in one commit, with `drawing` set meanwhile, so it's copied as soon as `changed` is set. That covers a program drawing into a shell's terminal while the shell waits in `pcb_await`, where the owner's state says nothing about the program's frame.
-    - **Any other window** is copied once its owner waits for input or sleeps (`state != RUNNING`).
+  - **Copying it:** since the window draws into the composition buffer itself, the window server copies that buffer to the framebuffer only once a frame is complete, by the same rule as outside fullscreen (see "Whole frames" under "Redraws"), and clears the window's `changed` first. Copying mid-draw would put half-drawn frames on screen, so a full redraw or a selection drag would flicker.
     - **The cursor** goes over the copy, never into the window's buffer, so it can't flash (#165; see "Copying to the screen").
-    - **Interrupts are off** for the copy, so the owner can't start its next frame partway through it.
-  - **Terminal commits** clear `screen->changed` and set `screen->drawing` before drawing, then set `changed` and clear `drawing` after, so the window server never copies one mid-redraw.
+    - **Interrupts are off** for the copy, so a thread that has finished its frame can't start the next one partway through it.
   - **Input:** while fullscreen, mouse events go straight to the fullscreen window at screen coordinates, without hit-testing other windows or its title-bar buttons. Keys go to it too. Alt+Tab and Alt+1 to Alt+4 are ignored, and Alt+F4 closes the fullscreen window. A press in progress is dropped when entering or leaving, with a `GFX_EVENT_MOUSE_UP` sent to a drag it interrupted.
 - **Moving:** `is_moving.x`/`y` hold where the title bar was grabbed, relative to the window's position. `gfx_default_hover` keeps that point under the cursor, clamping each axis to the screen on its own, so a window pushed against an edge slides along it. The whole window stays on screen. Drawing is clipped (#4), so that's for usability, not safety. #18 covers letting windows hang off the edge.
 
@@ -251,6 +248,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 
 **Events:**
 - **Reading:** `gfx_get_event(&e, GFX_EVENT_NONBLOCKING)` returns 0 if it got an event and -1 if there was none. On -1 it leaves `e` untouched.
+  - **It ends a frame:** what the app drew since its last read is shown before the read returns (see "Whole frames" under "Redraws").
 - **Blocking:** `GFX_EVENT_BLOCKING` blocks the thread until an event arrives, so nothing else in its loop runs meanwhile. A thread with timed work, like the taskbar's clock, reads with `GFX_EVENT_NONBLOCKING` and calls `kernel_sleep(ms)`. Events don't wake a sleeping thread, so the sleep is also the longest it takes to respond.
 - **The queue holds 10 events.** When it's full, the oldest is dropped.
 - **Drain all events every frame.** An app that reads one event per frame falls behind its input, and once the queue is full, events get dropped.
@@ -268,12 +266,20 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
   - **the whole screen,** when something sets `ws->window_changes`: leaving fullscreen, a workspace switch, `bg` and `th` (`gfx_composition_redraw`).
 - **The list** (`__ws_damage`) holds up to `WS_DAMAGE_MAX`, 8, rectangles. Ones that overlap or touch are merged, and a full list is merged into one. Each is composited separately (`__ws_composite`): the desktop's color, the label, then every window that overlaps it, clipped to it.
 - **The rule this relies on:** anything that changes how a window looks must mark it changed, or ask for a whole redraw. Otherwise the change shows only when something else redraws that part of the screen, and `screencheck` reports it.
-  - **Apps:** every gfx drawing syscall marks the app's window changed, and so do setting a window's title or header and moving it (`kernel_gfx_set_position`).
+  - **Apps:** every gfx drawing syscall marks the app's window changed, and so do setting a window's title or header and moving it (`kernel_gfx_set_position`). What an app draws is shown when its frame ends (see "Whole frames").
   - **Kernel threads** that draw with `w->draw->*` must call `gfx_commit()` themselves.
   - **The window manager** marks a window whose focus or position in the stack changes, including the one that loses focus.
-- **Between frames** (#199): at the end of a frame, with interrupts off, `__ws_pending` checks whether the next one has anything to do: input, a cursor that isn't where it's drawn, or something to redraw. In fullscreen, that's only the fullscreen window, which stays changed until it's copied.
+- **Whole frames:** the window server shows a window only once nothing is partway through drawing a frame into it (`__ws_ready`), in and out of fullscreen. Before, the Editor's redraws, of 200 to 870 draw calls each, were composited partway through, two or three times a frame on a slow CPU, which showed as flashing and gray bands.
+  - **The mark:** `w->drawing`, with when it began in `drawing_since`. `gfx_frame_begin` sets it and `gfx_frame_end` clears it, marks the window changed and wakes the window server.
+  - **Apps** (`gfx_syscall_hook`): each draw call begins a frame and marks the window changed, without waking the window server. Reading an event ends the frame, and the app waits until the window server has shown it, up to `GFX_PRESENT_WAIT_MS`, 50 ms (`gfx_present`). Without the wait, an app with an event already queued, as during a drag, would start its next frame before the window server ran, and its window would stay off screen. An app's `sleep` ends its frame without waiting (`sys_sleep`).
+  - **Letting apps go** (`__ws_release_presenters`): once the frame's windows are composited, or in fullscreen copied, since an app let go draws its next frame into its window. Windows that aren't on screen, on other workspaces or behind a fullscreen window, are let go at once; they're redrawn when they're on screen again.
+  - **Terminals:** a commit is a frame (`__terminal_commit_graphics`), whichever thread draws it, like a program writing to its shell's terminal while the shell waits for it. It also clears `changed` while it draws, so even a long one is never shown half done.
+  - **Kernel threads** that draw with `w->draw->*` don't mark frames: their windows are only marked changed by `gfx_commit`, at the end of a frame.
+  - **A frame longer than `WS_FRAME_MAX_MS`,** 100 ms, is shown anyway, and again every 100 ms while it lasts, for an app that draws without reading events or sleeping.
+  - **What it doesn't cover:** a window partway through a frame is still drawn as it is when something else redraws where it is, like a window in front of it changing, or the whole screen being redrawn.
+- **Between frames** (#199): at the end of a frame, with interrupts off, `__ws_pending` checks whether the next one has anything to do: input, a cursor that isn't where it's drawn, or a window to redraw. A window partway through a frame isn't one until the frame ends or passes `WS_FRAME_MAX_MS`. In fullscreen, only the fullscreen window counts.
   - **If not,** the window server waits in `kernel_wait` until `gfx_composition_wake` wakes it, or `WS_WAIT_MS`, 10 ms, passes.
-  - **What wakes it:** the keyboard and mouse interrupts, `gfx_commit`, a terminal's drawing, and `gfx_composition_redraw`. Anything else that marks a window changed, like a move or the window manager, is drawn within 10 ms. A new kind of drawing that has to show at once should call `gfx_composition_wake`.
+  - **What wakes it:** the keyboard and mouse interrupts, `gfx_commit`, the end of a frame (`gfx_frame_end`: an app's, or a terminal's commit), and `gfx_composition_redraw`. Anything else that marks a window changed, like a move or the window manager, is drawn within 10 ms. A new kind of drawing that has to show at once should call `gfx_composition_wake`.
 
 **Copying to the screen** (#163): the window server never reads the framebuffer, since reading video memory is slow on a real card, and in 86Box.
 - **The screen copy,** `ws->_screen`, a second screen-sized buffer, holds what the framebuffer shows. `__ws_copy_rect` compares the composition buffer with it a word at a time, and writes each word that differs to both.
@@ -291,7 +297,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 - **No nesting:** the lock isn't reentrant, so don't call a function that takes it while holding it.
 - **Interrupts:** `spin_lock` waits by yielding to other threads (`WAIT` → `kernel_yield`), so don't take it inside `ENTER_CRITICAL`.
 - **Compositing** reads buffers without the lock. That's safe only because every swap also runs on the window server thread. Moving a swap to another thread would mean the compositor has to take the lock too.
-  - So it can copy a window halfway through a redraw, which then shows on screen until the next composite. The window server clears `changed` as it collects what changed, before it draws, not after, so a commit made during the copy still gets the finished frame composited.
+  - So it could copy a window halfway through a redraw, which would then show on screen until the next composite. Frames keep that from happening (see "Whole frames" under "Redraws"), except where nothing marks them, or something else redraws over a window mid-frame. The window server clears `changed` as it collects what changed, before it draws, not after, so a commit made during the copy still gets the finished frame composited.
 - **The event queue** has its own lock, `w->spinlock`.
 
 **Window lifetime:** when a thread or process with a window exits, the cleanup worker calls `gfx_destroy_window`. The window server may be in the middle of a frame that uses that window, so the window isn't freed right away (#16).

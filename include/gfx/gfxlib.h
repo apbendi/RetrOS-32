@@ -48,4 +48,11 @@ int gfx_button_ext(int x, int y, int width, int height, char* name, color_t colo
 
 void gfx_commit();
 
+/* The longest an app waits, as it ends a frame, for the window server to show it */
+#define GFX_PRESENT_WAIT_MS 50
+
+void gfx_frame_begin(struct window* w);
+void gfx_frame_end(struct window* w);
+void gfx_present(void);
+
 #endif // !__GFXLIB_H

@@ -26,6 +26,21 @@ int gfx_syscall_hook(int option, void* data, int flags)
     ERR_ON_NULL(data);
     ERR_ON_NULL($process->current);
 
+    /**
+     * An app's frame is everything it draws between event reads: reading the next one ends it, and waits until the
+     * window server has shown it (gfx_present). So the window server never shows a half-drawn frame, and the draw
+     * calls themselves don't wake it.
+     */
+    if(option == GFX_EVEN_LOOP_OPT){
+        gfx_present();
+        return gfx_event_loop((struct gfx_event*)data, flags);
+    }
+
+    struct window* w = $process->current->gfx_window;
+    if(w != NULL){
+        gfx_frame_begin(w);
+    }
+
     switch (option){
     case GFX_DRAW_CHAR_OPT:;
         struct gfx_char* c = (struct gfx_char*)data;
@@ -66,11 +81,13 @@ int gfx_syscall_hook(int option, void* data, int flags)
         kernel_gfx_draw_image($process->current->gfx_window, args.x, args.y, &args.image);
         break;
 
-    case GFX_EVEN_LOOP_OPT:
-        return gfx_event_loop((struct gfx_event*)data, flags);
     default:
         break;
     }
-    gfx_commit();
+
+    /* Changed, but drawing until the frame ends, unless it takes longer than WS_FRAME_MAX_MS */
+    if(w != NULL){
+        w->changed = 1;
+    }
     return ERROR_OK;
 }

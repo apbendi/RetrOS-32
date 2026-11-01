@@ -197,7 +197,6 @@ void kernel(uint32_t magic)
 	add_system_call(SYSCALL_TERM_READ, (syscall_t)&terminal_read);
 	
 	add_system_call(SYSCALL_EXIT, (syscall_t)&kernel_exit);
-	add_system_call(SYSCALL_SLEEP, (syscall_t)&kernel_sleep);
 	add_system_call(SYSCALL_YIELD, (syscall_t)&kernel_yield);
 
 	add_system_call(SYSCALL_GFX_WINDOW, (syscall_t)&gfx_new_window);

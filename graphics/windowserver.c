@@ -19,6 +19,7 @@
 #include <vbe.h>
 #include <colors.h>
 #include <math.h>
+#include <timer.h>
 
 static int ws_init(struct windowserver* ws);
 static int ws_add(struct windowserver* ws, struct window* window);
@@ -588,8 +589,8 @@ static void __ws_composite(struct windowserver* ws, uint8_t* buffer, struct gfx_
 /**
  * Does a screencheck asked for with ws_check_screen, if there is one: composites the whole screen into its buffer,
  * draws the cursor over it where the copy put it, and compares that with the screen copy. Called at the end of a
- * frame, with interrupts off so nothing draws meanwhile, and only once nothing is left to redraw. Otherwise a later
- * frame does it.
+ * frame, with interrupts off so nothing draws meanwhile, and only once nothing is left to redraw or partway drawn,
+ * which the screen doesn't show yet. Otherwise a later frame does it.
  */
 static void __ws_check_screen(struct windowserver* ws)
 {
@@ -610,7 +611,7 @@ static void __ws_check_screen(struct windowserver* ws)
 
     bool_t pending = ws->window_changes;
     for(struct window* w = ws->_wm->windows; w != NULL && !pending; w = w->next){
-        pending = w->changed;
+        pending = w->changed || w->drawing;
     }
     if(pending){
         LEAVE_CRITICAL();
@@ -694,9 +695,67 @@ int ws_check_screen(struct windowserver* ws, struct gfx_rect* diff)
 }
 
 /**
+ * Whether a changed window can be shown: unless a frame is partway drawn into it (window.h's drawing), which it
+ * shows anyway once the frame has taken WS_FRAME_MAX_MS, for an app that draws without ending its frames. The same
+ * rule in and out of fullscreen.
+ */
+static bool_t __ws_ready(struct window* w, uint32_t now)
+{
+    return !w->drawing || now - w->drawing_since >= WS_FRAME_MAX_MS;
+}
+
+/**
+ * Takes w's changes to show them, called with interrupts off. A frame shown before it's done, past WS_FRAME_MAX_MS,
+ * counts from now again, so a long one is shown every WS_FRAME_MAX_MS rather than every frame.
+ */
+static void __ws_take(struct window* w, uint32_t now)
+{
+    w->changed = 0;
+    if(w->drawing){
+        w->drawing_since = now;
+    }
+}
+
+static void __ws_release(struct window* w)
+{
+    if(w->presenter != NULL){
+        pcb_wake(w->presenter);
+        w->presenter = NULL;
+    }
+}
+
+/**
+ * Lets the apps waiting for their frames to be shown go on (gfx_present): those whose frames this frame showed, which
+ * are no longer changed, and those whose windows aren't on screen, which never would be. Those are on other workspaces,
+ * or, in fullscreen, every window but the fullscreen one. They're drawn again when they're on screen, as switching
+ * workspaces and leaving fullscreen redraw the whole screen. Called with interrupts off, after the frame's windows have
+ * been composited, or in fullscreen copied, since an app let go starts drawing its next frame into its window.
+ */
+static void __ws_release_presenters(struct windowserver* ws, struct window* fullscreen)
+{
+    struct windowmanager* wm = ws->_wm;
+    for(struct window* w = wm->windows; w != NULL; w = w->next){
+        if(!w->changed || (fullscreen != NULL && w != fullscreen)){
+            __ws_release(w);
+        }
+    }
+
+    /* The active workspace's saved list is stale until the next switch, so it's skipped, as __wm_unlink does */
+    for(int workspace = 0; workspace < WM_MAX_WORKSPACES; workspace++){
+        if(workspace == wm->workspace){
+            continue;
+        }
+        for(struct window* w = wm->workspaces[workspace]; w != NULL; w = w->next){
+            __ws_release(w);
+        }
+    }
+}
+
+/**
  * Whether the next frame has something to do, so the window server shouldn't wait for it: input, a cursor that isn't
- * where it's drawn, or something to redraw. In fullscreen only the fullscreen window is drawn, and it stays changed
- * until its owner finishes its frame, so the window server keeps yielding meanwhile. Called with interrupts off.
+ * where it's drawn, or a window to redraw. A window partway through a frame isn't, until the frame ends, which wakes
+ * the window server (gfx_frame_end), or it's taken WS_FRAME_MAX_MS, which a wait of WS_WAIT_MS notices. In fullscreen
+ * only the fullscreen window is drawn. Called with interrupts off.
  */
 static bool_t __ws_pending(struct windowserver* ws)
 {
@@ -707,15 +766,16 @@ static bool_t __ws_pending(struct windowserver* ws)
         return true;
     }
 
+    uint32_t now = timer_get_ms();
     if(ws->_fullscreen != NULL){
-        return ws->_fullscreen->changed;
+        return ws->_fullscreen->changed && __ws_ready(ws->_fullscreen, now);
     }
 
     if(ws->window_changes || ws->_damage_count > 0){
         return true;
     }
     for(struct window* w = ws->_wm->windows; w != NULL; w = w->next){
-        if(w->changed){
+        if(w->changed && __ws_ready(w, now)){
             return true;
         }
     }
@@ -744,8 +804,10 @@ static int ws_draw(struct windowserver* ws)
     /**
      * Redraw only what changed (#180): where each window marked changed was drawn last and where it is now, and where
      * closed windows were, or the whole screen when something asked for that, like leaving fullscreen. The cursor isn't
-     * part of it, so moving the mouse alone redraws nothing. In fullscreen the window draws into the composition buffer
-     * itself, and nothing clears the other windows' changed, so they wait until fullscreen ends.
+     * part of it, so moving the mouse alone redraws nothing. A window partway through a frame waits until it's done
+     * (__ws_ready), so a half-drawn one never reaches the screen, unless something else redraws where it is. In
+     * fullscreen the window draws into the composition buffer itself, and nothing clears the other windows' changed,
+     * so they wait until fullscreen ends.
      */
     struct gfx_rect damage[WS_DAMAGE_MAX];
     int damaged = 0;
@@ -754,8 +816,10 @@ static int ws_draw(struct windowserver* ws)
          * Collected with interrupts off: ws_remove adds to it and reads windows' drawn, and other threads ask for whole
          * redraws and move windows. changed is cleared here, before drawing, so a commit made while the window is
          * drawn is drawn in the next frame. drawn is the extent read here, so a move that lands mid-draw leaves the
-         * window marked, and the next frame redraws both where it was meant to be and where it went.
+         * window marked, and the next frame redraws both where it was meant to be and where it went. A window that
+         * isn't ready keeps changed and drawn, so where it was is still redrawn once it is.
          */
+        uint32_t ms = timer_get_ms();
         ENTER_CRITICAL();
         int requested = ws->window_changes;
         ws->window_changes = 0;
@@ -766,14 +830,15 @@ static int ws_draw(struct windowserver* ws)
         ws->_damage_count = 0;
 
         for(struct window* w = ws->_wm->windows; w != NULL; w = w->next){
-            if(!w->changed && !requested){
+            bool_t show = w->changed && __ws_ready(w, ms);
+            if(!show && !requested){
                 continue;
             }
             struct gfx_rect extent = gfx_window_extent(w);
-            if(w->changed){
+            if(show){
                 __ws_damage(damage, &damaged, w->drawn);
                 __ws_damage(damage, &damaged, extent);
-                w->changed = 0;
+                __ws_take(w, ms);
             }
             w->drawn = extent;
         }
@@ -787,6 +852,11 @@ static int ws_draw(struct windowserver* ws)
         for(int i = 0; i < damaged; i++){
             __ws_composite(ws, ws->_wm->composition_buffer, damage[i]);
         }
+
+        /* The windows are in the composition buffer, so apps waiting for their frames to be shown can draw again */
+        ENTER_CRITICAL();
+        __ws_release_presenters(ws, NULL);
+        LEAVE_CRITICAL();
     }
 
     /* Move out of this module */
@@ -805,25 +875,24 @@ static int ws_draw(struct windowserver* ws)
         struct window* now = ws->_fullscreen;
         if(now != NULL && (now->changed || cursor_moved)){
             /**
-             * A fullscreen window draws into the composition buffer itself, so copy it only once the frame is done.
-             * Copying mid-draw would put half-drawn frames on screen, making a selection drag or a full redraw flicker.
+             * A fullscreen window draws into the composition buffer itself, so copy it only once the frame is done
+             * (__ws_ready, as outside fullscreen). Copying mid-draw would put half-drawn frames on screen, making a
+             * selection drag or a full redraw flicker.
              *
-             * A terminal draws a whole frame in one commit, with drawing set meanwhile, so it's copied as soon as
-             * changed is set. That's needed when a program draws into a shell's terminal: the shell waits for it in
-             * pcb_await meanwhile, so its state says nothing about the program's frame. Any other window is copied
-             * once its owner waits for input or sleeps.
-             *
-             * Interrupts stay off for the copy, since the frame is only done while the owner can't run: otherwise it
-             * could start its next frame partway through. The cursor goes over the copy, not into the window (#165).
+             * Interrupts stay off for the copy: a kernel thread that has committed its frame, or an app that has
+             * stopped waiting for it to be shown, could otherwise start its next frame partway through. The cursor
+             * goes over the copy, not into the window (#165).
              */
-            bool_t ready = now->frames_atomic ? !now->drawing
-                                              : (now->owner == NULL || now->owner->state != RUNNING);
-            if(ready){
-                now->changed = 0;
+            uint32_t ms = timer_get_ms();
+            if(__ws_ready(now, ms)){
+                if(now->changed){
+                    __ws_take(now, ms);
+                }
                 struct gfx_rect screen = { 0, 0, vbe_info->width, vbe_info->height };
                 __ws_copy_damage(ws, &screen, 1, cursor_moved);
             }
         }
+        __ws_release_presenters(ws, now);
         LEAVE_CRITICAL();
     }
 
