@@ -303,6 +303,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 
 **Window lifetime:** when a thread or process with a window exits, the cleanup worker calls `gfx_destroy_window`. The window server may be in the middle of a frame that uses that window, so the window isn't freed right away (#16).
 - **Removing it:** `ws_remove` sets `w->removed`, adds where it was drawn to what the next frame redraws, and takes the window out of the lists, the active one or another workspace's.
+  - **Not drawn meanwhile:** the window manager doesn't draw a window with `removed` set. A frame between the first step and the last, which logging "Removing window" to a slow serial port made likely on 86Box, used to draw it again, using up the redraw, and leave it on screen.
 - **Freeing it:** the window server frees the window and its buffer at the start of its next frame (`__ws_free_windows`), when it holds no window pointers.
 - **Rules for window manager and window server code:**
   - Don't keep a window pointer from one frame to the next. Anything that does, like `pressed_window` or `ws->_fullscreen`, has to be cleared in `ws_remove`.

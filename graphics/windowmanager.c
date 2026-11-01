@@ -342,8 +342,14 @@ static int wm_default_draw(struct windowmanager* wm, uint8_t* buffer, struct win
     if(window->next != NULL){
         wm->ops->draw(wm, buffer, window->next);
     }
-    
-    window->draw->draw(buffer, window);
+
+    /**
+     * Not a window being destroyed: ws_remove adds where it was to the next frame's redraws before it's out of the
+     * list, so a frame in between would draw it there again, using up the redraw and leaving it on screen
+     */
+    if(!window->removed){
+        window->draw->draw(buffer, window);
+    }
 
     return ERROR_OK;
 }
