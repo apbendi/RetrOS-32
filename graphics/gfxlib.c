@@ -262,13 +262,30 @@ int kernel_gfx_draw_char(struct window* w, int x, int y, unsigned char c, unsign
 	if(c >= 128) return 0;
 
 	spin_lock(&w->buffer_lock);
-	for (int l = 0; l < 8; l++) {
-		for (int i = 8; i >= 0; i--) {
-			if (font8x8_basic[c][l] & (1 << i)) {
 
-				if((x)+i < 0 || (y)+l < 0 || (x)+i >= w->inner_width || (y)+l >= w->inner_height)
-					continue;
-				putpixel(w->inner, (x)+i, (y)+l, color, w->pitch);
+	/**
+	 * A row of the font is its 8 pixels, bit 0 the leftmost. A character wholly inside the window, as text nearly always
+	 * is, is drawn without checking each pixel, and each row stops after its last set bit.
+	 */
+	if(x >= 0 && y >= 0 && x <= w->inner_width - 8 && y <= w->inner_height - 8){
+		uint8_t* row = w->inner + y*w->pitch + x;
+		for (int l = 0; l < 8; l++, row += w->pitch) {
+			unsigned int bits = font8x8_basic[c][l];
+			for (int i = 0; bits != 0; i++, bits >>= 1) {
+				if (bits & 1) {
+					row[i] = color;
+				}
+			}
+		}
+	} else {
+		for (int l = 0; l < 8; l++) {
+			for (int i = 0; i < 8; i++) {
+				if (font8x8_basic[c][l] & (1 << i)) {
+
+					if((x)+i < 0 || (y)+l < 0 || (x)+i >= w->inner_width || (y)+l >= w->inner_height)
+						continue;
+					putpixel(w->inner, (x)+i, (y)+l, color, w->pitch);
+				}
 			}
 		}
 	}
