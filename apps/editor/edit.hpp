@@ -40,7 +40,13 @@
 
 /* The bar above the text, with the New, Save and Help buttons: the buttons and their padding, between its edges */
 #define HEADER_HEIGHT (EDITOR_BUTTON_Y + EDITOR_BUTTON_SIZE + EDITOR_BUTTON_PAD + 3)
-#define STATUS_HEIGHT 10
+/**
+ * The status line below the text: a gray band the pane's width, under the line numbers too, with a sunken field from
+ * the gutter's line that the status text sits in, lined up with the text above. The band shows EDITOR_STATUS_MARGIN
+ * above and below the field, which has a pixel of edge and one of space around the text's 8 rows.
+ */
+#define EDITOR_STATUS_MARGIN 2
+#define STATUS_HEIGHT ((2 * EDITOR_STATUS_MARGIN) + 2 + 2 + 8)
 
 /* The header bar and its buttons are drawn in lib/graphics.h's COLOR_BAR_FACE, COLOR_BAR_LIGHT and COLOR_BAR_SHADOW */
 
@@ -61,7 +67,8 @@
 #define EDITOR_DEFAULT_GUTTER_WIDTH 32
 #define EDITOR_DEFAULT_RIGHT_PANE_WIDTH (EDITOR_DEFAULT_TEXT_WIDTH + EDITOR_DEFAULT_GUTTER_WIDTH + (2 * TEXT_PADDING) + SCROLLBAR_WIDTH)
 #define EDITOR_DEFAULT_WINDOW_WIDTH (TREE_VIEW_WIDTH + EDITOR_DEFAULT_RIGHT_PANE_WIDTH)
-#define EDITOR_DEFAULT_HEIGHT 320
+/* 27 rows of text */
+#define EDITOR_DEFAULT_HEIGHT 326
 
 #define EDITOR_MIN_RIGHT_PANE_WIDTH 48
 #define EDITOR_MIN_HEIGHT (HEADER_HEIGHT + STATUS_HEIGHT + (2 * TEXT_PADDING) + TEXT_ROW_HEIGHT)

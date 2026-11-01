@@ -875,8 +875,11 @@ void Editor::drawLineNumbers(const int* row_lines, int row_count)
     }
 
     gfx_draw_rectangle(gutter_x, HEADER_HEIGHT, gutter_w, text_h, COLOR_BG);
-    /* Below the header, which isn't redrawn when the gutter widens, so the line would stay there at its old place */
-    gfx_draw_line(gutter_x + gutter_w - 1, HEADER_HEIGHT, gutter_x + gutter_w - 1, c_height, COLOR_VGA_MEDIUM_GRAY);
+    /**
+     * From below the header, which isn't redrawn when the gutter widens, so the line would stay there at its old place,
+     * to the status line's band, which the status line's field continues below
+     */
+    gfx_draw_line(gutter_x + gutter_w - 1, HEADER_HEIGHT, gutter_x + gutter_w - 1, c_height - STATUS_HEIGHT - 1, COLOR_VGA_MEDIUM_GRAY);
 
     int rows = visibleLines();
     int draw_rows = minInt(rows, row_count);
@@ -920,12 +923,20 @@ void Editor::drawStatusLine(color_t color, const char* fmt, ...)
     }
 
     /**
-     * The whole row, under the gutter and the margin too, except the gutter's line, which drawLineNumbers draws down
-     * to the bottom. The text starts further right as the gutter widens, and its old start would stay behind (#144)
+     * The whole band, under the gutter too, since the text starts further right as the gutter widens, and its old
+     * start would stay behind (#144). Then the field, sunken: a shadow along its top and left, and the light edge
+     * along its bottom and right. It starts below the gutter's line, which drawLineNumbers stops above the band
      */
-    int line_x = x - TEXT_PADDING - 1;
-    gfx_draw_rectangle(m_treeWidth, y, line_x - m_treeWidth, STATUS_HEIGHT, COLOR_BG);
-    gfx_draw_rectangle(line_x + 1, y, m_treeWidth + c_width - (line_x + 1), STATUS_HEIGHT, COLOR_BG);
+    gfx_draw_rectangle(m_treeWidth, y, c_width, STATUS_HEIGHT, COLOR_BAR_FACE);
+
+    int field_x = x - TEXT_PADDING - 1;
+    int field_y = y + EDITOR_STATUS_MARGIN;
+    int field_w = m_treeWidth + c_width - EDITOR_STATUS_MARGIN - field_x;
+    int field_h = STATUS_HEIGHT - (2 * EDITOR_STATUS_MARGIN);
+    gfx_draw_rectangle(field_x, field_y, field_w, 1, COLOR_BAR_SHADOW);
+    gfx_draw_rectangle(field_x, field_y, 1, field_h, COLOR_BAR_SHADOW);
+    gfx_draw_rectangle(field_x + 1, field_y + field_h - 1, field_w - 1, 1, COLOR_BAR_LIGHT);
+    gfx_draw_rectangle(field_x + field_w - 1, field_y + 1, 1, field_h - 1, COLOR_BAR_LIGHT);
 
     int max_chars = w / 8;
     if (max_chars < 1) {
@@ -937,7 +948,8 @@ void Editor::drawStatusLine(color_t color, const char* fmt, ...)
         msg[max_chars] = 0;
     }
 
-    gfx_draw_format_text(x, y, color, "%s", msg);
+    /* Inside the field's edge and a pixel of space */
+    gfx_draw_format_text(x, field_y + 2, color, "%s", msg);
     m_keepStatus = color == COLOR_VGA_RED;
 }
 
