@@ -36,21 +36,48 @@ static uint32_t KERNEL_MEMORY_END = 0;
 static uint8_t*   __kmemory_bitmap;
 static spinlock_t __kmemory_lock = 0;
 static uint32_t   __kmemory_used = 0;
+/* Every block below it is in use, so searches start there. They move it past blocks in use, and kfree back to a freed one */
+static int        __kmemory_first_free = 0;
 
+/**
+ * Finds the first run of num_blocks free blocks, the same one a search testing every block from block 0 finds, so
+ * allocations land where they always have. Starts at __kmemory_first_free, and takes a bitmap byte whole when its
+ * blocks are all in use, or all free and not enough to end the run.
+ */
 static inline int __kmemory_find_blocks(int num_blocks, int total_blocks)
 {
     int free_blocks = 0;
-    for (int i = 0; i < total_blocks; i++) {
-        uint32_t index = KMEM_BITMAP_INDEX(KERNEL_MEMORY_START + i * KMEM_BLOCK_SIZE);
-        uint32_t offset = KMEM_BITMAP_OFFSET(KERNEL_MEMORY_START + i * KMEM_BLOCK_SIZE);
-        if (!(__kmemory_bitmap[index] & (1 << offset))) {
+    int i = __kmemory_first_free;
+    while (i < total_blocks) {
+        if (i % KMEM_BLOCKS_PER_BYTE == 0 && i + KMEM_BLOCKS_PER_BYTE <= total_blocks) {
+            uint8_t byte = __kmemory_bitmap[i / KMEM_BLOCKS_PER_BYTE];
+            if (byte == 0xFF) {
+                if (i == __kmemory_first_free) {
+                    __kmemory_first_free += KMEM_BLOCKS_PER_BYTE;
+                }
+                free_blocks = 0;
+                i += KMEM_BLOCKS_PER_BYTE;
+                continue;
+            }
+            if (byte == 0 && free_blocks + KMEM_BLOCKS_PER_BYTE < num_blocks) {
+                free_blocks += KMEM_BLOCKS_PER_BYTE;
+                i += KMEM_BLOCKS_PER_BYTE;
+                continue;
+            }
+        }
+
+        if (!(__kmemory_bitmap[i / KMEM_BLOCKS_PER_BYTE] & (1 << (i % KMEM_BLOCKS_PER_BYTE)))) {
             free_blocks++;
             if (free_blocks == num_blocks) {
                 return i - num_blocks + 1;
             }
         } else {
+            if (i == __kmemory_first_free) {
+                __kmemory_first_free++;
+            }
             free_blocks = 0;
         }
+        i++;
     }
     return -1;  /* No free block found */
 }
@@ -216,6 +243,9 @@ void kfree(void* ptr)
 		uint32_t index = KMEM_BITMAP_INDEX(KERNEL_MEMORY_START + (block_index + i) * KMEM_BLOCK_SIZE);
 		uint32_t offset = KMEM_BITMAP_OFFSET(KERNEL_MEMORY_START + (block_index + i) * KMEM_BLOCK_SIZE);
 		__kmemory_bitmap[index] &= ~(1 << offset);
+	}
+	if(block_index < __kmemory_first_free){
+		__kmemory_first_free = block_index;
 	}
 
     uint32_t freed_bytes = num_blocks * KMEM_BLOCK_SIZE;

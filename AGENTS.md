@@ -499,6 +499,7 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
 - **Programs** are up to `PROGRAM_MAX_SIZE`, 2 MB, mapped at `VMEM_DATA` through one page table.
 - **`kalloc` panics when the heap is full.**
   - The heap is first fit, in 256-byte blocks.
+  - **Finding room** (#209): a search starts at `__kmemory_first_free`, below which every block is in use, and takes a byte of the bitmap at once when its 8 blocks are all in use, or all free. It finds the same blocks a search testing every block from block 0 would, so allocations land where they always have. Searches move the hint up past blocks in use, and `kfree` moves it down to the blocks it frees. Before, every search tested each block from block 0, and the Editor spent 92% of its startup searching.
   - `kalloc` panics with "Out of memory!" rather than returning NULL.
   - Use `kalloc_try` for large allocations that are allowed to fail.
   - Starting a program or thread uses `kalloc_try` for the load buffer, the kernel stack and the window buffer. Running out returns `-ERROR_ALLOC`, which `exec` and the Start menu report. Smaller allocations along the way still use `kalloc`. Keeping a reserve, so a launch can't take the last free memory, is #31.
