@@ -22,8 +22,6 @@
 
 #include <fs/fs.h>
 
-/* How many directories deep the tree is read */
-#define TREE_VIEW_MAX_DEPTH 8
 /* Behind the highlighted file's row: the pale blue the Editor draws behind selected text */
 #define TREE_VIEW_HIGHLIGHT 80
 
@@ -50,7 +48,7 @@ public:
         root.children = new TreeNode[root.childrenCapacity];
         if (root.children != nullptr) {
             memset(root.children, 0, root.childrenCapacity * sizeof(TreeNode));
-            loadTree(&root, 0, path, 0);
+            loadDirectory(&root);
         }
 
         /* From /sysutil/icons, shared with Finder and the kernel. A file that can't be read gives a placeholder */
@@ -160,7 +158,7 @@ public:
         }
         memset(root.children, 0, root.childrenCapacity * sizeof(TreeNode));
         root.childrenCount = 0;
-        loadTree(&root, 0, path, 0);
+        loadDirectory(&root);
     }
 
     const char* click(int x, int y) {
@@ -191,6 +189,9 @@ public:
         }
 
         if (hit->isDirectory) {
+            if (!hit->isExpanded && !hit->isLoaded) {
+                loadDirectory(hit);
+            }
             hit->isExpanded = !hit->isExpanded;
             return nullptr;
         }
@@ -208,9 +209,10 @@ private:
     /* Logic of caching and interaction */
     struct TreeNode {
         String* name;
-        int x, y, depth, entries;
         int isDirectory;
         int isExpanded;
+        /* Whether a directory's entries have been read, which is when it's first expanded or revealed */
+        int isLoaded;
         int childrenCount;
         int childrenCapacity;
         struct TreeNode* children;
@@ -325,10 +327,16 @@ private:
                 if (pathMatches(path, name, false)) {
                     return true;
                 }
-            } else if (pathMatches(path, name, true) && revealIn(child, path)) {
-                /* Only once the file is found, so a path the tree doesn't have expands nothing */
-                child->isExpanded = 1;
-                return true;
+            } else if (pathMatches(path, name, true)) {
+                /* Only the directories on the path are read */
+                if (!child->isLoaded) {
+                    loadDirectory(child);
+                }
+                if (revealIn(child, path)) {
+                    /* Only once the file is found, so a path the tree doesn't have expands nothing */
+                    child->isExpanded = 1;
+                    return true;
+                }
             }
         }
         return false;
@@ -477,7 +485,8 @@ private:
         return true;
     }
 
-    struct TreeNode* insertNode(struct TreeNode* parent, const char* name, int x, int y, int isDirectory) {
+    /* Collapsed, and a directory's children are neither read nor allocated until it's expanded or revealed */
+    struct TreeNode* insertNode(struct TreeNode* parent, const char* name, int isDirectory) {
         if (!ensureChildCapacity(parent)) {
             return nullptr;
         }
@@ -490,25 +499,7 @@ private:
             return nullptr;
         }
 
-        node->x = x;
-        node->y = y;
         node->isDirectory = isDirectory;
-        node->isExpanded = 0;
-        node->childrenCount = 0;
-        node->childrenCapacity = 0;
-        node->children = nullptr;
-
-        if (isDirectory) {
-            node->childrenCapacity = 16;
-            node->children = new TreeNode[node->childrenCapacity];
-            if (node->children == nullptr) {
-                delete node->name;
-                node->name = nullptr;
-                node->childrenCapacity = 0;
-                return nullptr;
-            }
-            memset(node->children, 0, node->childrenCapacity * sizeof(TreeNode));
-        }
 
         parent->childrenCount++;
         return node;
@@ -516,41 +507,36 @@ private:
 
 
     /**
-     * Adds path's entries under root, and theirs under them, with readdir. Each node's name is its full path, with
-     * a "/" after a directory's.
-     * @return the number of entries added
+     * Adds the entries of node, a directory, with readdir, without reading the directories among them: each is read
+     * when it's first expanded (click) or revealed (revealIn). Each entry's name is its full path, with a "/" after a
+     * directory's.
+     * @return the number of entries added, or -1 if the directory can't be read, which leaves it unread, so expanding
+     * it again tries again
      */
-    int loadTree(struct TreeNode* root, int depth, String* path, int entries){
-        int fd = open(path->getData(), FS_FILE_FLAG_READ);
+    int loadDirectory(struct TreeNode* node){
+        int fd = open(node->name->getData(), FS_FILE_FLAG_READ);
         if (fd <= -1) return -1;
 
-        int origEntries = entries;
+        int added = 0;
         struct fs_dirent entry;
 
         while (readdir(fd, &entry) == 1) {
             int isDirectory = entry.attributes & FS_ATTR_DIRECTORY;
-            entries++;
 
-            String fullPath = path->getData();
+            String fullPath = node->name->getData();
             fullPath.concat(entry.name);
             if (isDirectory) {
                 fullPath.concat("/");
             }
 
-            struct TreeNode* newRoot = insertNode(root, fullPath.getData(), (depth * 12), 0, isDirectory);
-            if (newRoot == nullptr) {
-                continue;
-            }
-
-            /* Each level keeps its directory open, out of the process's 32 files */
-            if (isDirectory && depth < TREE_VIEW_MAX_DEPTH) {
-                int ret = loadTree(newRoot, depth + 1, &fullPath, entries);
-                if (ret > 0) entries += ret;
+            if (insertNode(node, fullPath.getData(), isDirectory) != nullptr) {
+                added++;
             }
         }
 
         fclose(fd);
-        return entries - origEntries;
+        node->isLoaded = 1;
+        return added;
     }
 
 

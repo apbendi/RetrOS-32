@@ -433,7 +433,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
 
 **In the shell:** `ls`, `cd`, `pwd`, `mkdir`, `rm`, `rmdir`, `mv`, `cp`, `find`, `touch`, `cat` and `xxd`, in `kernel/cmds.c`. `touch` dates a file or directory now, and creates an empty file where there's nothing. `cat` prints files exactly as they are, one after another, and `xxd` prints a file's bytes in hex. `mv` and `cp` put the source inside a destination that's a directory, as on Unix; `cp` copies files, not directories. Quote names with spaces. The prompt shows the current directory, `kernel:/my projects> `. It follows the output, and each command stays on screen after it, as in the log.
 
-**In apps:** `open`, `read`, `write`, `seek`, `fclose`, `stat`, `readdir`, `mkdir`, `unlink`, `rmdir`, `rename`, `chdir` and `getcwd` in `lib/syscall.c`. Finder and the tree view (`apps/utils/TreeView.hpp`) list with `readdir`.
+**In apps:** `open`, `read`, `write`, `seek`, `fclose`, `stat`, `readdir`, `mkdir`, `unlink`, `rmdir`, `rename`, `chdir` and `getcwd` in `lib/syscall.c`. Finder and the tree view (`apps/utils/TreeView.hpp`) list with `readdir`. The tree view reads `/` when it's made, and any other directory only when it's first expanded, or a file in it is revealed (#212), so the Editor starts without reading the whole disk.
 
 **The disk image** (`tools/build.c`): `mkfs.fat` makes a 32 MB FAT16 volume whose reserved sectors hold the bootloader and the kernel.
 - **Sectors 0–3** are the bootloader, around the boot sector's FAT fields, with a partition entry covering the disk.
