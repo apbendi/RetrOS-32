@@ -60,6 +60,8 @@
 /* A row of text: a character's 8 pixels, with the space between rows split above and below them */
 #define TEXT_ROW_HEIGHT 10
 #define TEXT_CHAR_Y ((TEXT_ROW_HEIGHT - 8) / 2)
+/* A tab is drawn as space to the next multiple of this many columns, and the Tab key inserts this many spaces (#135) */
+#define EDITOR_TAB_WIDTH 4
 
 #define EDITOR_BUFFER_SIZE (64 * 1024)
 #define ROPE_CHUNK_SIZE 256
@@ -123,7 +125,6 @@ public:
     bool SaveMsg();
     void setFd(int fd);
 
-    void drawChar(unsigned char c, color_t bg);
     void EditorLoop();
     void New();
     void setColor(color_t color);
@@ -172,7 +173,7 @@ private:
     bool copySelection();
     void paste();
 
-    int indexAtPoint(int x, int y) const;
+    int indexAtPoint(int x, int y, bool under = false) const;
     void handleMouse(const struct gfx_event& event);
     bool buttonPosition(int button, int* x) const;
     int buttonAt(int x, int y) const;
@@ -194,6 +195,8 @@ private:
     int lineStart(int index) const;
     int lineEnd(int index) const;
     int lineRowsFromStart(int line_start, int cols) const;
+    int lineColumn(int index) const;
+    int indexAtColumn(int line_start, int column) const;
 
     int gutterWidth() const;
     int textStartX() const;
@@ -280,8 +283,6 @@ private:
     int m_fileSize;
     int m_bufferHead;
     int m_bufferEdit;
-    int m_x;
-    int m_y;
     /* An edit was made since the last save or open. Unsaved changes are the undo history's to tell, while there is one */
     int m_dirty;
     /* The file is bigger than the buffer, which holds only its start: a save would cut it short, so it can't be edited */
@@ -313,6 +314,7 @@ private:
     bool m_undoing;
     /* The history ran out of memory, so edits go unrecorded until the text is replaced */
     bool m_undoFailed;
+    /* The column Up and Down keep, as lineColumn counts it, while they're pressed one after another; -1 for none */
     int m_preferredColumn;
     /* Where the selection started, which runs from here to the cursor; -1 for none */
     int m_selAnchor;

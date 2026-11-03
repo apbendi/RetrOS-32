@@ -39,6 +39,53 @@ static int clampInt(int value, int lo, int hi)
     return value;
 }
 
+/* The column after ch, drawn from column col of a row long enough: a tab ends at the next multiple of EDITOR_TAB_WIDTH, and anything else takes one column */
+static int columnAfter(unsigned char ch, int col)
+{
+    if (ch == '\t') {
+        return ((col / EDITOR_TAB_WIDTH) + 1) * EDITOR_TAB_WIDTH;
+    }
+    return col + 1;
+}
+
+/**
+ * Lays out text as the view draws it, in rows of cols columns, from a row's start. Drawing the text, the cursor, the
+ * selection, clicks and scrolling all go through it, so they agree on where every character is (#135).
+ * - place() puts each character after the one before, as wide as columnAfter makes it. One that would cross its row's
+ *   end starts the next row instead, unless it's the row's first, which is cut to fit.
+ * - A newline ends its row. It takes a column, for the selection to show, if its row has one left, so a newline after
+ *   a full row doesn't make a row of its own (#130).
+ */
+struct TextLayout {
+    int cols;
+    /* The character placed last: its row, the column it starts at, and the column after it */
+    int row;
+    int col;
+    int end;
+    bool newline;
+
+    TextLayout(int columns) : cols(columns < 1 ? 1 : columns), row(0), col(0), end(0), newline(false) {}
+
+    void place(unsigned char ch)
+    {
+        if (newline) {
+            row++;
+            col = 0;
+        } else {
+            col = end;
+        }
+
+        newline = ch == '\n';
+        int next = newline ? col + 1 : columnAfter(ch, col);
+        if (!newline && col > 0 && next > cols) {
+            row++;
+            col = 0;
+            next = columnAfter(ch, 0);
+        }
+        end = minInt(next, cols);
+    }
+};
+
 static int digitCount(int value)
 {
     int v = value;
@@ -441,8 +488,6 @@ Editor::Editor()
     m_fileSize = 0;
     m_bufferHead = 0;
     m_bufferEdit = 0;
-    m_x = 0;
-    m_y = 0;
     m_dirty = 0;
     m_readOnly = false;
     m_autoBraceCount = 0;
@@ -629,17 +674,52 @@ int Editor::lineEnd(int index) const
 int Editor::lineRowsFromStart(int line_start, int cols) const
 {
     int line_end = lineEnd(line_start);
-    int len = line_end - line_start;
+    int rows = 1;
 
-    if (len <= 0) {
-        return 1;
+    /* A row that starts before the line's end is the line's too */
+    int row_start = line_start;
+    int next = nextVisualRowStart(row_start, cols);
+    while (next > row_start && next < line_end) {
+        rows++;
+        row_start = next;
+        next = nextVisualRowStart(row_start, cols);
     }
 
-    if (cols < 1) {
-        cols = 1;
+    return rows;
+}
+
+/* The column index is at in its line, counted from 0 with the line laid out in one row, so a tab ends at a tab stop */
+int Editor::lineColumn(int index) const
+{
+    int limit = clampInt(index, 0, m_bufferHead);
+    int col = 0;
+
+    for (int i = lineStart(limit); i < limit; i++) {
+        col = columnAfter(m_textBuffer[i], col);
     }
 
-    return ((len - 1) / cols) + 1;
+    return col;
+}
+
+/**
+ * The boundary between characters in the line from line_start that's nearest column, as lineColumn counts them: in a
+ * tab, whichever of its sides is nearer, the one before it if they're as near. A shorter line's end
+ */
+int Editor::indexAtColumn(int line_start, int column) const
+{
+    int i = clampInt(line_start, 0, m_bufferHead);
+    int col = 0;
+
+    while (i < m_bufferHead && m_textBuffer[i] != '\n' && col < column) {
+        int next = columnAfter(m_textBuffer[i], col);
+        if (next > column && column - col <= next - column) {
+            break;
+        }
+        col = next;
+        i++;
+    }
+
+    return i;
 }
 
 int Editor::viewStartIndex(int cols) const
@@ -659,27 +739,12 @@ int Editor::viewStartIndex(int cols) const
 
 int Editor::nextVisualRowStart(int row_start_index, int cols) const
 {
-    if (cols < 1) {
-        cols = 1;
-    }
-
-    int idx = clampInt(row_start_index, 0, m_bufferHead);
-    if (idx >= m_bufferHead) {
-        return m_bufferHead;
-    }
-
-    int col = 0;
-    while (idx < m_bufferHead) {
-        unsigned char ch = m_textBuffer[idx];
-        if (ch == '\n') {
-            return idx + 1;
-        }
-
-        idx++;
-        col++;
-        if (col >= cols) {
-            /* As reDraw lays rows out: a newline after a full row ends it, rather than making a row of its own (#130) */
-            return idx < m_bufferHead && m_textBuffer[idx] == '\n' ? idx + 1 : idx;
+    TextLayout at(cols);
+    for (int i = clampInt(row_start_index, 0, m_bufferHead); i < m_bufferHead; i++) {
+        /* The first character on the next row, after a newline or as one that doesn't fit on this one */
+        at.place(m_textBuffer[i]);
+        if (at.row > 0) {
+            return i;
         }
     }
 
@@ -731,43 +796,27 @@ int Editor::rowsFrom(int index, int cols) const
 
 void Editor::cursorFromViewStart(int view_start, int cols, int* out_row, int* out_col) const
 {
-    int row = 0;
-    int col = 0;
-
     if (m_bufferEdit < view_start) {
         *out_row = -1;
         *out_col = 0;
         return;
     }
 
-    /* As reDraw lays rows out: a full row continues on the next only when a character other than a newline follows */
+    TextLayout at(cols);
     int limit = clampInt(m_bufferEdit, 0, m_bufferHead);
     for (int i = view_start; i < limit; i++) {
-        unsigned char ch = m_textBuffer[i];
-        if (ch == '\n') {
-            row++;
-            col = 0;
-            continue;
-        }
-
-        if (col >= cols) {
-            row++;
-            col = 0;
-        }
-        col++;
+        at.place(m_textBuffer[i]);
     }
 
     /**
-     * After a full row, the cursor is on the next character, at the start of the next row. Before a newline or the
-     * end of the text, it stays past the row's end, at column cols, where reDraw draws it in the right margin
+     * The cursor is where the character after it is, which after a full row, or before a tab that doesn't fit, is the
+     * next row's start. A newline, or the end of the text, stays on the row, so after a full row the cursor is past
+     * its end, at column cols, where reDraw draws it in the right margin
      */
-    if (col >= cols && limit < m_bufferHead && m_textBuffer[limit] != '\n') {
-        row++;
-        col = 0;
-    }
+    at.place(limit < m_bufferHead ? m_textBuffer[limit] : '\n');
 
-    *out_row = row;
-    *out_col = col;
+    *out_row = at.row;
+    *out_col = at.col;
 }
 
 void Editor::setScrollFromIndex(int index, int cols)
@@ -1168,33 +1217,21 @@ void Editor::drawSelection(int view_start, int cols, int rows, int text_x)
         run_row = -1;
     };
 
-    int row = 0;
-    int col = 0;
-    for (int i = view_start; i < end && row < rows; i++) {
-        unsigned char ch = m_textBuffer[i];
-        if (ch != '\n' && col >= cols) {
-            row++;
-            col = 0;
-            if (row >= rows) {
-                break;
-            }
+    TextLayout at(cols);
+    for (int i = view_start; i < end; i++) {
+        at.place(m_textBuffer[i]);
+        if (at.row >= rows) {
+            break;
         }
 
-        /* A newline after a full row has no cell left on it */
-        if (i >= start && col < cols) {
-            if (run_row != row) {
+        /* A newline after a full row has no cell left on it, so its run is empty, and drawRun leaves it out */
+        if (i >= start) {
+            if (run_row != at.row) {
                 drawRun();
-                run_row = row;
-                run_from = col;
+                run_row = at.row;
+                run_from = at.col;
             }
-            run_to = col + 1;
-        }
-
-        if (ch == '\n') {
-            row++;
-            col = 0;
-        } else {
-            col++;
+            run_to = at.end;
         }
     }
     drawRun();
@@ -1202,10 +1239,11 @@ void Editor::drawSelection(int view_start, int cols, int rows, int text_x)
 
 /**
  * The boundary between characters nearest x, y in the window's content, with the text laid out as reDraw draws it.
- * Above the text is its first row and below it its last. Left of the text is a row's start, and past a row's end is
- * its end. Past the text's last row is the text's end.
+ * With under, the one before the character under x instead, for a double click. Above the text is its first row and
+ * below it its last. Left of the text is a row's start, and past a row's end is its end. Past the text's last row is
+ * the text's end.
  */
-int Editor::indexAtPoint(int x, int y) const
+int Editor::indexAtPoint(int x, int y, bool under) const
 {
     int cols = visibleColumns();
     int rows = visibleLines();
@@ -1215,35 +1253,22 @@ int Editor::indexAtPoint(int x, int y) const
         row = rows - 1;
     }
 
-    /* The nearer edge of the character under x */
     int dx = x - textStartX();
-    int col = dx < 0 ? 0 : (dx + 4) / 8;
-    if (col > cols) {
-        col = cols;
-    }
 
-    int r = 0;
-    int c = 0;
+    TextLayout at(cols);
     for (int i = viewStartIndex(cols); i < m_bufferHead; i++) {
         unsigned char ch = m_textBuffer[i];
-        if (ch != '\n' && c >= cols) {
-            r++;
-            c = 0;
-        }
+        at.place(ch);
 
-        /* Past the end of a full row is the start of the next */
-        if (r > row || (r == row && c >= col)) {
+        /* Past the end of a row that the next character doesn't fit on is the start of the next */
+        if (at.row > row) {
             return i;
         }
 
-        if (ch == '\n') {
-            if (r == row) {
-                return i;
-            }
-            r++;
-            c = 0;
-        } else {
-            c++;
+        /* Before the character when x is left of its middle, or with under, left of its end. A newline is its row's end */
+        int edge = under ? at.end * 8 : (at.col + at.end) * 4;
+        if (at.row == row && (ch == '\n' || dx < edge)) {
+            return i;
         }
     }
 
@@ -1320,7 +1345,7 @@ void Editor::handleMouse(const struct gfx_event& event)
 
         /* A double click selects the word under the mouse, and a triple its line. It's no drag, so a shaking mouse can't undo it */
         if (GFX_EVENT_CLICKS(event.flags) >= 2) {
-            selectAround(indexAtPoint(x - 4, y), GFX_EVENT_CLICKS(event.flags) == 3);
+            selectAround(indexAtPoint(x, y, true), GFX_EVENT_CLICKS(event.flags) == 3);
             m_dragging = false;
             m_dragScroll = 0;
             break;
@@ -1456,34 +1481,33 @@ void Editor::reDraw(int from, int to)
 
     drawSelection(view_start, cols, draw_rows, text_x);
 
-    int row = 0;
-    int col = 0;
     if (draw_rows > 0) {
         row_lines[0] = line_no;
     }
 
     setColor(COLOR_TEXT);
 
-    for (int i = view_start; i < m_bufferHead && row < draw_rows; i++) {
+    TextLayout at(cols);
+    for (int i = view_start; i < m_bufferHead; i++) {
         unsigned char ch = m_textBuffer[i];
+        at.place(ch);
+        if (at.row >= draw_rows) {
+            break;
+        }
 
+        /* The row after a newline is the next line's, even with nothing on it */
         if (ch == '\n') {
-            row++;
-            col = 0;
             line_no++;
-            if (row < draw_rows) {
-                row_lines[row] = line_no;
+            if (at.row + 1 < draw_rows) {
+                row_lines[at.row + 1] = line_no;
             }
             continue;
         }
+        row_lines[at.row] = line_no;
 
-        if (col >= cols) {
-            row++;
-            col = 0;
-            if (row >= draw_rows) {
-                break;
-            }
-            row_lines[row] = line_no;
+        /* A tab is blank space, with the selection's background where it's selected */
+        if (ch == '\t') {
+            continue;
         }
 
         /* A word is letters, digits and _, so a keyword at the start of a longer name, like int32_t, isn't one (#142) */
@@ -1499,8 +1523,7 @@ void Editor::reDraw(int from, int to)
             ch = '?';
         }
 
-        gfx_draw_char(text_x + (col * 8), TEXT_TOP + (row * TEXT_ROW_HEIGHT) + TEXT_CHAR_Y, ch, m_textColor);
-        col++;
+        gfx_draw_char(text_x + (at.col * 8), TEXT_TOP + (at.row * TEXT_ROW_HEIGHT) + TEXT_CHAR_Y, ch, m_textColor);
     }
 
     drawLineNumbers(row_lines, draw_rows);
@@ -1578,43 +1601,6 @@ void Editor::setColor(color_t color)
     m_textColor = color;
 }
 
-void Editor::drawChar(unsigned char c, color_t bg)
-{
-    int cols = visibleColumns();
-    int rows = visibleLines();
-
-    if (cols < 1 || rows < 1) {
-        return;
-    }
-
-    if (c == '\n') {
-        m_x = 0;
-        m_y++;
-        return;
-    }
-
-    if (m_x >= cols) {
-        m_x = 0;
-        m_y++;
-    }
-
-    if (m_y < 0 || m_y >= rows) {
-        return;
-    }
-
-    int drawX = textStartX() + (m_x * 8);
-    int drawY = TEXT_TOP + (m_y * TEXT_ROW_HEIGHT);
-
-    gfx_draw_rectangle(drawX, drawY, 8, TEXT_ROW_HEIGHT, bg);
-
-    if (c < 32 || c > 126) {
-        c = '?';
-    }
-
-    gfx_draw_char(drawX, drawY + TEXT_CHAR_Y, c, m_textColor);
-    m_x++;
-}
-
 void Editor::highlightSyntax(unsigned char* start)
 {
     if (start == nullptr) {
@@ -1678,20 +1664,11 @@ bool Editor::hasUnsavedChanges() const
     return m_dirty != 0;
 }
 
+/* The cursor's line and column, from 1, for the status line. A tab ends at a tab stop, as in a desktop editor */
 void Editor::getCursorLineCol(int& line, int& col) const
 {
-    line = 1;
-    col = 1;
-
-    int limit = clampInt(m_bufferEdit, 0, m_bufferHead);
-    for (int i = 0; i < limit; i++) {
-        if (m_textBuffer[i] == '\n') {
-            line++;
-            col = 1;
-        } else {
-            col++;
-        }
-    }
+    line = lineNumberAtIndex(m_bufferEdit);
+    col = lineColumn(m_bufferEdit) + 1;
 }
 
 void Editor::Lex()
@@ -3341,10 +3318,9 @@ void Editor::EditorLoop()
 bool Editor::cursorDown()
 {
     int currentStart = lineStart(m_bufferEdit);
-    int currentCol = m_bufferEdit - currentStart;
 
     if (m_preferredColumn < 0) {
-        m_preferredColumn = currentCol;
+        m_preferredColumn = lineColumn(m_bufferEdit);
     }
 
     int currentEnd = lineEnd(currentStart);
@@ -3352,11 +3328,7 @@ bool Editor::cursorDown()
         return false;
     }
 
-    int nextStart = currentEnd + 1;
-    int nextEnd = lineEnd(nextStart);
-    int nextLen = nextEnd - nextStart;
-
-    m_bufferEdit = nextStart + minInt(m_preferredColumn, nextLen);
+    m_bufferEdit = indexAtColumn(currentEnd + 1, m_preferredColumn);
     return true;
 }
 
@@ -3364,21 +3336,16 @@ bool Editor::cursorDown()
 bool Editor::cursorUp()
 {
     int currentStart = lineStart(m_bufferEdit);
-    int currentCol = m_bufferEdit - currentStart;
 
     if (m_preferredColumn < 0) {
-        m_preferredColumn = currentCol;
+        m_preferredColumn = lineColumn(m_bufferEdit);
     }
 
     if (currentStart == 0) {
         return false;
     }
 
-    int prevEnd = currentStart - 1;
-    int prevStart = lineStart(prevEnd);
-    int prevLen = prevEnd - prevStart;
-
-    m_bufferEdit = prevStart + minInt(m_preferredColumn, prevLen);
+    m_bufferEdit = indexAtColumn(lineStart(currentStart - 1), m_preferredColumn);
     return true;
 }
 
@@ -3624,7 +3591,7 @@ void Editor::handleKey(unsigned char c, int modifiers)
 
     default:
         if (c == '\t') {
-            for (int n = 0; n < 4; n++) {
+            for (int n = 0; n < EDITOR_TAB_WIDTH; n++) {
                 if (!ropeInsertChar(m_bufferEdit, ' ')) {
                     break;
                 }
