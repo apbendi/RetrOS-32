@@ -56,6 +56,9 @@ public:
         gfx_load_icon("file_16", &fileIcon);
 
         scrollable = false;
+        boxLeft = 8;
+        boxTop = 12;
+        titled = true;
     }
 
     ~TreeView() {
@@ -76,9 +79,11 @@ public:
 
         /* Draw the tree view background */
         window->drawContouredRect(x, y, width, height);
-        window->drawContouredBox(8, 12, width - 16, height-20, COLOR_WHITE);
+        window->drawContouredBox(boxLeft, boxTop, width - boxLeft - 8, height - boxTop - 8, COLOR_WHITE);
 
-        window->drawFormatText(2, 2, COLOR_BLACK, "Tree View");
+        if (titled) {
+            window->drawFormatText(2, 2, COLOR_BLACK, "Tree View");
+        }
         /* Rows count from the first shown, so those scrolled above it are negative */
         int row = -firstRow();
         int max_rows = visibleRows();
@@ -95,6 +100,16 @@ public:
      */
     void setScrollable(bool on) {
         scrollable = on;
+    }
+
+    /**
+     * Where the box's top left corner is, 8 pixels in and 12 down unless its owner wants room for something of its own,
+     * and whether the "Tree View" title is drawn above it. The rows move with the box
+     */
+    void setBox(int left, int top, bool title) {
+        boxLeft = left;
+        boxTop = top;
+        titled = title;
     }
 
     /**
@@ -167,7 +182,7 @@ public:
             return nullptr;
         }
 
-        if (y < 16 || y >= (height - 8)) {
+        if (y < rowY(0) || y >= (height - 8)) {
             return nullptr;
         }
 
@@ -176,7 +191,7 @@ public:
             return nullptr;
         }
 
-        int shown_row = (y / 16) - 1;
+        int shown_row = (y - rowY(0)) / 16;
         if (shown_row < 0 || shown_row >= max_rows) {
             return nullptr;
         }
@@ -224,6 +239,10 @@ private:
     /* Whether the tree has a scroll bar; its first is the first row shown */
     bool scrollable;
     ScrollBar scrollBar;
+    /* The box's top left corner, and whether the title is drawn above it */
+    int boxLeft;
+    int boxTop;
+    bool titled;
 
     int firstRow() const
     {
@@ -241,8 +260,20 @@ private:
         if (!scrollable) {
             return;
         }
-        scrollBar.place(width - 9 - SCROLLBAR_WIDTH, 13, height - 22);
+        scrollBar.place(width - 9 - SCROLLBAR_WIDTH, boxTop + 1, height - boxTop - 10);
         scrollBar.set(countRows(&root), visibleRows(), scrollBar.first());
+    }
+
+    /* Where a row starts down the tree, shown rows below the first shown: 4 pixels below the box's top, then 16 a row */
+    int rowY(int shown) const
+    {
+        return boxTop + 4 + (shown * 16);
+    }
+
+    /* Where a row's icon starts across the tree, depth levels in, the top level's 8 pixels inside the box's left side */
+    int rowX(int depth) const
+    {
+        return boxLeft + 8 + ((depth - 1) * 16);
     }
 
     /* Where rows end, at the scroll bar when it's shown, or else the box's right border: the first x past them */
@@ -344,7 +375,8 @@ private:
 
     int visibleRows() const
     {
-        int usable_height = height - 24;
+        /* The height rows may take, from the first row's top down to the box's bottom border, as drawRow lets them */
+        int usable_height = height - boxTop - 12;
         if (usable_height < 16) {
             return 0;
         }
@@ -569,8 +601,8 @@ private:
      */
     bool drawRow(struct TreeNode* child, int depth, int current_row, int parent_row, const char* highlight)
     {
-        int current_y = (current_row + 1) * 16;
-        int current_x = depth * 16;
+        int current_y = rowY(current_row);
+        int current_x = rowX(depth);
         int right = rowsRight();
 
         if (current_y + 15 >= height - 8) {
@@ -605,8 +637,8 @@ private:
 
         /* draw line from parent to current, from the box's top when the parent is scrolled above it */
         if (depth > 1) {
-            int parent_y = parent_row >= 0 ? (parent_row + 1) * 16 + 8 : 13;
-            int branch_x = (depth - 1) * 16 + 8;
+            int parent_y = parent_row >= 0 ? rowY(parent_row) + 8 : boxTop + 1;
+            int branch_x = rowX(depth - 1) + 8;
             if (branch_x >= right) {
                 branch_x = right - 1;
             }
@@ -634,7 +666,7 @@ private:
             );
         }
 
-        drawClippedText(depth * 16 + 18, current_y + 5, name);
+        drawClippedText(current_x + 18, current_y + 5, name);
         return true;
     }
 };

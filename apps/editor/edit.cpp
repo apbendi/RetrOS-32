@@ -506,8 +506,13 @@ Editor::Editor()
     m_pressedShown = false;
     m_treeWidth = TREE_VIEW_WIDTH;
     m_windowWidth = EDITOR_DEFAULT_WINDOW_WIDTH;
+    m_treeCollapsed = false;
+    m_treeOpenWidth = TREE_VIEW_WIDTH;
     m_resizingTree = false;
     m_treeGrabX = 0;
+    m_togglePressed = false;
+    m_toggleShown = false;
+    m_mouseHeld = false;
     m_pressOnTree = false;
     m_keepStatus = 0;
     scrollY = 0;
@@ -529,6 +534,7 @@ Editor::Editor()
     treeView = new TreeView(0, 0, m_treeWidth, c_height);
     if (treeView != nullptr) {
         treeView->setScrollable(true);
+        treeView->setBox(EDITOR_TREE_TOGGLE_X, EDITOR_TREE_BOX_TOP, false);
     }
 
     /* A file that can't be read gives a placeholder, so no button is ever blank */
@@ -1124,15 +1130,24 @@ bool Editor::buttonMouse(const struct gfx_event& event, int* clicked)
     return true;
 }
 
-/* The tree, and the grip on its right border: three short lines in the middle of the gray between its box and its edge */
+/**
+ * The tree, the grip on its right border, three short lines in the middle of the gray between its box and its edge, and
+ * its toggle. Collapsed, it's a bar of the same gray with the toggle at its top
+ */
 void Editor::drawTreePane()
 {
-    treeView->drawTree(this, m_currentPath);
+    if (m_treeCollapsed) {
+        drawContouredRect(0, 0, m_treeWidth, c_height);
+    } else {
+        treeView->drawTree(this, m_currentPath);
 
-    int y = (c_height - EDITOR_TREE_GRIP_LENGTH) / 2;
-    for (int line = 0; line < 3; line++) {
-        gfx_draw_rectangle(m_treeWidth - 7 + (line * 2), y, 1, EDITOR_TREE_GRIP_LENGTH, COLOR_BAR_SHADOW);
+        int y = (c_height - EDITOR_TREE_GRIP_LENGTH) / 2;
+        for (int line = 0; line < 3; line++) {
+            gfx_draw_rectangle(m_treeWidth - 7 + (line * 2), y, 1, EDITOR_TREE_GRIP_LENGTH, COLOR_BAR_SHADOW);
+        }
     }
+
+    drawTreeToggle(m_togglePressed && m_toggleShown);
 }
 
 /* width, kept between EDITOR_TREE_MIN_WIDTH and what leaves the pane right of the tree its least, EDITOR_MIN_RIGHT_PANE_WIDTH */
@@ -1173,7 +1188,8 @@ bool Editor::treeResizeMouse(const struct gfx_event& event)
     int x = (int16_t)event.data;
 
     if (event.event == GFX_EVENT_MOUSE_DOWN) {
-        if (x < m_treeWidth - EDITOR_TREE_GRAB_LEFT || x >= m_treeWidth + EDITOR_TREE_GRAB_RIGHT) {
+        /* The collapsed tree's bar has no border to drag */
+        if (m_treeCollapsed || x < m_treeWidth - EDITOR_TREE_GRAB_LEFT || x >= m_treeWidth + EDITOR_TREE_GRAB_RIGHT) {
             return false;
         }
         m_resizingTree = true;
@@ -1190,6 +1206,100 @@ bool Editor::treeResizeMouse(const struct gfx_event& event)
 
     if (event.event == GFX_EVENT_MOUSE_UP) {
         m_resizingTree = false;
+    }
+    return true;
+}
+
+/**
+ * Collapses the tree to a bar at the window's left, giving the pane right of it the rest of the window, or opens it at
+ * the width it had, and redraws them
+ */
+void Editor::setTreeCollapsed(bool collapsed)
+{
+    if (collapsed == m_treeCollapsed) {
+        return;
+    }
+
+    m_treeCollapsed = collapsed;
+    if (collapsed) {
+        m_treeOpenWidth = m_treeWidth;
+        m_treeWidth = EDITOR_TREE_COLLAPSED_WIDTH;
+    } else {
+        /* applyResolution narrows it, if the window is now too narrow for it */
+        m_treeWidth = m_treeOpenWidth;
+    }
+    applyResolution(m_windowWidth, c_height);
+
+    drawTreePane();
+    reDrawHeader();
+    reDraw(0, m_bufferHead);
+}
+
+/* Whether x, y in the window is on the tree's toggle: its button while the tree is open, or anywhere on its bar while it's collapsed */
+bool Editor::treeToggleAt(int x, int y) const
+{
+    if (m_treeCollapsed) {
+        return x >= 0 && x < m_treeWidth && y >= 0 && y < c_height;
+    }
+
+    return x >= EDITOR_TREE_TOGGLE_X && x < EDITOR_TREE_TOGGLE_X + EDITOR_TREE_TOGGLE_WIDTH &&
+           y >= EDITOR_TREE_TOGGLE_Y && y < EDITOR_TREE_TOGGLE_Y + EDITOR_TREE_TOGGLE_HEIGHT;
+}
+
+/**
+ * Draws the tree's toggle raised, or pushed in while it's pressed, with its arrow pointing the way a click moves the
+ * tree's edge: left while it's open, and right while it's collapsed
+ */
+void Editor::drawTreeToggle(bool pressed)
+{
+    int x = EDITOR_TREE_TOGGLE_X;
+    int y = EDITOR_TREE_TOGGLE_Y;
+    gfx_draw_bevel(x, y, EDITOR_TREE_TOGGLE_WIDTH, EDITOR_TREE_TOGGLE_HEIGHT, pressed);
+
+    /* On the face inside the bevel's edges, its 7-pixel column filling the face's height, a pixel down and right when pressed */
+    int shift = pressed ? 1 : 0;
+    int left = x + 3 + shift;
+    int middle = y + ((EDITOR_TREE_TOGGLE_HEIGHT - 2) / 2) + shift;
+    for (int column = 0; column < EDITOR_TREE_ARROW_COLUMNS; column++) {
+        int half = m_treeCollapsed ? EDITOR_TREE_ARROW_COLUMNS - 1 - column : column;
+        gfx_draw_rectangle(left + column, middle - half, 1, (half * 2) + 1, COLOR_BLACK);
+    }
+}
+
+/**
+ * Presses, drags and releases for the tree's toggle, as buttonMouse does for the header's buttons: a press on it draws it
+ * pushed in while the mouse stays over it, and a release over it clicks it.
+ * @return whether the event was the toggle's. clicked gets whether it was clicked
+ */
+bool Editor::treeToggleMouse(const struct gfx_event& event, bool* clicked)
+{
+    int x = (int16_t)event.data;
+    int y = (int16_t)event.data2;
+    *clicked = false;
+
+    if (event.event == GFX_EVENT_MOUSE_DOWN) {
+        m_togglePressed = treeToggleAt(x, y);
+        if (!m_togglePressed) {
+            return false;
+        }
+        m_toggleShown = true;
+        drawTreeToggle(true);
+        return true;
+    }
+
+    if (!m_togglePressed) {
+        return false;
+    }
+
+    bool over = treeToggleAt(x, y);
+    if (event.event == GFX_EVENT_MOUSE_UP) {
+        *clicked = over;
+        m_togglePressed = false;
+        m_toggleShown = false;
+        drawTreeToggle(false);
+    } else if (over != m_toggleShown) {
+        m_toggleShown = over;
+        drawTreeToggle(over);
     }
     return true;
 }
@@ -3004,9 +3114,11 @@ bool Editor::Save()
 
 void Editor::applyResolution(int window_width, int window_height)
 {
-    /* The tree keeps its width, unless the window is now too narrow for it */
+    /* The tree keeps its width, unless the window is now too narrow for it. Its collapsed bar always fits */
     m_windowWidth = window_width;
-    m_treeWidth = clampTreeWidth(m_treeWidth);
+    if (!m_treeCollapsed) {
+        m_treeWidth = clampTreeWidth(m_treeWidth);
+    }
 
     c_width = window_width - m_treeWidth;
     if (c_width < EDITOR_MIN_RIGHT_PANE_WIDTH) {
@@ -3018,7 +3130,8 @@ void Editor::applyResolution(int window_width, int window_height)
         c_height = EDITOR_MIN_HEIGHT;
     }
 
-    if (treeView != nullptr) {
+    /* Collapsed, the tree keeps its size, and gets the window's when it's opened */
+    if (treeView != nullptr && !m_treeCollapsed) {
         treeView->resize(m_treeWidth, c_height);
     }
 
@@ -3102,6 +3215,7 @@ static const char* const editor_help[] = {
     "Ctrl+S: Save file",
     "Ctrl+N: New file",
     "Ctrl+H: Show this help",
+    "Ctrl+B: Hide/show the file tree",
     "F2/F3: Scroll up/down",
     "",
     "Arrow keys: Move cursor",
@@ -3244,15 +3358,30 @@ void Editor::EditorLoop()
         case GFX_EVENT_MOUSE_DOWN:
         case GFX_EVENT_MOUSE_MOVE:
         case GFX_EVENT_MOUSE_UP: {
+            m_mouseHeld = event.event != GFX_EVENT_MOUSE_UP;
             if (event.event == GFX_EVENT_MOUSE_DOWN) {
                 m_pressOnTree = (int16_t)event.data < m_treeWidth - EDITOR_TREE_GRAB_LEFT;
             }
+
+            /* The tree's toggle, which presses Ctrl+B when it's clicked. A press on it isn't on a row either */
+            bool toggled = false;
+            if (treeToggleMouse(event, &toggled)) {
+                m_pressOnTree = false;
+                if (toggled) {
+                    putChar(CTRLB);
+                }
+                break;
+            }
+
             if (treeResizeMouse(event)) {
                 break;
             }
 
-            /* The tree's scroll bar. A press on it isn't on a row, so the click after its release opens nothing */
-            int tree_scroll = treeView->mouse(event);
+            /**
+             * The tree's scroll bar. A press on it isn't on a row, so the click after its release opens nothing. While
+             * the tree is collapsed, the bar is still placed where it was, over the text, so it gets nothing
+             */
+            int tree_scroll = m_treeCollapsed ? 0 : treeView->mouse(event);
             if (tree_scroll & SCROLLBAR_TAKEN) {
                 m_pressOnTree = false;
                 if (tree_scroll & SCROLLBAR_SCROLLED) {
@@ -3578,6 +3707,12 @@ void Editor::handleKey(unsigned char c, int modifiers)
         m_preferredColumn = -1;
         Help();
         break;
+
+    case CTRLB:
+        if (!m_mouseHeld) {
+            setTreeCollapsed(!m_treeCollapsed);
+        }
+        return;
 
     case CTRLN:
         m_preferredColumn = -1;

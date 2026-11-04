@@ -27,6 +27,21 @@
 /* The grip on the tree's border that shows it can be dragged: three lines this long */
 #define EDITOR_TREE_GRIP_LENGTH 12
 /**
+ * The tree's toggle, which collapses it to a bar at the window's left and opens it again, as Ctrl+B does: a button this
+ * wide and tall, this far in from the window's left and top. It's in the same place either way, so a second click undoes
+ * the first. In place of TreeView's title, it's above the tree's white box, whose left side it lines up with, and which
+ * starts as far below it as it is below the top
+ */
+#define EDITOR_TREE_TOGGLE_X 4
+#define EDITOR_TREE_TOGGLE_Y 4
+#define EDITOR_TREE_TOGGLE_WIDTH 12
+#define EDITOR_TREE_TOGGLE_HEIGHT 10
+#define EDITOR_TREE_BOX_TOP (EDITOR_TREE_TOGGLE_Y + EDITOR_TREE_TOGGLE_HEIGHT + EDITOR_TREE_TOGGLE_Y)
+/* The arrow on the toggle: columns of 1, 3, 5 and 7 pixels, like a scroll bar's arrow on its side */
+#define EDITOR_TREE_ARROW_COLUMNS 4
+/* The collapsed tree's bar, the whole of which takes clicks: the toggle at its top, with as much of the bar either side */
+#define EDITOR_TREE_COLLAPSED_WIDTH ((2 * EDITOR_TREE_TOGGLE_X) + EDITOR_TREE_TOGGLE_WIDTH)
+/**
  * The header's buttons: squares, each with an icon from /sysutil/icons, with EDITOR_BUTTON_PAD of the bar above and
  * below them. New's left side is EDITOR_BUTTON_MARGIN in from the bar's left edge, and Help's right side as far in
  * from its right edge
@@ -185,6 +200,10 @@ private:
     int clampTreeWidth(int width) const;
     void setTreeWidth(int width);
     bool treeResizeMouse(const struct gfx_event& event);
+    void setTreeCollapsed(bool collapsed);
+    bool treeToggleAt(int x, int y) const;
+    void drawTreeToggle(bool pressed);
+    bool treeToggleMouse(const struct gfx_event& event, bool* clicked);
     void selectAround(int index, bool line);
     void dragScrollTick();
 
@@ -259,12 +278,26 @@ private:
      * whether or not it's shown, so the text doesn't rewrap when it comes and goes
      */
     ScrollBar m_textBar;
-    /* The tree's width, and the window's, which the tree and the pane right of it share */
+    /**
+     * The tree's width, or while it's collapsed, its bar's, EDITOR_TREE_COLLAPSED_WIDTH, and the window's, which the
+     * tree and the pane right of it share. m_treeOpenWidth is the width the tree had when it was collapsed, which it
+     * gets back when it's opened, if the window still has room
+     */
     int m_treeWidth;
     int m_windowWidth;
+    bool m_treeCollapsed;
+    int m_treeOpenWidth;
     /* Set from a press on the tree's border until its release. m_treeGrabX is where the press was, from the border */
     bool m_resizingTree;
     int m_treeGrabX;
+    /* Set from a press on the tree's toggle until its release. It's drawn pressed while the mouse is over it, m_toggleShown */
+    bool m_togglePressed;
+    bool m_toggleShown;
+    /**
+     * Set from any press until its release. Ctrl+B does nothing meanwhile, so a drag on the tree, its border or its
+     * scroll bar isn't left half done, with the tree's scroll bar thinking it's still pressed
+     */
+    bool m_mouseHeld;
     /**
      * The last press was on the tree, not its border. A click comes after every release, where the mouse is, and the
      * tree picks its row by height alone, so it takes only clicks whose press was on it too: a drag from the text, a
