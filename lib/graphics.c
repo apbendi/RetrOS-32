@@ -247,6 +247,11 @@ int gfx_get_event(struct gfx_event* event, gfx_event_flag_t flags)
 	return gfx_draw_syscall(GFX_EVEN_LOOP_OPT, event, flags);
 }
 
+int gfx_end_frame(void)
+{
+	return gfx_draw_syscall(GFX_END_FRAME_OPT, NULL, 0);
+}
+
 #define GFX_MAX_FMT 50
 int gfx_draw_format_text(int x, int y, unsigned char color, const char* fmt, ...)
 {

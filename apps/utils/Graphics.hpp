@@ -125,6 +125,15 @@ public:
         gfx_set_header(header);
     }
 
+    /**
+     * Shows what's been drawn since the last event read, without reading an event, as while the app loads (#210).
+     * Waits until it's shown, up to GFX_PRESENT_WAIT_MS (gfx_end_frame)
+     */
+    void endFrame()
+    {
+        gfx_end_frame();
+    }
+
 private:
 	
 };
