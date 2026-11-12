@@ -1139,6 +1139,24 @@ static bool linesKeptRight(Editor* e)
     return before == e->m_anchorLine;
 }
 
+/**
+ * Whether the rows kept for the scroll bar are right, if they're counted (#213 step 5): the whole text's, and the row
+ * anchor's, which has to be a line's start with the rows above it, against rowsFrom, which counts them in full
+ */
+static bool rowsKeptRight(Editor* e)
+{
+    int cols = e->m_rowsCols;
+    if (cols == 0) {
+        return true;
+    }
+    int at = e->m_rowAnchorIndex;
+    if (at < 0 || at > e->m_bufferHead || (at > 0 && e->m_textBuffer[at - 1] != '\n')) {
+        return false;
+    }
+    int total = e->rowsFrom(0, cols);
+    return e->m_totalRows == total && e->m_rowAnchorRows == total - e->rowsFrom(at, cols);
+}
+
 /* The text as it is, for comparing with a model */
 static std::string textOf(Editor* e)
 {
@@ -1265,6 +1283,7 @@ static void testUndoAllRandom(std::mt19937& rng, int trials)
             }
             CHECK(e->m_bufferHead <= most && e->m_textBuffer[e->m_bufferHead] == 0, "trial %d: %d characters, or no 0 after them", trial, e->m_bufferHead);
             CHECK(linesKeptRight(e), "trial %d, edit %d: %d lines kept, anchor line %d at %d", trial, i, e->m_lineCount, e->m_anchorLine, e->m_anchorIndex);
+            CHECK(rowsKeptRight(e), "trial %d, edit %d: %d rows kept at %d columns, row anchor %d rows at %d", trial, i, e->m_totalRows, e->m_rowsCols, e->m_rowAnchorRows, e->m_rowAnchorIndex);
         }
         std::string after = textOf(e);
         if (e->m_undoFailed || e->m_undoDropped > 0) {
@@ -1275,6 +1294,7 @@ static void testUndoAllRandom(std::mt19937& rng, int trials)
         for (int guard = 3 * edits + 2; e->m_undoAt > 0 && guard > 0; guard--) {
             press(e, CTRLZ);
             CHECK(linesKeptRight(e), "trial %d, undoing: %d lines kept, anchor line %d at %d", trial, e->m_lineCount, e->m_anchorLine, e->m_anchorIndex);
+            CHECK(rowsKeptRight(e), "trial %d, undoing: %d rows kept, row anchor %d rows at %d", trial, e->m_totalRows, e->m_rowAnchorRows, e->m_rowAnchorIndex);
         }
         press(e, CTRLZ);
         press(e, CTRLZ);
@@ -1282,12 +1302,60 @@ static void testUndoAllRandom(std::mt19937& rng, int trials)
         for (int guard = 3 * edits + 2; e->m_undoAt < e->m_undoUsed && guard > 0; guard--) {
             press(e, CTRLY);
             CHECK(linesKeptRight(e), "trial %d, redoing: %d lines kept, anchor line %d at %d", trial, e->m_lineCount, e->m_anchorLine, e->m_anchorIndex);
+            CHECK(rowsKeptRight(e), "trial %d, redoing: %d rows kept, row anchor %d rows at %d", trial, e->m_totalRows, e->m_rowAnchorRows, e->m_rowAnchorIndex);
         }
         press(e, CTRLY);
         press(e, CTRLY);
         CHECK(textOf(e) == after, "trial %d: redoing them didn't give the edited text back", trial);
     }
     printf("Undo all: %d of %d sessions undone and redone in full\n", complete, trials);
+    delete e;
+}
+
+/**
+ * scrollToRow, which the scroll bar's drags call, against how it used to find the row: a row at a time from the text's
+ * start. The view must end up the same, on random texts, widths, rows and row anchors
+ */
+static void testScrollToRow(std::mt19937& rng, int trials)
+{
+    Editor* e = new Editor();
+    for (int trial = 0; trial < trials; trial++) {
+        std::string text;
+        int size = (int)(rng() % 3000);
+        for (int i = 0; i < size; i++) {
+            text += "ab \t\n\n"[rng() % 6];
+            if (rng() % 50 == 0) {
+                text += std::string(rng() % 120, 'x');
+            }
+        }
+        setText(e, text);
+        e->applyResolution(200 + (int)(rng() % 800), EDITOR_MIN_HEIGHT + (int)(rng() % 500));
+        int cols = e->visibleColumns();
+        int total = e->rowsFrom(0, cols);
+        int row = (int)(rng() % (total + 5)) - 2;
+
+        /* The row anchor somewhere, as an earlier lookup would leave it */
+        e->rowsBeforeLine(e->lineStart((int)(rng() % (e->m_bufferHead + 1))), cols);
+
+        int index = 0;
+        for (int r = 0; r < row; r++) {
+            int next = e->nextVisualRowStart(index, cols);
+            if (next <= index) {
+                break;
+            }
+            index = next;
+        }
+        e->setScrollFromIndex(index, cols);
+        int want_y = e->scrollY;
+        int want_wrap = e->m_scrollWrap;
+
+        e->scrollY = 0;
+        e->m_scrollWrap = 0;
+        e->scrollToRow(row);
+        CHECK(e->scrollY == want_y && e->m_scrollWrap == want_wrap, "trial %d: row %d of %d: view at line %d, row %d, want %d, %d",
+              trial, row, total, e->scrollY, e->m_scrollWrap, want_y, want_wrap);
+        CHECK(rowsKeptRight(e), "trial %d: rows kept wrong after scrollToRow", trial);
+    }
     delete e;
 }
 
@@ -1306,6 +1374,7 @@ int main()
     testFindLoop();
     testUndoAtLimit();
     testUndoAllRandom(rng, 120);
+    testScrollToRow(rng, 3000);
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures != 0;
 }

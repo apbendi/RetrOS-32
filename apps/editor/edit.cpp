@@ -518,6 +518,10 @@ Editor::Editor()
     m_lineCount = 1;
     m_anchorLine = 0;
     m_anchorIndex = 0;
+    m_rowsCols = 0;
+    m_totalRows = 1;
+    m_rowAnchorIndex = 0;
+    m_rowAnchorRows = 0;
     m_prompt = EDITOR_PROMPT_NONE;
     m_promptText[0] = 0;
     m_promptLen = 0;
@@ -702,6 +706,7 @@ void Editor::resetLines()
     m_lineCount = 1 + countNewlines(0, m_bufferHead);
     m_anchorLine = 0;
     m_anchorIndex = 0;
+    m_rowsCols = 0;
 }
 
 int Editor::lineStart(int index) const
@@ -850,6 +855,117 @@ int Editor::rowsFrom(int index, int cols) const
         rows++;
     }
     return rows;
+}
+
+/**
+ * The rows of the line starting at line_start: 1, and one more for each row that starts before its newline, or the
+ * text's end. Only a newline ends a line, as for TextLayout, unlike lineEnd, which also stops at a 0
+ */
+int Editor::rowsOfLine(int line_start, int cols) const
+{
+    int rows = 1;
+    int i = line_start;
+    while (true) {
+        int next = nextVisualRowStart(i, cols);
+        if (next <= i || next >= m_bufferHead || m_textBuffer[next - 1] == '\n') {
+            return rows;
+        }
+        rows++;
+        i = next;
+    }
+}
+
+/* Where the line after the one starting at line_start starts, or -1 if it's the last */
+int Editor::nextLineStart(int line_start) const
+{
+    int i = line_start;
+    while (i < m_bufferHead && m_textBuffer[i] != '\n') {
+        i++;
+    }
+    return i < m_bufferHead ? i + 1 : -1;
+}
+
+/* The rows of the lines from the one from is on to the one to is on */
+int Editor::rowsOfLines(int from, int to, int cols) const
+{
+    int rows = 0;
+    int i = lineStart(from);
+    while (true) {
+        rows += rowsOfLine(i, cols);
+        int next = nextLineStart(i);
+        if (next < 0 || next > to) {
+            return rows;
+        }
+        i = next;
+    }
+}
+
+/**
+ * Counts the text's rows at cols columns, unless they're counted already: the whole text's, m_totalRows, and the row
+ * anchor's at its start (#213). A new width, or a new text (resetLines), counts them again
+ */
+void Editor::countRows(int cols) const
+{
+    if (m_rowsCols == cols) {
+        return;
+    }
+    m_totalRows = rowsFrom(0, cols);
+    m_rowAnchorIndex = 0;
+    m_rowAnchorRows = 0;
+    m_rowsCols = cols;
+}
+
+/* The text's rows, as rowsFrom(0) counts them, from the count kept */
+int Editor::textRows(int cols) const
+{
+    countRows(cols);
+    return m_totalRows;
+}
+
+/* The rows above the line starting at line_start, counted from the row anchor, which moves there */
+int Editor::rowsBeforeLine(int line_start, int cols) const
+{
+    countRows(cols);
+    int i = m_rowAnchorIndex;
+    int rows = m_rowAnchorRows;
+    while (i < line_start) {
+        int next = nextLineStart(i);
+        if (next < 0) {
+            break;
+        }
+        rows += rowsOfLine(i, cols);
+        i = next;
+    }
+    while (i > line_start) {
+        i = lineStart(i - 1);
+        rows -= rowsOfLine(i, cols);
+    }
+
+    m_rowAnchorIndex = i;
+    m_rowAnchorRows = rows;
+    return rows;
+}
+
+/* The rows above the row that starts at index, which the text's rows less rowsFrom(index) would give */
+int Editor::rowsAbove(int index, int cols) const
+{
+    int i = lineStart(index);
+    int rows = rowsBeforeLine(i, cols);
+    while (i < index) {
+        int next = nextVisualRowStart(i, cols);
+        if (next <= i || next > index) {
+            break;
+        }
+        rows++;
+        i = next;
+    }
+    return rows;
+}
+
+/* The rows from the row that starts at index to the text's end, as rowsFrom counts them, from the counts kept */
+int Editor::rowsBelow(int index, int cols) const
+{
+    return textRows(cols) - rowsAbove(index, cols);
 }
 
 void Editor::cursorFromViewStart(int view_start, int cols, int* out_row, int* out_col) const
@@ -1366,7 +1482,7 @@ void Editor::revealRange(int start, int end)
     /* Start's row at the top, then half a screen of rows above it, then as many more as the view would show past the end */
     setScrollFromIndex(start, cols);
     scroll(-(rows / 2));
-    int below = rowsFrom(viewStartIndex(cols), cols);
+    int below = rowsBelow(viewStartIndex(cols), cols);
     if (below < rows) {
         scroll(below - rows);
     }
@@ -1870,8 +1986,9 @@ void Editor::handleMouse(const struct gfx_event& event)
  */
 void Editor::drawTextScrollBar(int cols, int rows, int view_start)
 {
-    int total = rowsFrom(0, cols);
-    int first = total - rowsFrom(view_start, cols);
+    /* From the counts kept, rather than laying out the text (#213) */
+    int total = textRows(cols);
+    int first = rowsAbove(view_start, cols);
     int text_h = c_height - HEADER_HEIGHT - STATUS_HEIGHT;
 
     m_textBar.place(m_treeWidth + c_width - SCROLLBAR_WIDTH, HEADER_HEIGHT, text_h);
@@ -1883,8 +2000,28 @@ void Editor::drawTextScrollBar(int cols, int rows, int view_start)
 void Editor::scrollToRow(int row)
 {
     int cols = visibleColumns();
-    int index = 0;
-    for (int r = 0; r < row; r++) {
+
+    /* The line the row is on, found from the row anchor (rowsBeforeLine), then the row in it. Past the end, the last */
+    row = clampInt(row, 0, textRows(cols) - 1);
+    int line = m_rowAnchorIndex;
+    int before = rowsBeforeLine(line, cols);
+    while (before > row) {
+        line = lineStart(line - 1);
+        before -= rowsOfLine(line, cols);
+    }
+    while (true) {
+        int rows = rowsOfLine(line, cols);
+        int next = nextLineStart(line);
+        if (before + rows > row || next < 0) {
+            break;
+        }
+        before += rows;
+        line = next;
+    }
+    rowsBeforeLine(line, cols);
+
+    int index = line;
+    for (int r = before; r < row; r++) {
         int next = nextVisualRowStart(index, cols);
         if (next <= index) {
             break;
@@ -1903,7 +2040,7 @@ void Editor::dragScrollTick()
 
     int cols = visibleColumns();
     int rows = visibleLines();
-    if (m_dragScroll < 0 || rowsFrom(viewStartIndex(cols), cols) > rows) {
+    if (m_dragScroll < 0 || rowsBelow(viewStartIndex(cols), cols) > rows) {
         scroll(m_dragScroll);
     }
 
@@ -2219,6 +2356,10 @@ bool Editor::bufferInsertText(int index, const unsigned char* data, int len)
         return false;
     }
 
+    /* The rows kept, if they're counted: the lines the text goes into have their rows counted before and after */
+    int cols = m_rowsCols;
+    int rows_before = cols > 0 ? rowsOfLine(lineStart(index), cols) : 0;
+
     memmove(&m_textBuffer[index + len], &m_textBuffer[index], m_bufferHead - index);
     memcpy(&m_textBuffer[index], data, len);
     m_bufferHead += len;
@@ -2230,6 +2371,14 @@ bool Editor::bufferInsertText(int index, const unsigned char* data, int len)
     if (index < m_anchorIndex) {
         m_anchorIndex += len;
         m_anchorLine += newlines;
+    }
+    if (cols > 0) {
+        int rows = rowsOfLines(index, index + len, cols) - rows_before;
+        m_totalRows += rows;
+        if (index < m_rowAnchorIndex) {
+            m_rowAnchorIndex += len;
+            m_rowAnchorRows += rows;
+        }
     }
     autoBracesInserted(index, len);
     undoInserted(index, data, len);
@@ -2262,6 +2411,12 @@ bool Editor::bufferDeleteRange(int index, int count)
     int newlines = countNewlines(index, index + count);
     int anchor_back = index < m_anchorIndex && index + count >= m_anchorIndex ? countNewlines(index, m_anchorIndex) : 0;
 
+    /* The rows kept, if they're counted: those of the lines it touches before, and of the line they become after */
+    int cols = m_rowsCols;
+    int rows_before = cols > 0 ? rowsOfLines(index, index + count, cols) : 0;
+    int row_anchor_back = cols > 0 && index < m_rowAnchorIndex && index + count >= m_rowAnchorIndex ?
+                              rowsOfLines(index, m_rowAnchorIndex - 1, cols) : 0;
+
     memmove(&m_textBuffer[index], &m_textBuffer[index + count], m_bufferHead - index - count);
     m_bufferHead -= count;
     m_textBuffer[m_bufferHead] = 0;
@@ -2273,6 +2428,17 @@ bool Editor::bufferDeleteRange(int index, int count)
     } else if (index < m_anchorIndex) {
         m_anchorLine -= anchor_back;
         m_anchorIndex = lineStart(index);
+    }
+    if (cols > 0) {
+        int rows = rowsOfLine(lineStart(index), cols) - rows_before;
+        m_totalRows += rows;
+        if (index + count < m_rowAnchorIndex) {
+            m_rowAnchorIndex -= count;
+            m_rowAnchorRows += rows;
+        } else if (index < m_rowAnchorIndex) {
+            m_rowAnchorRows -= row_anchor_back;
+            m_rowAnchorIndex = lineStart(index);
+        }
     }
     autoBracesDeleted(index, count);
     return true;
@@ -3589,7 +3755,7 @@ void Editor::handleKey(unsigned char c, int modifiers)
         /* The view moves a page too, but down only as far as there's text below it */
         bool down = c == KEY_PAGE_DOWN;
         int cols = visibleColumns();
-        int below = rowsFrom(viewStartIndex(cols), cols) - visibleLines();
+        int below = rowsBelow(viewStartIndex(cols), cols) - visibleLines();
         scroll(down ? minInt(page, below > 0 ? below : 0) : -page);
         for (int n = 0; n < page; n++) {
             if (!(down ? cursorDown() : cursorUp())) {
