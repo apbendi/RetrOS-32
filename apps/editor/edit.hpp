@@ -17,6 +17,18 @@
 /* Behind selected text: a pale blue in the standard VGA palette */
 #define COLOR_SELECTED 80
 
+/**
+ * The colors of C, in .c and .h files only (#143): indexes into the VGA palette (lib/palette.c), dark enough to read
+ * on COLOR_BG, white, and on COLOR_SELECTED, pale blue, and apart from each other. Each kind of keyword has its own
+ */
+#define EDITOR_COLOR_TYPE COLOR_VGA_LIGHT_BLUE /* blue: 0, 124, 252 */
+#define EDITOR_COLOR_STORAGE 107               /* dark violet: 84, 0, 112 */
+#define EDITOR_COLOR_CONTROL COLOR_VGA_RED     /* dark red: 168, 0, 0 */
+#define EDITOR_COLOR_COMMENT 120               /* dark green: 0, 112, 0 */
+#define EDITOR_COLOR_STRING 6                  /* brown: 168, 84, 0; character constants too */
+#define EDITOR_COLOR_NUMBER 124                /* dark teal: 0, 112, 112 */
+#define EDITOR_COLOR_PREPROC 5                 /* magenta: 168, 0, 168; a preprocessor line, but for its comments */
+
 /* The tree's width when the Editor opens. Dragging its right border changes it, down to EDITOR_TREE_MIN_WIDTH */
 #define TREE_VIEW_WIDTH 130
 /* The narrowest the tree can be: wide enough for a few characters of each top-level name beside its scroll bar */
@@ -41,6 +53,13 @@
 #define EDITOR_TREE_ARROW_COLUMNS 4
 /* The collapsed tree's bar, the whole of which takes clicks: the toggle at its top, with as much of the bar either side */
 #define EDITOR_TREE_COLLAPSED_WIDTH ((2 * EDITOR_TREE_TOGGLE_X) + EDITOR_TREE_TOGGLE_WIDTH)
+/**
+ * The tree's refresh button, which reads the tree again, as Ctrl+R does (#141): the toggle's mirror image, as big and
+ * as far down, with its right side at the tree box's right side, which TreeView draws this far in from the tree's
+ * edge, as the toggle's left side is at the box's left. That leaves it clear of the border's drag. Hidden while the
+ * tree is collapsed
+ */
+#define EDITOR_TREE_REFRESH_RIGHT 8
 /**
  * The header's buttons: squares, each with an icon from /sysutil/icons, with EDITOR_BUTTON_PAD of the bar above and
  * below them. New's left side is EDITOR_BUTTON_MARGIN in from the bar's left edge, and Help's right side as far in
@@ -78,8 +97,12 @@
 /* A tab is drawn as space to the next multiple of this many columns, and the Tab key inserts this many spaces (#135) */
 #define EDITOR_TAB_WIDTH 4
 
-#define EDITOR_BUFFER_SIZE (64 * 1024)
-#define ROPE_CHUNK_SIZE 256
+/**
+ * The most the text's buffer grows to: the text and the 0 after it, so 262,143 characters (#213). A bigger file opens
+ * read-only. The buffer starts at EDITOR_BUFFER_MIN, or as much as the file opened needs, and doubles as edits need
+ */
+#define EDITOR_BUFFER_SIZE (256 * 1024)
+#define EDITOR_BUFFER_MIN (16 * 1024)
 #define EDITOR_DEFAULT_TEXT_WIDTH 400
 #define EDITOR_DEFAULT_GUTTER_WIDTH 32
 #define EDITOR_DEFAULT_RIGHT_PANE_WIDTH (EDITOR_DEFAULT_TEXT_WIDTH + EDITOR_DEFAULT_GUTTER_WIDTH + (2 * TEXT_PADDING) + SCROLLBAR_WIDTH)
@@ -95,11 +118,12 @@
 /* How many of the } that typing { adds are kept track of, one per block still open; past that, the oldest is dropped */
 #define EDITOR_AUTO_BRACES_MAX 32
 /**
- * The undo history's first block, and the most it grows to, doubling, before the oldest steps are dropped. One step can
- * hold about 128 KB, a 64 KB paste over a 64 KB text
+ * The undo history's first block, and the most it grows to, doubling, before the oldest steps are dropped. It holds a
+ * step of twice the text, a full paste over a full text, with as much again for the steps before it: a step bigger
+ * than the history turns it off for the rest of the text (undoReserve)
  */
 #define EDITOR_UNDO_MIN (16 * 1024)
-#define EDITOR_UNDO_MAX (256 * 1024)
+#define EDITOR_UNDO_MAX (4 * EDITOR_BUFFER_SIZE)
 
 /* What kind of key made an undo step: typing, Backspace or Delete join the step the last key of the same kind made */
 enum {
@@ -113,8 +137,8 @@ enum {
 
 /**
  * A prompt on the status line, which takes every key until it's closed: Ctrl+G's line number and Ctrl+F's Find (#137).
- * What's typed at it holds up to EDITOR_PROMPT_MAX characters, and a line number up to EDITOR_LINE_DIGITS, since a
- * 64 KB text has at most 65,537 lines
+ * What's typed at it holds up to EDITOR_PROMPT_MAX characters, and a line number up to EDITOR_LINE_DIGITS, since the
+ * text, at most 262,143 characters (EDITOR_BUFFER_SIZE less the 0 after it), has at most 262,144 lines
  */
 enum {
     EDITOR_PROMPT_NONE = 0,
@@ -122,7 +146,20 @@ enum {
     EDITOR_PROMPT_FIND
 };
 #define EDITOR_PROMPT_MAX 64
-#define EDITOR_LINE_DIGITS 5
+#define EDITOR_LINE_DIGITS 6
+
+/**
+ * Coloring C (#143): what the lexer carries from one line to the next, the state at a line's start. A line starts in a
+ * block comment, in a preprocessor line continued onto it, or both. Everything else is the line's own
+ */
+#define EDITOR_LEX_COMMENT (1 << 0)
+#define EDITOR_LEX_PREPROC (1 << 1)
+/**
+ * The state is kept at the start of every EDITOR_LEX_LINES lines, so drawing lexes from the nearest one before the
+ * view rather than from the text's start: one for each of the most lines the text can have, EDITOR_BUFFER_SIZE
+ */
+#define EDITOR_LEX_LINES 256
+#define EDITOR_LEX_POINTS (EDITOR_BUFFER_SIZE / EDITOR_LEX_LINES + 1)
 
 /* The header's buttons: New and Save from the left, and Help at the right */
 enum {
@@ -133,10 +170,6 @@ enum {
     EDITOR_BUTTON_COUNT
 };
 
-struct keyword {
-    char word[10];
-    color_t color;
-};
 
 class Editor : public Window {
 public:
@@ -148,14 +181,12 @@ public:
     void Help();
     bool Open(char* path);
     void putChar(unsigned char c, int modifiers = 0);
-    void Lex();
     bool Quit();
     bool SaveMsg();
     void setFd(int fd);
 
     void EditorLoop();
     void New();
-    void setColor(color_t color);
     void Reset();
     void reDrawHeader();
 
@@ -163,13 +194,6 @@ public:
     int countLines() const;
 
 private:
-    struct rope_node {
-        struct rope_node* prev;
-        struct rope_node* next;
-        int len;
-        unsigned char data[ROPE_CHUNK_SIZE];
-    };
-
     /**
      * One undo step: del characters at pos became ins characters. The step is followed in the history by the del
      * characters, then the ins characters, then padding to a multiple of 4, so the next step's ints are aligned
@@ -189,8 +213,10 @@ private:
     void handleKey(unsigned char c, int modifiers);
     void reDraw(int from, int to);
     void drawSelection(int view_start, int cols, int rows, int text_x);
-    void highlightSyntax(unsigned char* start);
-    void highlightWordAt(int index);
+    unsigned char lexLine(int* index, unsigned char state) const;
+    unsigned char lexStateAt(int line, int index);
+    void lexEdited(int index);
+    void lexReset();
 
     bool hasSelection() const;
     bool selectionRange(int& start, int& end) const;
@@ -217,13 +243,20 @@ private:
     bool treeToggleAt(int x, int y) const;
     void drawTreeToggle(bool pressed);
     bool treeToggleMouse(const struct gfx_event& event, bool* clicked);
+    int treeRefreshX() const;
+    bool treeRefreshAt(int x, int y) const;
+    void drawTreeRefresh(bool pressed);
+    bool treeRefreshMouse(const struct gfx_event& event, bool* clicked);
+    void refreshTree();
     void selectAround(int index, bool line);
     void dragScrollTick();
 
     int visibleLines() const;
     int visibleColumns() const;
+    int countNewlines(int from, int to) const;
     int lineNumberAtIndex(int index) const;
     int indexFromLine(int line) const;
+    void resetLines();
     int lineStart(int index) const;
     int lineEnd(int index) const;
     int lineRowsFromStart(int line_start, int cols) const;
@@ -238,6 +271,14 @@ private:
     int nextVisualRowStart(int row_start_index, int cols) const;
     int prevVisualRowStart(int row_start_index, int cols) const;
     int rowsFrom(int index, int cols) const;
+    int rowsOfLine(int line_start, int cols) const;
+    int nextLineStart(int line_start) const;
+    int rowsOfLines(int from, int to, int cols) const;
+    void countRows(int cols) const;
+    int textRows(int cols) const;
+    int rowsBeforeLine(int line_start, int cols) const;
+    int rowsAbove(int index, int cols) const;
+    int rowsBelow(int index, int cols) const;
     void cursorFromViewStart(int view_start, int cols, int* out_row, int* out_col) const;
     void placeFromViewStart(int index, int view_start, int cols, int* out_row, int* out_col) const;
 
@@ -264,19 +305,13 @@ private:
     void applyResolution(int window_width, int window_height);
     bool showNewFileDialog(char* path, int path_size);
 
-    void ropeClear();
-    bool ropeLoadFromBuffer(const unsigned char* data, int len);
-    bool ropeSyncToBuffer();
-    bool ropeInsertChar(int index, unsigned char c);
-    bool ropeAddChar(int index, unsigned char c);
-    bool ropeDeleteChar(int index);
-    bool ropeDeleteRange(int index, int count);
-    bool ropeInsertText(int index, const unsigned char* data, int len);
-    bool ropeLocate(int index, struct rope_node** out_node, int* out_offset) const;
-    void ropeCopy(int index, int count, unsigned char* out) const;
-    struct rope_node* ropeCreateNode();
-    void ropeDetachNode(struct rope_node* node);
-    void ropeTryMerge(struct rope_node* node);
+    void clearHistory();
+    bool reserveText(int length);
+    void shrinkText();
+    bool bufferInsertChar(int index, unsigned char c);
+    bool bufferInsertText(int index, const unsigned char* data, int len);
+    bool bufferDeleteChar(int index);
+    bool bufferDeleteRange(int index, int count);
 
     void autoBracesInserted(int index, int len);
     void autoBracesDeleted(int index, int count);
@@ -310,12 +345,18 @@ private:
     int m_windowWidth;
     bool m_treeCollapsed;
     int m_treeOpenWidth;
+    /* The constructor hasn't loaded the tree yet, so its box says so (#210) */
+    bool m_treeLoading;
     /* Set from a press on the tree's border until its release. m_treeGrabX is where the press was, from the border */
     bool m_resizingTree;
     int m_treeGrabX;
     /* Set from a press on the tree's toggle until its release. It's drawn pressed while the mouse is over it, m_toggleShown */
     bool m_togglePressed;
     bool m_toggleShown;
+    /* The same for the refresh button, and its icon, loaded with the toolbar's */
+    bool m_refreshPressed;
+    bool m_refreshShown;
+    struct image m_refreshIcon;
     /**
      * Set from any press until its release. Ctrl+B does nothing meanwhile, so a drag on the tree, its border or its
      * scroll bar isn't left half done, with the tree's scroll bar thinking it's still pressed
@@ -334,7 +375,29 @@ private:
     bool m_pressedShown;
 
     int m_fd;
+    /**
+     * The text: its m_bufferHead characters, then a 0, in m_bufferSize bytes, which grow as edits need, up to
+     * EDITOR_BUFFER_SIZE (reserveText). Edited only by the buffer* functions
+     */
     unsigned char* m_textBuffer;
+    /* The text's lines, one more than its newlines, which the buffer* functions keep as they change it */
+    int m_lineCount;
+    /**
+     * The line anchor: line m_anchorLine, counted from 0, starts at m_anchorIndex. lineNumberAtIndex and indexFromLine
+     * count from it rather than from the text's start, and move it to where they end up; the buffer* functions keep
+     * it right as they change the text (#213)
+     */
+    mutable int m_anchorLine;
+    mutable int m_anchorIndex;
+    /**
+     * The text's rows at m_rowsCols columns, for the scroll bar and paging, or none counted while m_rowsCols is 0:
+     * m_totalRows in all, and the row anchor, the line starting at m_rowAnchorIndex with m_rowAnchorRows rows above it.
+     * countRows counts them for a new width; the buffer* functions keep them right as they change the text (#213)
+     */
+    mutable int m_rowsCols;
+    mutable int m_totalRows;
+    mutable int m_rowAnchorIndex;
+    mutable int m_rowAnchorRows;
     int m_bufferSize;
     int m_fileSize;
     int m_bufferHead;
@@ -347,8 +410,8 @@ private:
     int m_autoBraces[EDITOR_AUTO_BRACES_MAX];
     int m_autoBraceCount;
     /**
-     * The undo history (#161): the steps done, oldest first, then those undone, which redo does again. The four rope
-     * functions that edit record into it. Allocated at the first edit, m_undoSize bytes, and freed with the text
+     * The undo history (#161): the steps done, oldest first, then those undone, which redo does again. The four buffer*
+     * functions that edit the text record into it. Allocated at the first edit, m_undoSize bytes, and freed with the text
      */
     unsigned char* m_undo;
     int m_undoSize;
@@ -396,25 +459,21 @@ private:
     int scrollY;
     int m_scrollWrap;
 
-    color_t m_textColor;
-
-#define KEYWORD_TYPE COLOR_VGA_LIGHT_BLUE
-#define KEYWORD_SYS COLOR_VGA_PURPLE
-#define KEYWORD_BRANCH COLOR_VGA_RED
-#define KEYWORD_FUNC COLOR_VGA_MEDIUM_DARK_GRAY
-    struct keyword keyWords[20] = {
-        {"char", KEYWORD_TYPE},
-        {"else", KEYWORD_BRANCH}, {"enum", KEYWORD_TYPE}, {"if", KEYWORD_BRANCH},
-        {"int", KEYWORD_TYPE}, {"return", KEYWORD_SYS}, {"sizeof", KEYWORD_FUNC},
-        {"while", KEYWORD_BRANCH}, {"open", KEYWORD_FUNC}, {"printf", KEYWORD_FUNC},
-        {"malloc", KEYWORD_FUNC}, {"main", KEYWORD_FUNC}, {"void", KEYWORD_TYPE}
-    };
+    /* The text is colored as C, being a .c or .h file's; set as reDraw starts */
+    bool m_colorC;
+    /**
+     * The lexer's state at the start of line k * EDITOR_LEX_LINES, which is at m_lexIndex[k], for each k below
+     * m_lexPoints, at least 1 (#143). They're worked out as drawing needs them, and an edit drops those after it
+     */
+    int m_lexIndex[EDITOR_LEX_POINTS];
+    unsigned char m_lexState[EDITOR_LEX_POINTS];
+    int m_lexPoints;
+    /* The state at the start of the line at m_lexAnchor, the view's last drawn, or -1 for none, dropped as they are */
+    int m_lexAnchor;
+    unsigned char m_lexAnchorState;
 
     int c_width;
     int c_height;
-
-    struct rope_node* m_ropeHead;
-    struct rope_node* m_ropeTail;
 };
 
 #endif /* D2830F9E_59AE_4E2A_B9AB_EB0EC93872EF */

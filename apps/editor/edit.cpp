@@ -484,7 +484,7 @@ Editor::Editor()
     treeView = nullptr;
     m_fd = -1;
     m_textBuffer = nullptr;
-    m_bufferSize = EDITOR_BUFFER_SIZE;
+    m_bufferSize = EDITOR_BUFFER_MIN;
     m_fileSize = 0;
     m_bufferHead = 0;
     m_bufferEdit = 0;
@@ -505,6 +505,7 @@ Editor::Editor()
     m_pressedButton = EDITOR_BUTTON_NONE;
     m_pressedShown = false;
     m_treeWidth = TREE_VIEW_WIDTH;
+    m_treeLoading = false;
     m_windowWidth = EDITOR_DEFAULT_WINDOW_WIDTH;
     m_treeCollapsed = false;
     m_treeOpenWidth = TREE_VIEW_WIDTH;
@@ -512,9 +513,18 @@ Editor::Editor()
     m_treeGrabX = 0;
     m_togglePressed = false;
     m_toggleShown = false;
+    m_refreshPressed = false;
+    m_refreshShown = false;
     m_mouseHeld = false;
     m_pressOnTree = false;
     m_keepStatus = 0;
+    m_lineCount = 1;
+    m_anchorLine = 0;
+    m_anchorIndex = 0;
+    m_rowsCols = 0;
+    m_totalRows = 1;
+    m_rowAnchorIndex = 0;
+    m_rowAnchorRows = 0;
     m_prompt = EDITOR_PROMPT_NONE;
     m_promptText[0] = 0;
     m_promptLen = 0;
@@ -524,11 +534,13 @@ Editor::Editor()
     m_findCount = -1;
     scrollY = 0;
     m_scrollWrap = 0;
-    m_textColor = COLOR_TEXT;
+    m_colorC = false;
+    lexReset();
     c_width = EDITOR_DEFAULT_RIGHT_PANE_WIDTH;
     c_height = EDITOR_DEFAULT_HEIGHT;
-    m_ropeHead = nullptr;
-    m_ropeTail = nullptr;
+
+    memset(m_buttonIcons, 0, sizeof(m_buttonIcons));
+    memset(&m_refreshIcon, 0, sizeof(m_refreshIcon));
 
     m_textBuffer = (unsigned char*) malloc(m_bufferSize);
     if (m_textBuffer == nullptr) {
@@ -537,6 +549,17 @@ Editor::Editor()
 
     memset(m_textBuffer, 0, m_bufferSize);
     memset(m_currentPath, 0, sizeof(m_currentPath));
+
+    /**
+     * What needs nothing from the disk, shown before the tree and the icons are read, which on slow hardware takes a
+     * while (#210): the buttons without their icons, and the tree's box saying it's loading
+     */
+    m_treeLoading = true;
+    gfx_draw_rectangle(0, 0, EDITOR_DEFAULT_WINDOW_WIDTH, c_height, COLOR_BG);
+    reDrawHeader();
+    drawTreePane();
+    reDraw(0, 0);
+    endFrame();
 
     treeView = new TreeView(0, 0, m_treeWidth, c_height);
     if (treeView != nullptr) {
@@ -548,11 +571,11 @@ Editor::Editor()
     for (int button = 0; button < EDITOR_BUTTON_COUNT; button++) {
         gfx_load_icon(editor_button_icons[button], &m_buttonIcons[button]);
     }
-
-    gfx_draw_rectangle(0, 0, EDITOR_DEFAULT_WINDOW_WIDTH, c_height, COLOR_BG);
-    gfx_draw_format_text(20, 20, COLOR_VGA_MEDIUM_GRAY, "Loading...");
+    gfx_load_icon("refresh_7", &m_refreshIcon);
+    m_treeLoading = false;
 
     reDrawHeader();
+    drawTreePane();
     reDraw(0, 0);
 }
 
@@ -571,8 +594,9 @@ Editor::~Editor()
     for (int button = 0; button < EDITOR_BUTTON_COUNT; button++) {
         gfx_free_icon(&m_buttonIcons[button]);
     }
+    gfx_free_icon(&m_refreshIcon);
 
-    ropeClear();
+    undoClear();
 
     if (m_textBuffer != nullptr) {
         free(m_textBuffer);
@@ -588,8 +612,9 @@ int Editor::gutterWidth() const
     if (width < 18) {
         width = 18;
     }
-    if (width > 42) {
-        width = 42;
+    /* Room for the most lines the text can have */
+    if (width > (EDITOR_LINE_DIGITS * 8) + 6) {
+        width = (EDITOR_LINE_DIGITS * 8) + 6;
     }
 
     return width;
@@ -630,36 +655,79 @@ int Editor::visibleColumns() const
     return w / 8;
 }
 
-int Editor::lineNumberAtIndex(int index) const
+/* The newlines in the text from index from up to to */
+int Editor::countNewlines(int from, int to) const
 {
-    int line = 1;
-    int i = clampInt(index, 0, m_bufferHead);
-
-    for (int j = 0; j < i; j++) {
-        if (m_textBuffer[j] == '\n') {
-            line++;
+    int newlines = 0;
+    for (int i = from; i < to; i++) {
+        if (m_textBuffer[i] == '\n') {
+            newlines++;
         }
     }
-
-    return line;
+    return newlines;
 }
 
+/**
+ * The line index is on, from 1, counted from the line anchor rather than the text's start, so it costs the distance
+ * from the last line looked up (#213). The anchor moves to it, since what's asked next is likely near: the view, the cursor
+ */
+int Editor::lineNumberAtIndex(int index) const
+{
+    int i = clampInt(index, 0, m_bufferHead);
+    int line = m_anchorLine;
+    if (i >= m_anchorIndex) {
+        line += countNewlines(m_anchorIndex, i);
+    } else {
+        line -= countNewlines(i, m_anchorIndex);
+    }
+
+    m_anchorLine = line;
+    m_anchorIndex = lineStart(i);
+    return line + 1;
+}
+
+/**
+ * Where line starts, counting lines from 0, or the text's end if it has fewer. Counted from the line anchor, which
+ * moves there, as lineNumberAtIndex does
+ */
 int Editor::indexFromLine(int line) const
 {
     if (line <= 0) {
         return 0;
     }
 
-    int currentLine = 0;
-    int i = 0;
-    while (i < m_bufferHead && currentLine < line) {
-        if (m_textBuffer[i] == '\n') {
-            currentLine++;
+    int i = m_anchorIndex;
+    int current = m_anchorLine;
+    if (line >= current) {
+        while (i < m_bufferHead && current < line) {
+            if (m_textBuffer[i] == '\n') {
+                current++;
+            }
+            i++;
         }
-        i++;
+    } else {
+        /* Back from one line's start to the start of the line before, which ends with the newline before it */
+        while (current > line) {
+            i = lineStart(i - 1);
+            current--;
+        }
     }
 
+    if (current == line) {
+        m_anchorLine = line;
+        m_anchorIndex = i;
+    }
     return i;
+}
+
+/* After the whole text is replaced: its lines counted, the anchor at its start, and the lexer's states dropped */
+void Editor::resetLines()
+{
+    m_lineCount = 1 + countNewlines(0, m_bufferHead);
+    m_anchorLine = 0;
+    m_anchorIndex = 0;
+    m_rowsCols = 0;
+    lexReset();
 }
 
 int Editor::lineStart(int index) const
@@ -771,8 +839,11 @@ int Editor::prevVisualRowStart(int row_start_index, int cols) const
         return 0;
     }
 
-    /* The last row that starts before target: the one whose next row is target, or would be past it */
-    int cur = 0;
+    /**
+     * The last row that starts before target: the one whose next row is target, or would be past it. Rows never cross
+     * a newline, and each line is laid out afresh, so it's found from the start of the line before target (#213)
+     */
+    int cur = lineStart(target - 1);
 
     while (cur < target) {
         int next = nextVisualRowStart(cur, cols);
@@ -805,6 +876,117 @@ int Editor::rowsFrom(int index, int cols) const
         rows++;
     }
     return rows;
+}
+
+/**
+ * The rows of the line starting at line_start: 1, and one more for each row that starts before its newline, or the
+ * text's end. Only a newline ends a line, as for TextLayout, unlike lineEnd, which also stops at a 0
+ */
+int Editor::rowsOfLine(int line_start, int cols) const
+{
+    int rows = 1;
+    int i = line_start;
+    while (true) {
+        int next = nextVisualRowStart(i, cols);
+        if (next <= i || next >= m_bufferHead || m_textBuffer[next - 1] == '\n') {
+            return rows;
+        }
+        rows++;
+        i = next;
+    }
+}
+
+/* Where the line after the one starting at line_start starts, or -1 if it's the last */
+int Editor::nextLineStart(int line_start) const
+{
+    int i = line_start;
+    while (i < m_bufferHead && m_textBuffer[i] != '\n') {
+        i++;
+    }
+    return i < m_bufferHead ? i + 1 : -1;
+}
+
+/* The rows of the lines from the one from is on to the one to is on */
+int Editor::rowsOfLines(int from, int to, int cols) const
+{
+    int rows = 0;
+    int i = lineStart(from);
+    while (true) {
+        rows += rowsOfLine(i, cols);
+        int next = nextLineStart(i);
+        if (next < 0 || next > to) {
+            return rows;
+        }
+        i = next;
+    }
+}
+
+/**
+ * Counts the text's rows at cols columns, unless they're counted already: the whole text's, m_totalRows, and the row
+ * anchor's at its start (#213). A new width, or a new text (resetLines), counts them again
+ */
+void Editor::countRows(int cols) const
+{
+    if (m_rowsCols == cols) {
+        return;
+    }
+    m_totalRows = rowsFrom(0, cols);
+    m_rowAnchorIndex = 0;
+    m_rowAnchorRows = 0;
+    m_rowsCols = cols;
+}
+
+/* The text's rows, as rowsFrom(0) counts them, from the count kept */
+int Editor::textRows(int cols) const
+{
+    countRows(cols);
+    return m_totalRows;
+}
+
+/* The rows above the line starting at line_start, counted from the row anchor, which moves there */
+int Editor::rowsBeforeLine(int line_start, int cols) const
+{
+    countRows(cols);
+    int i = m_rowAnchorIndex;
+    int rows = m_rowAnchorRows;
+    while (i < line_start) {
+        int next = nextLineStart(i);
+        if (next < 0) {
+            break;
+        }
+        rows += rowsOfLine(i, cols);
+        i = next;
+    }
+    while (i > line_start) {
+        i = lineStart(i - 1);
+        rows -= rowsOfLine(i, cols);
+    }
+
+    m_rowAnchorIndex = i;
+    m_rowAnchorRows = rows;
+    return rows;
+}
+
+/* The rows above the row that starts at index, which the text's rows less rowsFrom(index) would give */
+int Editor::rowsAbove(int index, int cols) const
+{
+    int i = lineStart(index);
+    int rows = rowsBeforeLine(i, cols);
+    while (i < index) {
+        int next = nextVisualRowStart(i, cols);
+        if (next <= i || next > index) {
+            break;
+        }
+        rows++;
+        i = next;
+    }
+    return rows;
+}
+
+/* The rows from the row that starts at index to the text's end, as rowsFrom counts them, from the counts kept */
+int Editor::rowsBelow(int index, int cols) const
+{
+    return textRows(cols) - rowsAbove(index, cols);
 }
 
 void Editor::cursorFromViewStart(int view_start, int cols, int* out_row, int* out_col) const
@@ -842,16 +1024,9 @@ void Editor::setScrollFromIndex(int index, int cols)
 {
     int idx = clampInt(index, 0, m_bufferHead);
 
-    int line = 0;
-    int line_start = 0;
-    for (int i = 0; i < idx; i++) {
-        if (m_textBuffer[i] == '\n') {
-            line++;
-            line_start = i + 1;
-        }
-    }
-
-    scrollY = line;
+    /* The line idx is on, counted from the anchor, and its start */
+    scrollY = lineNumberAtIndex(idx) - 1;
+    int line_start = lineStart(idx);
     m_scrollWrap = 0;
 
     int row_start = line_start;
@@ -897,36 +1072,35 @@ void Editor::ensureCursorVisible(int cols, int rows)
 
     normalizeScroll(cols);
 
-    int guard_max = m_bufferHead + rows + 16;
-    if (guard_max < 64) {
-        guard_max = 64;
+    /**
+     * The view moves a row at a time, until the cursor is on its first row or its last (#213). Each row costs its
+     * line, not a pass over the text, so a cursor that's moved far, as Ctrl+A and undo can move it, costs the distance
+     * once rather than for every row.
+     * - Above the view: up until the view starts at or before the cursor.
+     * - Below it: the cursor's row is laid out once. Rows are laid out a line at a time, so each row the view moves
+     *   down moves the cursor's row up one.
+     */
+    int view_start = viewStartIndex(cols);
+    while (m_bufferEdit < view_start) {
+        int prev = prevVisualRowStart(view_start, cols);
+        if (prev == view_start) {
+            break;
+        }
+        setScrollFromIndex(prev, cols);
+        view_start = viewStartIndex(cols);
     }
 
-    for (int guard = 0; guard < guard_max; guard++) {
-        int view_start = viewStartIndex(cols);
-        int cursor_row = 0;
-        int cursor_col = 0;
-        cursorFromViewStart(view_start, cols, &cursor_row, &cursor_col);
-
-        if (cursor_row < 0) {
-            int prev = prevVisualRowStart(view_start, cols);
-            if (prev == view_start) {
-                break;
-            }
-            setScrollFromIndex(prev, cols);
-            continue;
+    int cursor_row = 0;
+    int cursor_col = 0;
+    cursorFromViewStart(view_start, cols, &cursor_row, &cursor_col);
+    while (cursor_row >= rows) {
+        int next = nextVisualRowStart(view_start, cols);
+        if (next == view_start) {
+            break;
         }
-
-        if (cursor_row >= rows) {
-            int next = nextVisualRowStart(view_start, cols);
-            if (next == view_start) {
-                break;
-            }
-            setScrollFromIndex(next, cols);
-            continue;
-        }
-
-        break;
+        setScrollFromIndex(next, cols);
+        view_start = viewStartIndex(cols);
+        cursor_row--;
     }
 
     normalizeScroll(cols);
@@ -1329,7 +1503,7 @@ void Editor::revealRange(int start, int end)
     /* Start's row at the top, then half a screen of rows above it, then as many more as the view would show past the end */
     setScrollFromIndex(start, cols);
     scroll(-(rows / 2));
-    int below = rowsFrom(viewStartIndex(cols), cols);
+    int below = rowsBelow(viewStartIndex(cols), cols);
     if (below < rows) {
         scroll(below - rows);
     }
@@ -1412,8 +1586,11 @@ void Editor::drawButton(int button, bool pressed)
     int size = EDITOR_BUTTON_SIZE;
     gfx_draw_bevel(x, y, size, size, pressed);
 
-    /* A pixel down and right when pressed, as if pushed in */
+    /* A pixel down and right when pressed, as if pushed in. Before the icons are loaded, the button alone */
     const struct image* icon = &m_buttonIcons[button];
+    if (icon->width <= 0) {
+        return;
+    }
     int shift = pressed ? 1 : 0;
     drawImage(x + (size - icon->width) / 2 + shift, y + (size - icon->height) / 2 + shift, icon);
 }
@@ -1466,6 +1643,14 @@ void Editor::drawTreePane()
 {
     if (m_treeCollapsed) {
         drawContouredRect(0, 0, m_treeWidth, c_height);
+    } else if (treeView == nullptr) {
+        /* Not loaded yet, or there wasn't the memory: the tree's empty box, as TreeView draws it */
+        drawContouredRect(0, 0, m_treeWidth, c_height);
+        drawContouredBox(EDITOR_TREE_TOGGLE_X, EDITOR_TREE_BOX_TOP, m_treeWidth - EDITOR_TREE_TOGGLE_X - 8,
+                         c_height - EDITOR_TREE_BOX_TOP - 8, COLOR_WHITE);
+        if (m_treeLoading) {
+            gfx_draw_format_text(EDITOR_TREE_TOGGLE_X + 4, EDITOR_TREE_BOX_TOP + 4, COLOR_VGA_MEDIUM_GRAY, "Loading...");
+        }
     } else {
         treeView->drawTree(this, m_currentPath);
 
@@ -1473,6 +1658,10 @@ void Editor::drawTreePane()
         for (int line = 0; line < 3; line++) {
             gfx_draw_rectangle(m_treeWidth - 7 + (line * 2), y, 1, EDITOR_TREE_GRIP_LENGTH, COLOR_BAR_SHADOW);
         }
+    }
+
+    if (!m_treeCollapsed) {
+        drawTreeRefresh(m_refreshPressed && m_refreshShown);
     }
 
     drawTreeToggle(m_togglePressed && m_toggleShown);
@@ -1599,6 +1788,87 @@ void Editor::drawTreeToggle(bool pressed)
  * pushed in while the mouse stays over it, and a release over it clicks it.
  * @return whether the event was the toggle's. clicked gets whether it was clicked
  */
+/* Where the refresh button's left side is: the toggle's mirror image (EDITOR_TREE_REFRESH_RIGHT) */
+int Editor::treeRefreshX() const
+{
+    return m_treeWidth - EDITOR_TREE_REFRESH_RIGHT - EDITOR_TREE_TOGGLE_WIDTH;
+}
+
+/* Whether x, y is on the refresh button, which isn't there while the tree is collapsed */
+bool Editor::treeRefreshAt(int x, int y) const
+{
+    int left = treeRefreshX();
+    return !m_treeCollapsed && x >= left && x < left + EDITOR_TREE_TOGGLE_WIDTH && y >= EDITOR_TREE_TOGGLE_Y &&
+           y < EDITOR_TREE_TOGGLE_Y + EDITOR_TREE_TOGGLE_HEIGHT;
+}
+
+/**
+ * The refresh button, drawn as the toggle is, with its icon centered on the face inside the bevel's edges, a pixel
+ * down and right when pressed. An icon bigger than the face, as the 16 by 16 placeholder for a missing one is, is left out
+ */
+void Editor::drawTreeRefresh(bool pressed)
+{
+    int x = treeRefreshX();
+    int y = EDITOR_TREE_TOGGLE_Y;
+    gfx_draw_bevel(x, y, EDITOR_TREE_TOGGLE_WIDTH, EDITOR_TREE_TOGGLE_HEIGHT, pressed);
+
+    /* The face: inside the light edge at the top and left, and the dark edge and shadow at the bottom and right */
+    int face_width = EDITOR_TREE_TOGGLE_WIDTH - 3;
+    int face_height = EDITOR_TREE_TOGGLE_HEIGHT - 3;
+    const struct image* icon = &m_refreshIcon;
+    if (icon->width <= 0 || icon->width > face_width || icon->height > face_height) {
+        return;
+    }
+    int shift = pressed ? 1 : 0;
+    drawImage(x + 1 + ((face_width - icon->width) / 2) + shift, y + 1 + ((face_height - icon->height) / 2) + shift, icon);
+}
+
+/* A press on the refresh button, and its moves and release, as treeToggleMouse handles the toggle's */
+bool Editor::treeRefreshMouse(const struct gfx_event& event, bool* clicked)
+{
+    int x = (int16_t)event.data;
+    int y = (int16_t)event.data2;
+    *clicked = false;
+
+    if (event.event == GFX_EVENT_MOUSE_DOWN) {
+        m_refreshPressed = treeRefreshAt(x, y);
+        if (!m_refreshPressed) {
+            return false;
+        }
+        m_refreshShown = true;
+        drawTreeRefresh(true);
+        return true;
+    }
+
+    if (!m_refreshPressed) {
+        return false;
+    }
+
+    bool over = treeRefreshAt(x, y);
+    if (event.event == GFX_EVENT_MOUSE_UP) {
+        *clicked = over;
+        m_refreshPressed = false;
+        m_refreshShown = false;
+        drawTreeRefresh(false);
+    } else if (over != m_refreshShown) {
+        m_refreshShown = over;
+        drawTreeRefresh(over);
+    }
+    return true;
+}
+
+/**
+ * Ctrl+R and the refresh button: reads the tree again, keeping the folders that are open open, so it shows files
+ * made or deleted since (#141). While the tree is collapsed, it's read for when it's opened
+ */
+void Editor::refreshTree()
+{
+    if (treeView != nullptr) {
+        treeView->refresh();
+    }
+    drawTreePane();
+}
+
 bool Editor::treeToggleMouse(const struct gfx_event& event, bool* clicked)
 {
     int x = (int16_t)event.data;
@@ -1833,8 +2103,9 @@ void Editor::handleMouse(const struct gfx_event& event)
  */
 void Editor::drawTextScrollBar(int cols, int rows, int view_start)
 {
-    int total = rowsFrom(0, cols);
-    int first = total - rowsFrom(view_start, cols);
+    /* From the counts kept, rather than laying out the text (#213) */
+    int total = textRows(cols);
+    int first = rowsAbove(view_start, cols);
     int text_h = c_height - HEADER_HEIGHT - STATUS_HEIGHT;
 
     m_textBar.place(m_treeWidth + c_width - SCROLLBAR_WIDTH, HEADER_HEIGHT, text_h);
@@ -1846,8 +2117,28 @@ void Editor::drawTextScrollBar(int cols, int rows, int view_start)
 void Editor::scrollToRow(int row)
 {
     int cols = visibleColumns();
-    int index = 0;
-    for (int r = 0; r < row; r++) {
+
+    /* The line the row is on, found from the row anchor (rowsBeforeLine), then the row in it. Past the end, the last */
+    row = clampInt(row, 0, textRows(cols) - 1);
+    int line = m_rowAnchorIndex;
+    int before = rowsBeforeLine(line, cols);
+    while (before > row) {
+        line = lineStart(line - 1);
+        before -= rowsOfLine(line, cols);
+    }
+    while (true) {
+        int rows = rowsOfLine(line, cols);
+        int next = nextLineStart(line);
+        if (before + rows > row || next < 0) {
+            break;
+        }
+        before += rows;
+        line = next;
+    }
+    rowsBeforeLine(line, cols);
+
+    int index = line;
+    for (int r = before; r < row; r++) {
         int next = nextVisualRowStart(index, cols);
         if (next <= index) {
             break;
@@ -1866,7 +2157,7 @@ void Editor::dragScrollTick()
 
     int cols = visibleColumns();
     int rows = visibleLines();
-    if (m_dragScroll < 0 || rowsFrom(viewStartIndex(cols), cols) > rows) {
+    if (m_dragScroll < 0 || rowsBelow(viewStartIndex(cols), cols) > rows) {
         scroll(m_dragScroll);
     }
 
@@ -1874,6 +2165,280 @@ void Editor::dragScrollTick()
     m_bufferEdit = indexAtPoint(m_dragX, y);
     m_preferredColumn = -1;
     reDraw(0, m_bufferHead);
+}
+
+/* C99's 37 keywords, each with its kind's color (#143) */
+static const struct {
+    const char* word;
+    color_t color;
+} editor_keywords[] = {
+    /* Types */
+    {"char", EDITOR_COLOR_TYPE}, {"double", EDITOR_COLOR_TYPE}, {"enum", EDITOR_COLOR_TYPE},
+    {"float", EDITOR_COLOR_TYPE}, {"int", EDITOR_COLOR_TYPE}, {"long", EDITOR_COLOR_TYPE},
+    {"short", EDITOR_COLOR_TYPE}, {"signed", EDITOR_COLOR_TYPE}, {"struct", EDITOR_COLOR_TYPE},
+    {"union", EDITOR_COLOR_TYPE}, {"unsigned", EDITOR_COLOR_TYPE}, {"void", EDITOR_COLOR_TYPE},
+    {"_Bool", EDITOR_COLOR_TYPE}, {"_Complex", EDITOR_COLOR_TYPE}, {"_Imaginary", EDITOR_COLOR_TYPE},
+    /* Storage classes and qualifiers */
+    {"auto", EDITOR_COLOR_STORAGE}, {"const", EDITOR_COLOR_STORAGE}, {"extern", EDITOR_COLOR_STORAGE},
+    {"inline", EDITOR_COLOR_STORAGE}, {"register", EDITOR_COLOR_STORAGE}, {"restrict", EDITOR_COLOR_STORAGE},
+    {"static", EDITOR_COLOR_STORAGE}, {"typedef", EDITOR_COLOR_STORAGE}, {"volatile", EDITOR_COLOR_STORAGE},
+    /* Control flow, and sizeof */
+    {"break", EDITOR_COLOR_CONTROL}, {"case", EDITOR_COLOR_CONTROL}, {"continue", EDITOR_COLOR_CONTROL},
+    {"default", EDITOR_COLOR_CONTROL}, {"do", EDITOR_COLOR_CONTROL}, {"else", EDITOR_COLOR_CONTROL},
+    {"for", EDITOR_COLOR_CONTROL}, {"goto", EDITOR_COLOR_CONTROL}, {"if", EDITOR_COLOR_CONTROL},
+    {"return", EDITOR_COLOR_CONTROL}, {"sizeof", EDITOR_COLOR_CONTROL}, {"switch", EDITOR_COLOR_CONTROL},
+    {"while", EDITOR_COLOR_CONTROL},
+};
+
+/* The color of the word at word, which is its keyword's, or the text's if it isn't one */
+static color_t keywordColor(const unsigned char* word)
+{
+    int len = 0;
+    while (isWordChar(word[len])) {
+        len++;
+    }
+    for (int i = 0; i < (int)(sizeof(editor_keywords) / sizeof(editor_keywords[0])); i++) {
+        const char* k = editor_keywords[i].word;
+        if (k[0] == word[0] && (int)strlen(k) == len && memcmp(word, k, len) == 0) {
+            return editor_keywords[i].color;
+        }
+    }
+    return COLOR_TEXT;
+}
+
+static bool isDigitChar(unsigned char c)
+{
+    return c >= '0' && c <= '9';
+}
+
+/**
+ * C's lexer, which colors a C file's text (#143). It's given a line's characters in turn, from the line's start, in the
+ * state the lines before leave it, and gives each one's color:
+ * - comments: // to the line's end, and slash-star to the next star-slash, which can be lines below;
+ * - strings and character constants: from the quote to the next one not escaped with a backslash, or the line's end;
+ * - numbers: a word starting with a digit, or with a . and a digit, through the letters, digits, _ and dots after it;
+ * - keywords: editor_keywords' words, whole;
+ * - preprocessor lines: a line whose first token is #, after nothing but blanks and comments, all in its color but
+ *   its comments. A \ at its end, or a comment still open there, carries it onto the next line.
+ * Everything else is the text's color. Newlines go through it too, for the next line's state, EDITOR_LEX_COMMENT and
+ * EDITOR_LEX_PREPROC, which is all that's carried from one line to the next
+ */
+class CLexer {
+public:
+    void begin(unsigned char state)
+    {
+        m_state = state;
+        m_mode = (state & EDITOR_LEX_COMMENT) ? BLOCK : CODE;
+        m_preproc = (state & EDITOR_LEX_PREPROC) != 0;
+        m_blank = true;
+        m_star = false;
+        m_escaped = false;
+        m_splice = false;
+    }
+
+    /* The state the line being lexed started in: after a newline, the next line's */
+    unsigned char lineState() const
+    {
+        return m_state;
+    }
+
+    color_t step(const unsigned char* text, int i);
+
+private:
+    enum { CODE, BLOCK_OPENING, BLOCK, LINE, QUOTED, NUMBER, WORD };
+
+    unsigned char m_state;
+    unsigned char m_mode;
+    /* The line is a preprocessor line */
+    bool m_preproc;
+    /* Nothing but blanks and comments yet on the line, so a # makes it a preprocessor line */
+    bool m_blank;
+    /* In a block comment, after a * that a / would end it with */
+    bool m_star;
+    /* In a string or character constant: its quote, and whether the last character was a backslash escaping the next */
+    unsigned char m_quote;
+    bool m_escaped;
+    /* The last character was a \, or one and a \r, which carries a preprocessor line onto the next */
+    bool m_splice;
+    /* The word being lexed's color */
+    color_t m_word;
+};
+
+/* The color of the character at i, the next of the line's, in text, which has a 0 after its end */
+color_t CLexer::step(const unsigned char* text, int i)
+{
+    unsigned char c = text[i];
+    if (c == '\n') {
+        bool comment = m_mode == BLOCK;
+        begin((comment ? EDITOR_LEX_COMMENT : 0) | (m_preproc && (comment || m_splice) ? EDITOR_LEX_PREPROC : 0));
+        return COLOR_TEXT;
+    }
+    m_splice = c == '\\' || (c == '\r' && m_splice);
+
+    switch (m_mode) {
+    case BLOCK_OPENING:
+        /* The * of slash-star, which can't also be the star of a star-slash */
+        m_mode = BLOCK;
+        return EDITOR_COLOR_COMMENT;
+    case BLOCK:
+        if (m_star && c == '/') {
+            m_mode = CODE;
+        }
+        m_star = c == '*';
+        return EDITOR_COLOR_COMMENT;
+    case LINE:
+        return EDITOR_COLOR_COMMENT;
+    case QUOTED:
+        if (m_escaped) {
+            m_escaped = false;
+        } else if (c == '\\') {
+            m_escaped = true;
+        } else if (c == m_quote) {
+            m_mode = CODE;
+        }
+        return m_preproc ? EDITOR_COLOR_PREPROC : EDITOR_COLOR_STRING;
+    case NUMBER:
+        if (isWordChar(c) || c == '.') {
+            return EDITOR_COLOR_NUMBER;
+        }
+        break;
+    case WORD:
+        if (isWordChar(c)) {
+            return m_word;
+        }
+        break;
+    }
+
+    /* Code: what this character starts */
+    m_mode = CODE;
+    if (c == '/' && text[i + 1] == '/') {
+        m_mode = LINE;
+        return EDITOR_COLOR_COMMENT;
+    }
+    if (c == '/' && text[i + 1] == '*') {
+        m_mode = BLOCK_OPENING;
+        m_star = false;
+        return EDITOR_COLOR_COMMENT;
+    }
+
+    bool first = m_blank;
+    if (c != ' ' && c != '\t') {
+        m_blank = false;
+    }
+    if (c == '"' || c == '\'') {
+        m_mode = QUOTED;
+        m_quote = c;
+        m_escaped = false;
+        return m_preproc ? EDITOR_COLOR_PREPROC : EDITOR_COLOR_STRING;
+    }
+    if (first && c == '#') {
+        m_preproc = true;
+    }
+    if (m_preproc) {
+        return EDITOR_COLOR_PREPROC;
+    }
+    if (isDigitChar(c) || (c == '.' && isDigitChar(text[i + 1]))) {
+        m_mode = NUMBER;
+        return EDITOR_COLOR_NUMBER;
+    }
+    if (isWordChar(c)) {
+        m_mode = WORD;
+        m_word = keywordColor(&text[i]);
+        return m_word;
+    }
+    return COLOR_TEXT;
+}
+
+/**
+ * Lexes the line that starts at *index, in the state it starts in, and moves *index to the next line's start.
+ * @return the next line's state
+ */
+unsigned char Editor::lexLine(int* index, unsigned char state) const
+{
+    CLexer lex;
+    lex.begin(state);
+    int i = *index;
+    while (i < m_bufferHead) {
+        unsigned char c = m_textBuffer[i];
+        lex.step(m_textBuffer, i);
+        i++;
+        if (c == '\n') {
+            break;
+        }
+    }
+    *index = i;
+    return lex.lineState();
+}
+
+/**
+ * The lexer's state at the start of line, counting from 0, which starts at index (#143). It's lexed from the nearest
+ * point before it whose state is kept: the checkpoint at the start of its EDITOR_LEX_LINES lines, which are worked
+ * out first up to there if they aren't yet, or the anchor, the view's line when it was last drawn, if that's nearer.
+ * So a key costs the lines from the anchor, usually none, and a jump far away a pass over the distance. The anchor
+ * moves to index
+ */
+unsigned char Editor::lexStateAt(int line, int index)
+{
+    int k = clampInt(line / EDITOR_LEX_LINES, 0, EDITOR_LEX_POINTS - 1);
+    while (m_lexPoints <= k) {
+        int i = m_lexIndex[m_lexPoints - 1];
+        unsigned char state = m_lexState[m_lexPoints - 1];
+        for (int n = 0; n < EDITOR_LEX_LINES && i < m_bufferHead; n++) {
+            state = lexLine(&i, state);
+        }
+        m_lexIndex[m_lexPoints] = i;
+        m_lexState[m_lexPoints] = state;
+        m_lexPoints++;
+    }
+
+    int i = m_lexIndex[k];
+    unsigned char state = m_lexState[k];
+    if (m_lexAnchor >= i && m_lexAnchor <= index) {
+        i = m_lexAnchor;
+        state = m_lexAnchorState;
+    }
+    while (i < index) {
+        state = lexLine(&i, state);
+    }
+
+    m_lexAnchor = index;
+    m_lexAnchorState = state;
+    return state;
+}
+
+/**
+ * The text changed at index: the states kept for lines starting after it go, since the text before a line is all its
+ * state depends on. A line starting at index keeps its own
+ */
+void Editor::lexEdited(int index)
+{
+    while (m_lexPoints > 1 && m_lexIndex[m_lexPoints - 1] > index) {
+        m_lexPoints--;
+    }
+    if (m_lexAnchor > index) {
+        m_lexAnchor = -1;
+    }
+}
+
+/* A new text: nothing's kept but the first line's state, which starts nothing */
+void Editor::lexReset()
+{
+    m_lexIndex[0] = 0;
+    m_lexState[0] = 0;
+    m_lexPoints = 1;
+    m_lexAnchor = -1;
+    m_lexAnchorState = 0;
+}
+
+/* Whether path is a C file's, whose text is colored: one ending in .c or .h, in any case, as FAT names are (#143) */
+static bool isCPath(const char* path)
+{
+    int len = strlen(path);
+    if (len < 3 || path[len - 2] != '.' || path[len - 3] == '/') {
+        return false;
+    }
+    char ext = (char)tolower((unsigned char)path[len - 1]);
+    return ext == 'c' || ext == 'h';
 }
 
 void Editor::reDraw(int from, int to)
@@ -1892,6 +2457,9 @@ void Editor::reDraw(int from, int to)
     }
 
     normalizeScroll(cols);
+
+    /* Only a C file's text is colored as C */
+    m_colorC = isCPath(m_currentPath);
 
     int text_x = textStartX();
     int text_h = c_height - HEADER_HEIGHT - STATUS_HEIGHT;
@@ -1923,11 +2491,27 @@ void Editor::reDraw(int from, int to)
         row_lines[0] = line_no;
     }
 
-    setColor(COLOR_TEXT);
+    /* A C file's colors, lexed from the view's line's start, in the state the lines above leave (#143) */
+    CLexer lex;
+    if (m_colorC) {
+        int line_start = lineStart(view_start);
+        lex.begin(lexStateAt(line_no - 1, line_start));
+        for (int i = line_start; i < view_start; i++) {
+            lex.step(m_textBuffer, i);
+        }
+    }
+    color_t cursor_color = COLOR_TEXT;
 
     TextLayout at(cols);
     for (int i = view_start; i < m_bufferHead; i++) {
         unsigned char ch = m_textBuffer[i];
+        color_t color = COLOR_TEXT;
+        if (m_colorC) {
+            color = lex.step(m_textBuffer, i);
+        }
+        if (i == m_bufferEdit) {
+            cursor_color = color;
+        }
         at.place(ch);
         if (at.row >= draw_rows) {
             break;
@@ -1948,20 +2532,11 @@ void Editor::reDraw(int from, int to)
             continue;
         }
 
-        /* A word is letters, digits and _, so a keyword at the start of a longer name, like int32_t, isn't one (#142) */
-        if (isWordChar(ch)) {
-            if (i == view_start || !isWordChar(m_textBuffer[i - 1])) {
-                highlightWordAt(i);
-            }
-        } else {
-            setColor(COLOR_TEXT);
-        }
-
         if (ch < 32 || ch > 126) {
             ch = '?';
         }
 
-        gfx_draw_char(text_x + (at.col * 8), TEXT_TOP + (at.row * TEXT_ROW_HEIGHT) + TEXT_CHAR_Y, ch, m_textColor);
+        gfx_draw_char(text_x + (at.col * 8), TEXT_TOP + (at.row * TEXT_ROW_HEIGHT) + TEXT_CHAR_Y, ch, color);
     }
 
     drawLineNumbers(row_lines, draw_rows);
@@ -1986,12 +2561,7 @@ void Editor::reDraw(int from, int to)
             if (m_bufferEdit < m_bufferHead && m_textBuffer[m_bufferEdit] != '\n') {
                 unsigned char ch = m_textBuffer[m_bufferEdit];
                 if (ch >= 32 && ch <= 126) {
-                    if (isWordChar(ch)) {
-                        highlightWordAt(m_bufferEdit);
-                    } else {
-                        setColor(COLOR_TEXT);
-                    }
-                    gfx_draw_char(cx, cy + TEXT_CHAR_Y, ch, m_textColor);
+                    gfx_draw_char(cx, cy + TEXT_CHAR_Y, ch, cursor_color);
                 }
             }
         }
@@ -2026,7 +2596,7 @@ void Editor::drawStatus()
      */
     const char* dots = "";
     int tag_len = m_readOnly ? (int)strlen(dirty_tag) : 1;
-    int room = textClipWidth() / 8 - tag_len - (int)strlen(selected ? "  Ln:99999 Col:9999  65535 selected" : "  Ln:99999 Col:9999");
+    int room = textClipWidth() / 8 - tag_len - (int)strlen(selected ? "  Ln:262144 Col:9999  262143 selected" : "  Ln:262144 Col:9999");
     int label_len = strlen(file_label);
     if (room > 4 && label_len > room) {
         file_label += label_len - (room - 3);
@@ -2044,63 +2614,10 @@ void Editor::drawStatus()
     drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "%s%s%s  Ln:%d Col:%d", dots, file_label, dirty_tag, line, colnum);
 }
 
-void Editor::setColor(color_t color)
-{
-    m_textColor = color;
-}
-
-void Editor::highlightSyntax(unsigned char* start)
-{
-    if (start == nullptr) {
-        setColor(COLOR_TEXT);
-        return;
-    }
-
-    int tokenLen = 0;
-    while (isWordChar(start[tokenLen])) {
-        tokenLen++;
-    }
-
-    if (tokenLen == 0) {
-        setColor(COLOR_TEXT);
-        return;
-    }
-
-    for (int i = 0; i < 20; i++) {
-        struct keyword* key = &keyWords[i];
-        if (key->color == 0) {
-            break;
-        }
-
-        int keyLen = strlen(key->word);
-        if (tokenLen == keyLen && memcmp(start, key->word, keyLen) == 0) {
-            setColor(key->color);
-            return;
-        }
-    }
-
-    setColor(COLOR_TEXT);
-}
-
-/* Sets the color of the word index is in, from the word's start */
-void Editor::highlightWordAt(int index)
-{
-    int start = index;
-    while (start > 0 && isWordChar(m_textBuffer[start - 1])) {
-        start--;
-    }
-    highlightSyntax(&m_textBuffer[start]);
-}
-
+/* The text's lines, one more than its newlines, as the buffer* functions keep it */
 int Editor::countLines() const
 {
-    int lines = 1;
-    for (int i = 0; i < m_bufferHead; i++) {
-        if (m_textBuffer[i] == '\n') {
-            lines++;
-        }
-    }
-    return lines;
+    return m_lineCount;
 }
 
 /* Whether the text differs from the last save, which undoing or redoing back to it makes it not. Without a history, whether it was edited */
@@ -2119,132 +2636,11 @@ void Editor::getCursorLineCol(int& line, int& col) const
     col = lineColumn(m_bufferEdit) + 1;
 }
 
-void Editor::Lex()
+/* Forgets what's kept about the text's past: the } that typing { added, and the undo history. The text is the caller's */
+void Editor::clearHistory()
 {
-}
-
-bool Editor::ropeLocate(int index, struct rope_node** out_node, int* out_offset) const
-{
-    if (index < 0 || index > m_bufferHead) {
-        return false;
-    }
-
-    int pos = 0;
-    struct rope_node* node = m_ropeHead;
-    while (node != nullptr) {
-        if (index <= pos + node->len) {
-            *out_node = node;
-            *out_offset = index - pos;
-            return true;
-        }
-
-        pos += node->len;
-        node = node->next;
-    }
-
-    if (index == pos) {
-        *out_node = nullptr;
-        *out_offset = 0;
-        return true;
-    }
-
-    return false;
-}
-
-Editor::rope_node* Editor::ropeCreateNode()
-{
-    struct rope_node* node = (struct rope_node*) malloc(sizeof(struct rope_node));
-    if (node == nullptr) {
-        return nullptr;
-    }
-
-    memset(node, 0, sizeof(struct rope_node));
-    node->prev = nullptr;
-    node->next = nullptr;
-    node->len = 0;
-    return node;
-}
-
-void Editor::ropeDetachNode(struct rope_node* node)
-{
-    if (node == nullptr) {
-        return;
-    }
-
-    if (node->prev != nullptr) {
-        node->prev->next = node->next;
-    } else {
-        m_ropeHead = node->next;
-    }
-
-    if (node->next != nullptr) {
-        node->next->prev = node->prev;
-    } else {
-        m_ropeTail = node->prev;
-    }
-
-    free(node);
-}
-
-void Editor::ropeTryMerge(struct rope_node* node)
-{
-    if (node == nullptr) {
-        return;
-    }
-
-    if (node->next != nullptr) {
-        struct rope_node* next = node->next;
-        if (node->len + next->len <= ROPE_CHUNK_SIZE) {
-            memcpy(&node->data[node->len], next->data, next->len);
-            node->len += next->len;
-            ropeDetachNode(next);
-        }
-    }
-
-    if (node->prev != nullptr) {
-        struct rope_node* prev = node->prev;
-        if (prev->len + node->len <= ROPE_CHUNK_SIZE) {
-            memcpy(&prev->data[prev->len], node->data, node->len);
-            prev->len += node->len;
-            ropeDetachNode(node);
-        }
-    }
-}
-
-void Editor::ropeClear()
-{
-    struct rope_node* node = m_ropeHead;
-    while (node != nullptr) {
-        struct rope_node* next = node->next;
-        free(node);
-        node = next;
-    }
-
-    m_ropeHead = nullptr;
-    m_ropeTail = nullptr;
     m_autoBraceCount = 0;
     undoClear();
-}
-
-/* Copies count characters from index in the rope to out, which ropeDeleteRange can't do once they're gone */
-void Editor::ropeCopy(int index, int count, unsigned char* out) const
-{
-    struct rope_node* node = nullptr;
-    int offset = 0;
-    if (count <= 0 || !ropeLocate(index, &node, &offset)) {
-        return;
-    }
-
-    while (node != nullptr && count > 0) {
-        int take = minInt(count, node->len - offset);
-        if (take > 0) {
-            memcpy(out, &node->data[offset], take);
-            out += take;
-            count -= take;
-        }
-        node = node->next;
-        offset = 0;
-    }
 }
 
 /* len characters went in at index: the } at or after it move along */
@@ -2282,279 +2678,114 @@ int Editor::autoBraceAt(int index) const
     return -1;
 }
 
-bool Editor::ropeLoadFromBuffer(const unsigned char* data, int len)
+/**
+ * Makes room in the buffer for a text of length characters and the 0 after it, doubling it up to EDITOR_BUFFER_SIZE
+ * (#213). A pointer into the text is no good after it.
+ * @return false, with the text as it was, over EDITOR_BUFFER_SIZE - 1 characters or without the memory
+ */
+bool Editor::reserveText(int length)
 {
-    ropeClear();
-
-    if (data == nullptr || len <= 0) {
-        m_bufferHead = 0;
+    if (length > EDITOR_BUFFER_SIZE - 1) {
+        return false;
+    }
+    if (length + 1 <= m_bufferSize) {
         return true;
     }
 
-    int pos = 0;
-    while (pos < len) {
-        int chunk = len - pos;
-        if (chunk > ROPE_CHUNK_SIZE) {
-            chunk = ROPE_CHUNK_SIZE;
-        }
-
-        struct rope_node* node = ropeCreateNode();
-        if (node == nullptr) {
-            ropeClear();
-            return false;
-        }
-
-        memcpy(node->data, &data[pos], chunk);
-        node->len = chunk;
-
-        if (m_ropeTail == nullptr) {
-            m_ropeHead = node;
-            m_ropeTail = node;
-        } else {
-            m_ropeTail->next = node;
-            node->prev = m_ropeTail;
-            m_ropeTail = node;
-        }
-
-        pos += chunk;
+    int size = m_bufferSize;
+    while (size < length + 1) {
+        size = minInt(size * 2, EDITOR_BUFFER_SIZE);
     }
-
-    m_bufferHead = len;
+    unsigned char* grown = (unsigned char*) malloc(size);
+    if (grown == nullptr) {
+        return false;
+    }
+    memcpy(grown, m_textBuffer, m_bufferHead + 1);
+    free(m_textBuffer);
+    m_textBuffer = grown;
+    m_bufferSize = size;
     return true;
 }
 
-bool Editor::ropeSyncToBuffer()
+/* Back to EDITOR_BUFFER_MIN, for a new text, so a small one doesn't keep a big one's buffer. Without the memory, it stays */
+void Editor::shrinkText()
 {
-    int pos = 0;
-    struct rope_node* node = m_ropeHead;
-    while (node != nullptr) {
-        int to_copy = node->len;
-        if (to_copy < 0) {
-            to_copy = 0;
-        }
+    if (m_bufferSize <= EDITOR_BUFFER_MIN) {
+        return;
+    }
+    unsigned char* small = (unsigned char*) malloc(EDITOR_BUFFER_MIN);
+    if (small == nullptr) {
+        return;
+    }
+    free(m_textBuffer);
+    m_textBuffer = small;
+    m_bufferSize = EDITOR_BUFFER_MIN;
+}
 
-        if (pos + to_copy > m_bufferSize - 1) {
-            to_copy = (m_bufferSize - 1) - pos;
-            if (to_copy < 0) {
-                to_copy = 0;
-            }
-        }
+/**
+ * The four functions that change the text, m_textBuffer's first m_bufferHead characters, with a 0 after them. Each
+ * keeps the lines and rows counted, drops the lexer's states after the change (#143), moves the } kept in
+ * m_autoBraces, and records the change for undo (#161). The text holds at most EDITOR_BUFFER_SIZE - 1 characters, in
+ * a buffer that grows to fit them (reserveText).
+ */
 
-        if (to_copy > 0) {
-            memcpy(&m_textBuffer[pos], node->data, to_copy);
-            pos += to_copy;
-        }
+/* Inserts c at index. @return false without the room */
+bool Editor::bufferInsertChar(int index, unsigned char c)
+{
+    return bufferInsertText(index, &c, 1);
+}
 
-        if (pos >= m_bufferSize - 1) {
-            break;
-        }
-
-        node = node->next;
+/**
+ * Inserts len characters at index, moving the rest along. data mustn't point into the text, which may move.
+ * @return false, having changed nothing, over the limit or without the memory to grow
+ */
+bool Editor::bufferInsertText(int index, const unsigned char* data, int len)
+{
+    if (len <= 0) {
+        return true;
+    }
+    if (index < 0 || index > m_bufferHead || !reserveText(m_bufferHead + len)) {
+        return false;
     }
 
-    m_bufferHead = pos;
+    /* The rows kept, if they're counted: the lines the text goes into have their rows counted before and after */
+    int cols = m_rowsCols;
+    int rows_before = cols > 0 ? rowsOfLine(lineStart(index), cols) : 0;
+
+    memmove(&m_textBuffer[index + len], &m_textBuffer[index], m_bufferHead - index);
+    memcpy(&m_textBuffer[index], data, len);
+    m_bufferHead += len;
     m_textBuffer[m_bufferHead] = 0;
 
-    if (m_bufferEdit > m_bufferHead) {
-        m_bufferEdit = m_bufferHead;
+    /* Text before the anchor's line moves it along, by its lines too. Text at its start leaves where that line starts */
+    int newlines = countNewlines(index, index + len);
+    m_lineCount += newlines;
+    if (index < m_anchorIndex) {
+        m_anchorIndex += len;
+        m_anchorLine += newlines;
     }
-
+    if (cols > 0) {
+        int rows = rowsOfLines(index, index + len, cols) - rows_before;
+        m_totalRows += rows;
+        if (index < m_rowAnchorIndex) {
+            m_rowAnchorIndex += len;
+            m_rowAnchorRows += rows;
+        }
+    }
+    lexEdited(index);
+    autoBracesInserted(index, len);
+    undoInserted(index, data, len);
     return true;
 }
 
-bool Editor::ropeInsertChar(int index, unsigned char c)
+/* Deletes the character at index. @return false if there's none */
+bool Editor::bufferDeleteChar(int index)
 {
-    if (!ropeAddChar(index, c)) {
-        return false;
-    }
-
-    autoBracesInserted(index, 1);
-    undoInserted(index, &c, 1);
-    return true;
+    return index >= 0 && index < m_bufferHead && bufferDeleteRange(index, 1);
 }
 
-/* Inserts c at index in the rope. ropeInsertChar also moves the } kept in m_autoBraces, and records the edit for undo */
-bool Editor::ropeAddChar(int index, unsigned char c)
-{
-    if (m_bufferHead >= m_bufferSize - 1) {
-        return false;
-    }
-
-    struct rope_node* node = nullptr;
-    int offset = 0;
-    if (!ropeLocate(index, &node, &offset)) {
-        return false;
-    }
-
-    if (m_ropeHead == nullptr) {
-        struct rope_node* fresh = ropeCreateNode();
-        if (fresh == nullptr) {
-            return false;
-        }
-
-        fresh->data[0] = c;
-        fresh->len = 1;
-        m_ropeHead = fresh;
-        m_ropeTail = fresh;
-        m_bufferHead++;
-        return true;
-    }
-
-    if (node == nullptr) {
-        if (m_ropeTail->len < ROPE_CHUNK_SIZE) {
-            m_ropeTail->data[m_ropeTail->len++] = c;
-        } else {
-            struct rope_node* fresh = ropeCreateNode();
-            if (fresh == nullptr) {
-                return false;
-            }
-
-            fresh->data[0] = c;
-            fresh->len = 1;
-            fresh->prev = m_ropeTail;
-            m_ropeTail->next = fresh;
-            m_ropeTail = fresh;
-        }
-
-        m_bufferHead++;
-        return true;
-    }
-
-    if (offset == node->len && node->len < ROPE_CHUNK_SIZE) {
-        node->data[node->len++] = c;
-        m_bufferHead++;
-        return true;
-    }
-
-    if (offset == 0 && node->len < ROPE_CHUNK_SIZE) {
-        memmove(&node->data[1], &node->data[0], node->len);
-        node->data[0] = c;
-        node->len++;
-        m_bufferHead++;
-        return true;
-    }
-
-    if (offset > 0 && offset < node->len) {
-        int right_len = node->len - offset;
-
-        struct rope_node* right = ropeCreateNode();
-        if (right == nullptr) {
-            return false;
-        }
-
-        memcpy(right->data, &node->data[offset], right_len);
-        right->len = right_len;
-
-        node->len = offset;
-
-        right->next = node->next;
-        right->prev = node;
-        if (node->next != nullptr) {
-            node->next->prev = right;
-        } else {
-            m_ropeTail = right;
-        }
-        node->next = right;
-
-        if (node->len < ROPE_CHUNK_SIZE) {
-            node->data[node->len++] = c;
-        } else {
-            struct rope_node* mid = ropeCreateNode();
-            if (mid == nullptr) {
-                return false;
-            }
-
-            mid->data[0] = c;
-            mid->len = 1;
-
-            mid->prev = node;
-            mid->next = right;
-            node->next = mid;
-            right->prev = mid;
-        }
-
-        m_bufferHead++;
-        return true;
-    }
-
-    struct rope_node* fresh = ropeCreateNode();
-    if (fresh == nullptr) {
-        return false;
-    }
-
-    fresh->data[0] = c;
-    fresh->len = 1;
-
-    if (offset <= 0) {
-        fresh->prev = node->prev;
-        fresh->next = node;
-        if (node->prev != nullptr) {
-            node->prev->next = fresh;
-        } else {
-            m_ropeHead = fresh;
-        }
-        node->prev = fresh;
-    } else {
-        fresh->next = node->next;
-        fresh->prev = node;
-        if (node->next != nullptr) {
-            node->next->prev = fresh;
-        } else {
-            m_ropeTail = fresh;
-        }
-        node->next = fresh;
-    }
-
-    m_bufferHead++;
-    return true;
-}
-
-bool Editor::ropeDeleteChar(int index)
-{
-    if (index < 0 || index >= m_bufferHead) {
-        return false;
-    }
-
-    struct rope_node* node = nullptr;
-    int offset = 0;
-    if (!ropeLocate(index, &node, &offset)) {
-        return false;
-    }
-
-    if (node == nullptr) {
-        return false;
-    }
-
-    if (offset == node->len && node->next != nullptr) {
-        node = node->next;
-        offset = 0;
-    }
-
-    if (offset < 0 || offset >= node->len) {
-        return false;
-    }
-
-    undoDeleting(index, 1);
-    memmove(&node->data[offset], &node->data[offset + 1], node->len - offset - 1);
-    node->len--;
-    m_bufferHead--;
-    autoBracesDeleted(index, 1);
-
-    if (node->len <= 0) {
-        ropeDetachNode(node);
-    } else {
-        ropeTryMerge(node);
-    }
-
-    if (m_bufferHead < 0) {
-        m_bufferHead = 0;
-    }
-
-    return true;
-}
-
-/* Deletes count characters from index, cutting each node they're in once. @return false if they aren't all in the text */
-bool Editor::ropeDeleteRange(int index, int count)
+/* Deletes count characters from index, moving the rest back. @return false, having changed nothing, if they aren't all in the text */
+bool Editor::bufferDeleteRange(int index, int count)
 {
     if (index < 0 || count < 0 || index + count > m_bufferHead) {
         return false;
@@ -2563,147 +2794,47 @@ bool Editor::ropeDeleteRange(int index, int count)
         return true;
     }
 
-    struct rope_node* node = nullptr;
-    int offset = 0;
-    if (!ropeLocate(index, &node, &offset) || node == nullptr) {
-        return false;
-    }
-
-    /* The check above means they're all there, so they all go */
+    /* Recorded while they're still there */
     undoDeleting(index, count);
 
-    /* At the end of a node, the first character to go is in the next */
-    int left = count;
-    while (node != nullptr && left > 0) {
-        struct rope_node* next = node->next;
-        int take = minInt(left, node->len - offset);
-        if (take > 0) {
-            memmove(&node->data[offset], &node->data[offset + take], node->len - offset - take);
-            node->len -= take;
-            left -= take;
-            m_bufferHead -= take;
-            if (node->len == 0) {
-                ropeDetachNode(node);
-            }
+    /**
+     * Text before the anchor's line moves it back, by its lines too. If the newline before that line goes, it joins
+     * the line before, which index is then on: its number is the anchor's less the newlines from index to the anchor
+     */
+    int newlines = countNewlines(index, index + count);
+    int anchor_back = index < m_anchorIndex && index + count >= m_anchorIndex ? countNewlines(index, m_anchorIndex) : 0;
+
+    /* The rows kept, if they're counted: those of the lines it touches before, and of the line they become after */
+    int cols = m_rowsCols;
+    int rows_before = cols > 0 ? rowsOfLines(index, index + count, cols) : 0;
+    int row_anchor_back = cols > 0 && index < m_rowAnchorIndex && index + count >= m_rowAnchorIndex ?
+                              rowsOfLines(index, m_rowAnchorIndex - 1, cols) : 0;
+
+    memmove(&m_textBuffer[index], &m_textBuffer[index + count], m_bufferHead - index - count);
+    m_bufferHead -= count;
+    m_textBuffer[m_bufferHead] = 0;
+
+    m_lineCount -= newlines;
+    if (index + count < m_anchorIndex) {
+        m_anchorIndex -= count;
+        m_anchorLine -= newlines;
+    } else if (index < m_anchorIndex) {
+        m_anchorLine -= anchor_back;
+        m_anchorIndex = lineStart(index);
+    }
+    if (cols > 0) {
+        int rows = rowsOfLine(lineStart(index), cols) - rows_before;
+        m_totalRows += rows;
+        if (index + count < m_rowAnchorIndex) {
+            m_rowAnchorIndex -= count;
+            m_rowAnchorRows += rows;
+        } else if (index < m_rowAnchorIndex) {
+            m_rowAnchorRows -= row_anchor_back;
+            m_rowAnchorIndex = lineStart(index);
         }
-        node = next;
-        offset = 0;
     }
-
-    autoBracesDeleted(index, count - left);
-
-    /* Joins the nodes either side of the gap, if they fit in one */
-    if (ropeLocate(index, &node, &offset) && node != nullptr) {
-        ropeTryMerge(node);
-    }
-
-    return left == 0;
-}
-
-/**
- * Inserts len characters at index, in nodes of their own, splitting the node index is in the middle of.
- * @return false, having changed nothing, without the room in the buffer or the memory for the nodes
- */
-bool Editor::ropeInsertText(int index, const unsigned char* data, int len)
-{
-    if (len <= 0) {
-        return true;
-    }
-    /* Undo and redo put the new text in before taking the old out, so the rope can hold more than the buffer meanwhile (undoApply) */
-    if (index < 0 || index > m_bufferHead || (!m_undoing && m_bufferHead + len > m_bufferSize - 1)) {
-        return false;
-    }
-
-    /* The new nodes first, so running out of memory leaves the rope as it was */
-    struct rope_node* first = nullptr;
-    struct rope_node* last = nullptr;
-    for (int pos = 0; pos < len; pos += ROPE_CHUNK_SIZE) {
-        struct rope_node* fresh = ropeCreateNode();
-        if (fresh == nullptr) {
-            while (first != nullptr) {
-                struct rope_node* next = first->next;
-                free(first);
-                first = next;
-            }
-            return false;
-        }
-
-        fresh->len = minInt(ROPE_CHUNK_SIZE, len - pos);
-        memcpy(fresh->data, &data[pos], fresh->len);
-        fresh->prev = last;
-        if (last != nullptr) {
-            last->next = fresh;
-        } else {
-            first = fresh;
-        }
-        last = fresh;
-    }
-
-    struct rope_node* node = nullptr;
-    int offset = 0;
-    ropeLocate(index, &node, &offset);
-
-    /* They go between prev and next. An empty rope has neither */
-    struct rope_node* prev = nullptr;
-    struct rope_node* next = nullptr;
-    if (node != nullptr && offset == 0) {
-        prev = node->prev;
-        next = node;
-    } else if (node != nullptr && offset == node->len) {
-        prev = node;
-        next = node->next;
-    } else if (node != nullptr) {
-        struct rope_node* right = ropeCreateNode();
-        if (right == nullptr) {
-            while (first != nullptr) {
-                struct rope_node* following = first->next;
-                free(first);
-                first = following;
-            }
-            return false;
-        }
-
-        right->len = node->len - offset;
-        memcpy(right->data, &node->data[offset], right->len);
-        node->len = offset;
-
-        right->prev = node;
-        right->next = node->next;
-        if (node->next != nullptr) {
-            node->next->prev = right;
-        } else {
-            m_ropeTail = right;
-        }
-        node->next = right;
-
-        prev = node;
-        next = right;
-    }
-
-    first->prev = prev;
-    last->next = next;
-    if (prev != nullptr) {
-        prev->next = first;
-    } else {
-        m_ropeHead = first;
-    }
-    if (next != nullptr) {
-        next->prev = last;
-    } else {
-        m_ropeTail = last;
-    }
-    m_bufferHead += len;
-    autoBracesInserted(index, len);
-    undoInserted(index, data, len);
-
-    /* Joins the nodes at either end, if they fit in one */
-    if (ropeLocate(index, &node, &offset) && node != nullptr) {
-        ropeTryMerge(node);
-    }
-    if (ropeLocate(index + len, &node, &offset) && node != nullptr) {
-        ropeTryMerge(node);
-    }
-
+    lexEdited(index);
+    autoBracesDeleted(index, count);
     return true;
 }
 
@@ -2735,11 +2866,10 @@ bool Editor::deleteRange(int start, int end)
 {
     start = clampInt(start, 0, m_bufferHead);
     end = clampInt(end, start, m_bufferHead);
-    if (end == start || !ropeDeleteRange(start, end - start)) {
+    if (end == start || !bufferDeleteRange(start, end - start)) {
         return false;
     }
 
-    ropeSyncToBuffer();
     m_bufferEdit = start;
     m_dirty = 1;
     m_preferredColumn = -1;
@@ -2762,11 +2892,10 @@ bool Editor::deleteSelection()
 /* Inserts len characters at index, and puts the cursor after them. @return false without the room or the memory */
 bool Editor::insertText(int index, const unsigned char* data, int len)
 {
-    if (!ropeInsertText(index, data, len)) {
+    if (!bufferInsertText(index, data, len)) {
         return false;
     }
 
-    ropeSyncToBuffer();
     m_bufferEdit = index + len;
     m_dirty = 1;
     m_preferredColumn = -1;
@@ -2804,10 +2933,10 @@ void Editor::paste()
     int start = m_bufferEdit;
     int end = m_bufferEdit;
     selectionRange(start, end);
-    int room = (m_bufferSize - 1) - (m_bufferHead - (end - start));
+    int room = (EDITOR_BUFFER_SIZE - 1) - (m_bufferHead - (end - start));
     int len = minInt(size, room);
     if (len <= 0) {
-        drawStatusLine(COLOR_VGA_RED, "Can't paste: the Editor holds %d characters.", m_bufferSize - 1);
+        drawStatusLine(COLOR_VGA_RED, "Can't paste: the Editor holds %d characters.", EDITOR_BUFFER_SIZE - 1);
         return;
     }
 
@@ -2823,6 +2952,13 @@ void Editor::paste()
         len = size > 0 ? size : 0;
     }
 
+    /* The room first, so that without it the selection stays */
+    if (!reserveText(m_bufferHead - (end - start) + len)) {
+        free(data);
+        drawStatusLine(COLOR_VGA_RED, "Can't paste: out of memory.");
+        return;
+    }
+
     /* An anchor with nothing selected yet, as after a click, would select the pasted text */
     deleteSelection();
     clearSelection();
@@ -2832,7 +2968,7 @@ void Editor::paste()
     if (!pasted) {
         drawStatusLine(COLOR_VGA_RED, "Can't paste: out of memory.");
     } else if (len < size) {
-        drawStatusLine(COLOR_VGA_RED, "Pasted %d of %d characters: the Editor holds %d.", len, size, m_bufferSize - 1);
+        drawStatusLine(COLOR_VGA_RED, "Pasted %d of %d characters: the Editor holds %d.", len, size, EDITOR_BUFFER_SIZE - 1);
     }
 }
 
@@ -2996,7 +3132,7 @@ void Editor::undoInserted(int index, const unsigned char* data, int len)
     step->ins += len;
 }
 
-/* Records for undo that len characters are about to go from index, copying them out of the rope while they're there */
+/* Records for undo that len characters are about to go from index, copying them out of the text while they're there */
 void Editor::undoDeleting(int index, int len)
 {
     struct undo_step* step = undoStepFor(index, len, false);
@@ -3008,8 +3144,12 @@ void Editor::undoDeleting(int index, int len)
     unsigned char* del = (unsigned char*)(step + 1);
     int ahead = step->pos - index;
     memmove(&del[ahead], del, step->del);
-    ropeCopy(index, ahead, del);
-    ropeCopy(step->pos, len - ahead, &del[ahead + step->del]);
+    if (ahead > 0) {
+        memcpy(del, &m_textBuffer[index], ahead);
+    }
+    if (len - ahead > 0) {
+        memcpy(&del[ahead + step->del], &m_textBuffer[step->pos], len - ahead);
+    }
     step->del += len;
     step->pos = index;
 }
@@ -3046,27 +3186,25 @@ void Editor::undoKeyEnd()
 }
 
 /**
- * Changes the text as the step did, or back as it was. The text going in goes in after the text coming out, before
- * that's deleted, so running out of memory changes nothing. Meanwhile the rope can hold both, more than the buffer, so
- * ropeInsertText lets it while m_undoing, and the buffer is synced after.
- * @return false without the memory
+ * Changes the text as the step did, or back as it was: the text going out comes out, then the text coming in goes in.
+ * The result is the text from before or after the step, which fitted then, but the room for it is made first, so
+ * running out of memory changes nothing.
+ * @return false without the room
  */
 bool Editor::undoApply(const struct undo_step* step, bool redo)
 {
     const unsigned char* del = (const unsigned char*)(step + 1);
     const unsigned char* ins = del + step->del;
     int out = redo ? step->del : step->ins;
+    const unsigned char* in = redo ? ins : del;
+    int in_len = redo ? step->ins : step->del;
+    if (step->pos + out > m_bufferHead || !reserveText(m_bufferHead - out + in_len)) {
+        return false;
+    }
 
     m_undoing = true;
-    bool done = redo ? ropeInsertText(step->pos + out, ins, step->ins) : ropeInsertText(step->pos + out, del, step->del);
-    if (done) {
-        ropeDeleteRange(step->pos, out);
-    }
+    bool done = bufferDeleteRange(step->pos, out) && bufferInsertText(step->pos, in, in_len);
     m_undoing = false;
-
-    if (done) {
-        ropeSyncToBuffer();
-    }
     return done;
 }
 
@@ -3156,10 +3294,12 @@ void Editor::scroll(int lines)
 
 void Editor::Reset()
 {
-    ropeClear();
+    clearHistory();
 
+    shrinkText();
     memset(m_textBuffer, 0, m_bufferSize);
     m_bufferHead = 0;
+    resetLines();
     m_bufferEdit = 0;
     m_fileSize = 0;
     m_dirty = 0;
@@ -3257,12 +3397,30 @@ bool Editor::Open(char* path)
     strncpy(m_currentPath, absolute, (uint32_t)(sizeof(m_currentPath) - 1));
     m_currentPath[sizeof(m_currentPath) - 1] = 0;
 
+    /* Reading takes a while on slow hardware, so say what's happening, with the title naming the file, and show it (#210) */
+    if (m_fd >= 0) {
+        drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "Opening %s...", absolute);
+        endFrame();
+    }
+
+    shrinkText();
     memset(m_textBuffer, 0, m_bufferSize);
 
-    /* As much as fits. A failed read loads nothing, and leaves no path, so nothing can be saved over the file */
+    /**
+     * As much as fits, the buffer growing as it fills, up to EDITOR_BUFFER_SIZE (#213). A failed read loads nothing,
+     * and leaves no path, so nothing can be saved over the file
+     */
     int read_bytes = 0;
     int read_error = 0;
-    while (m_fd >= 0 && read_bytes < m_bufferSize - 1) {
+    bool full = false;
+    while (m_fd >= 0) {
+        if (read_bytes == m_bufferSize - 1) {
+            m_bufferHead = read_bytes;
+            if (!reserveText(read_bytes + 1)) {
+                full = true;
+                break;
+            }
+        }
         int ret = read(m_fd, m_textBuffer + read_bytes, m_bufferSize - 1 - read_bytes);
         if (ret < 0) {
             read_error = ret;
@@ -3273,9 +3431,12 @@ bool Editor::Open(char* path)
         read_bytes += ret;
     }
 
-    /* A file bigger than the buffer opens read-only, since saving what fits would cut it short (#133) */
+    /**
+     * A file bigger than the buffer can grow to opens read-only, since saving what fits would cut it short (#133).
+     * That's past the limit, or without the memory to hold it all
+     */
     m_readOnly = false;
-    if (read_error == 0 && m_fd >= 0 && read_bytes == m_bufferSize - 1) {
+    if (read_error == 0 && full) {
         unsigned char more;
         m_readOnly = read(m_fd, &more, 1) != 0;
     }
@@ -3286,22 +3447,22 @@ bool Editor::Open(char* path)
 
     m_textBuffer[read_bytes] = 0;
     m_bufferHead = read_bytes;
+    resetLines();
 
-    if (read_error < 0 || !ropeLoadFromBuffer(m_textBuffer, m_bufferHead)) {
+    if (read_error < 0) {
         if (m_fd >= 0) {
             fclose(m_fd);
             m_fd = -1;
         }
-        /* An empty, untitled text. After a failed read the rope still holds the last file, which Reset empties too */
+        /* An empty, untitled text, with nothing kept from the last file */
         setTitle("Editor");
         Reset();
-        if (read_error < 0) {
-            drawStatusLine(COLOR_VGA_RED, "Can't read %s: %s", absolute, error_get_string(read_error));
-        } else {
-            drawStatusLine(COLOR_VGA_RED, "Out of memory while loading file.");
-        }
+        drawStatusLine(COLOR_VGA_RED, "Can't read %s: %s", absolute, error_get_string(read_error));
         return false;
     }
+
+    /* A new text, so nothing from the last one's past applies */
+    clearHistory();
 
     m_bufferEdit = 0;
     scrollY = 0;
@@ -3401,11 +3562,6 @@ bool Editor::Save()
         return false;
     }
 
-    if (!ropeSyncToBuffer()) {
-        drawStatusLine(COLOR_VGA_RED, "Save failed.");
-        return false;
-    }
-
     /* A file this save creates is added to the tree. Static, to keep it off the app's stack */
     static struct fs_dirent existing;
     bool creates = m_currentPath[0] != 0 && stat(m_currentPath, &existing) == -ERROR_FILE_NOT_FOUND;
@@ -3441,7 +3597,7 @@ bool Editor::Save()
     m_undoSaved = m_undoDone;
     m_undoJoin = EDITOR_UNDO_CLOSED;
     if (creates && treeView != nullptr) {
-        /* Reloading collapses every directory, so the new file's are expanded again */
+        /* Reloading keeps the open folders open; reveal opens the new file's, if they weren't */
         treeView->refresh();
         treeView->reveal(m_currentPath);
         drawTreePane();
@@ -3554,6 +3710,7 @@ static const char* const editor_help[] = {
     "Ctrl+N: New file",
     "Ctrl+H: Show this help",
     "Ctrl+B: Hide/show the file tree",
+    "Ctrl+R: Refresh the file tree",
     "F2/F3: Scroll up/down",
     "",
     "Arrow keys: Move cursor",
@@ -3716,6 +3873,16 @@ void Editor::EditorLoop()
                 m_pressOnTree = false;
                 if (toggled) {
                     putChar(CTRLB);
+                }
+                break;
+            }
+
+            /* The refresh button, which presses Ctrl+R when it's clicked, before the tree's rows and border */
+            bool refreshed = false;
+            if (treeRefreshMouse(event, &refreshed)) {
+                m_pressOnTree = false;
+                if (refreshed) {
+                    putChar(CTRLR);
                 }
                 break;
             }
@@ -3962,7 +4129,7 @@ void Editor::handleKey(unsigned char c, int modifiers)
 
         /* Right after a {, the } that typing it added goes too */
         if (m_textBuffer[m_bufferEdit - 1] == '{' && autoBraceAt(m_bufferEdit) >= 0) {
-            if (ropeDeleteRange(m_bufferEdit - 1, 2)) {
+            if (bufferDeleteRange(m_bufferEdit - 1, 2)) {
                 m_bufferEdit--;
                 m_dirty = 1;
                 m_preferredColumn = -1;
@@ -3971,7 +4138,7 @@ void Editor::handleKey(unsigned char c, int modifiers)
             break;
         }
 
-        if (ropeDeleteChar(m_bufferEdit - 1)) {
+        if (bufferDeleteChar(m_bufferEdit - 1)) {
             m_bufferEdit--;
             m_dirty = 1;
             m_preferredColumn = -1;
@@ -4022,7 +4189,7 @@ void Editor::handleKey(unsigned char c, int modifiers)
         /* The view moves a page too, but down only as far as there's text below it */
         bool down = c == KEY_PAGE_DOWN;
         int cols = visibleColumns();
-        int below = rowsFrom(viewStartIndex(cols), cols) - visibleLines();
+        int below = rowsBelow(viewStartIndex(cols), cols) - visibleLines();
         scroll(down ? minInt(page, below > 0 ? below : 0) : -page);
         for (int n = 0; n < page; n++) {
             if (!(down ? cursorDown() : cursorUp())) {
@@ -4039,7 +4206,7 @@ void Editor::handleKey(unsigned char c, int modifiers)
             return;
         }
 
-        if (ropeDeleteChar(m_bufferEdit)) {
+        if (bufferDeleteChar(m_bufferEdit)) {
             m_dirty = 1;
             m_preferredColumn = -1;
             buffer_changed = true;
@@ -4067,6 +4234,13 @@ void Editor::handleKey(unsigned char c, int modifiers)
         }
         return;
 
+    case CTRLR:
+        /* Not while the mouse button is held, so a drag on the tree's scroll bar isn't cut off, as for Ctrl+B */
+        if (!m_mouseHeld) {
+            refreshTree();
+        }
+        return;
+
     case CTRLN:
         m_preferredColumn = -1;
         New();
@@ -4089,7 +4263,7 @@ void Editor::handleKey(unsigned char c, int modifiers)
     default:
         if (c == '\t') {
             for (int n = 0; n < EDITOR_TAB_WIDTH; n++) {
-                if (!ropeInsertChar(m_bufferEdit, ' ')) {
+                if (!bufferInsertChar(m_bufferEdit, ' ')) {
                     break;
                 }
                 m_bufferEdit++;
@@ -4124,14 +4298,14 @@ void Editor::handleKey(unsigned char c, int modifiers)
             }
         }
 
-        if (!ropeInsertChar(m_bufferEdit, c)) {
+        if (!bufferInsertChar(m_bufferEdit, c)) {
             return;
         }
 
         m_bufferEdit++;
         buffer_changed = true;
 
-        if (c == '{' && ropeInsertChar(m_bufferEdit, '}')) {
+        if (c == '{' && bufferInsertChar(m_bufferEdit, '}')) {
             /* Kept track of until it's typed over or deleted. With too many blocks open, the oldest is forgotten */
             if (m_autoBraceCount == EDITOR_AUTO_BRACES_MAX) {
                 memmove(&m_autoBraces[0], &m_autoBraces[1], (EDITOR_AUTO_BRACES_MAX - 1) * sizeof(int));
@@ -4147,10 +4321,6 @@ void Editor::handleKey(unsigned char c, int modifiers)
 
     if (m_bufferEdit < 0) {
         m_bufferEdit = 0;
-    }
-
-    if (buffer_changed) {
-        ropeSyncToBuffer();
     }
 
     if (m_bufferEdit > m_bufferHead) {
