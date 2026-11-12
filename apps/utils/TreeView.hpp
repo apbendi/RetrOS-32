@@ -25,6 +25,30 @@
 /* Behind the highlighted file's row: the pale blue the Editor draws behind selected text */
 #define TREE_VIEW_HIGHLIGHT 80
 
+/* The icons a file's row can show, from /sysutil/icons. TREE_ICON_FILE is for a file no ending below matches */
+enum {
+    TREE_ICON_FILE,
+    TREE_ICON_C,
+    TREE_ICON_H,
+    TREE_ICON_TEXT,
+    TREE_ICON_HTML,
+    TREE_ICON_CFG,
+    TREE_ICON_IMAGE,
+    TREE_ICON_COUNT
+};
+static const char* const tree_icon_names[TREE_ICON_COUNT] = {
+    "file_16", "cfile_16", "hfile_16", "text_16", "html_16", "cfg_16", "image_16",
+};
+
+/* Which icon a file's row shows, by how its name ends, in any case */
+static const struct {
+    const char* ending;
+    int icon;
+} tree_icon_endings[] = {
+    {".c", TREE_ICON_C},       {".h", TREE_ICON_H},     {".txt", TREE_ICON_TEXT}, {".htm", TREE_ICON_HTML},
+    {".html", TREE_ICON_HTML}, {".cfg", TREE_ICON_CFG}, {".bmp", TREE_ICON_IMAGE},
+};
+
 /**
  * @brief A tree view widget
  * @details This class implements a tree view widget that can be used to
@@ -53,7 +77,9 @@ public:
 
         /* From /sysutil/icons, shared with Finder and the kernel. A file that can't be read gives a placeholder */
         gfx_load_icon("folder_16", &folderIcon);
-        gfx_load_icon("file_16", &fileIcon);
+        for (int i = 0; i < TREE_ICON_COUNT; i++) {
+            gfx_load_icon(tree_icon_names[i], &fileIcons[i]);
+        }
 
         scrollable = false;
         boxLeft = 8;
@@ -63,7 +89,9 @@ public:
 
     ~TreeView() {
         gfx_free_icon(&folderIcon);
-        gfx_free_icon(&fileIcon);
+        for (int i = 0; i < TREE_ICON_COUNT; i++) {
+            gfx_free_icon(&fileIcons[i]);
+        }
         clearChildren(&root);
         if (root.children != nullptr) {
             delete[] root.children;
@@ -230,7 +258,8 @@ private:
     int x, y, width, height;
     String* path;
     struct image folderIcon;
-    struct image fileIcon;
+    /* Files' icons, one for each TREE_ICON_* */
+    struct image fileIcons[TREE_ICON_COUNT];
     /* Whether the tree has a scroll bar; its first is the first row shown */
     bool scrollable;
     ScrollBar scrollBar;
@@ -433,6 +462,34 @@ private:
 
     void drawIcon(int x, int y, const struct image* icon) {
         gfx_draw_image(x, y, icon);
+    }
+
+    /* Whether name ends with ending, ignoring the case of letters */
+    static bool endsWithIgnoringCase(const char* name, const char* ending) {
+        int name_len = strlen(name);
+        int ending_len = strlen(ending);
+        if (ending_len > name_len) {
+            return false;
+        }
+        const char* tail = name + name_len - ending_len;
+        for (int i = 0; i < ending_len; i++) {
+            char a = tail[i] >= 'A' && tail[i] <= 'Z' ? tail[i] - 'A' + 'a' : tail[i];
+            char b = ending[i] >= 'A' && ending[i] <= 'Z' ? ending[i] - 'A' + 'a' : ending[i];
+            if (a != b) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /* The icon for a file's row, by how its name ends (tree_icon_endings) */
+    const struct image* fileIconFor(const char* name) const {
+        for (unsigned int i = 0; i < sizeof(tree_icon_endings) / sizeof(tree_icon_endings[0]); i++) {
+            if (endsWithIgnoringCase(name, tree_icon_endings[i].ending)) {
+                return &fileIcons[tree_icon_endings[i].icon];
+            }
+        }
+        return &fileIcons[TREE_ICON_FILE];
     }
 
     void clearNodeRecursive(struct TreeNode* node)
@@ -686,7 +743,7 @@ private:
         }
 
         if (current_x + 16 <= right) {
-            drawIcon(current_x, current_y, child->isDirectory ? &folderIcon : &fileIcon);
+            drawIcon(current_x, current_y, child->isDirectory ? &folderIcon : fileIconFor(child->name->getData()));
         }
 
         /**

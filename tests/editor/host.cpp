@@ -50,9 +50,10 @@ int gfx_draw_line(int x0, int y0, int x1, int y1, unsigned char color)
     return 0;
 }
 
+/* An icon's drawing is recorded with its name, which gfx_load_icon keeps in place of its pixels */
 int gfx_draw_image(int x, int y, const struct image* image)
 {
-    g_calls.push_back({'i', x, y, image->width, image->height, 0, ""});
+    g_calls.push_back({'i', x, y, image->width, image->height, 0, image->pixels ? (const char*)image->pixels : ""});
     return 0;
 }
 
@@ -68,14 +69,29 @@ int gfx_end_frame(void)
     return 0;
 }
 
-/* Every icon is the library's placeholder size, with no pixels: nothing reads them, since drawing one is recorded */
+/**
+ * Every icon is the library's placeholder size, unless g_iconSizes gives it another. In place of its pixels, which
+ * nothing reads, since drawing one is recorded, it keeps its name, from a fixed table, so loading allocates nothing
+ * the tree's tests would count
+ */
 int gfx_load_icon(const char* name, struct image* image)
 {
+    static char names[64][32];
+    static int count = 0;
     g_calls.push_back({'I', 0, 0, 0, 0, 0, name ? name : ""});
     auto size = g_iconSizes.find(name ? name : "");
     image->width = size != g_iconSizes.end() ? size->second.first : 16;
     image->height = size != g_iconSizes.end() ? size->second.second : 16;
     image->pixels = nullptr;
+    for (int i = 0; name != nullptr && i < count; i++) {
+        if (strcmp(names[i], name) == 0) {
+            image->pixels = (const unsigned char*)names[i];
+        }
+    }
+    if (name != nullptr && image->pixels == nullptr && count < 64) {
+        snprintf(names[count], sizeof(names[count]), "%s", name);
+        image->pixels = (const unsigned char*)names[count++];
+    }
     return 0;
 }
 
