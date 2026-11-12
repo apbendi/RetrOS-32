@@ -8,6 +8,7 @@
  * - Output: a line per event, after the Editor has handled it, with the cursor, selection and view, a hash of the
  *   text, and the number and a hash of the draw calls it made. Each session ends with a hash of the file it saved.
  * - --dump SESSION:EVENT prints that event's draw calls in full, to see how two versions differ.
+ * - --ignore-char-colors leaves the colors characters are drawn in out of the hash, for a change to coloring alone.
  */
 #define private public
 #define main editor_main
@@ -40,6 +41,7 @@ static int g_session = 0;
 static int g_event = 0;
 static std::string g_handling;
 static std::string g_dump;
+static bool g_ignoreCharColors = false;
 
 static std::string describe(const struct gfx_event& e)
 {
@@ -92,7 +94,8 @@ static void emit()
         uint64_t draw = FNV_START;
         for (const DrawCall& c : g_calls) {
             draw = fnv(draw, &c.kind, 1);
-            draw = fnvInt(fnvInt(fnvInt(fnvInt(fnvInt(draw, c.x), c.y), c.w), c.h), c.color);
+            int color = g_ignoreCharColors && c.kind == 'c' ? 0 : c.color;
+            draw = fnvInt(fnvInt(fnvInt(fnvInt(fnvInt(draw, c.x), c.y), c.w), c.h), color);
             draw = fnv(draw, c.text.data(), c.text.size());
         }
         uint64_t text = fnv(FNV_START, e->m_textBuffer, e->m_bufferHead);
@@ -290,8 +293,12 @@ struct Session {
 
 int main(int argc, char** argv)
 {
-    if (argc == 3 && strcmp(argv[1], "--dump") == 0) {
-        g_dump = argv[2];
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) {
+            g_dump = argv[++i];
+        } else if (strcmp(argv[i], "--ignore-char-colors") == 0) {
+            g_ignoreCharColors = true;
+        }
     }
 
     /* Texts of each kind, near the 64 KB limit and over it (read-only), in windows from narrow to wide */

@@ -4,7 +4,9 @@
 # Run from anywhere:
 #   tests/editor/run.sh               the tests, then the trace against HEAD
 #   tests/editor/run.sh tests         the tests, of the Editor and of the real TreeView, under AddressSanitizer and UBSan
-#   tests/editor/run.sh trace [REF]   the trace of the working tree's Editor against REF's (default HEAD)
+#   tests/editor/run.sh trace [REF] [--ignore-char-colors]
+#                                     the trace of the working tree's Editor against REF's (default HEAD), the second
+#                                     leaving out the colors of the characters drawn, for a change to coloring alone
 #   tests/editor/run.sh bench [REF]   the benchmark, of the working tree's Editor, or REF's
 # Its builds go in tests/editor/out.
 set -u
@@ -56,12 +58,14 @@ run_tests() {
 # of what was drawn; at the first line that differs, both print that event's draw calls in full.
 run_trace() {
     local ref=${1:-HEAD}
+    shift
+    local flags=("$@")
     echo "== trace: the working tree against $ref"
     export_editor "$ref" "$OUT/ref" || return 1
     build trace-ref "$T/trace.cpp" "$OUT/ref" $SAN || return 1
     build trace-new "$T/trace.cpp" apps/editor $SAN || return 1
-    "$OUT/trace-ref" > "$OUT/trace-ref.txt" || return 1
-    "$OUT/trace-new" > "$OUT/trace-new.txt" || return 1
+    "$OUT/trace-ref" ${flags[@]+"${flags[@]}"} > "$OUT/trace-ref.txt" || return 1
+    "$OUT/trace-new" ${flags[@]+"${flags[@]}"} > "$OUT/trace-new.txt" || return 1
     if cmp -s "$OUT/trace-ref.txt" "$OUT/trace-new.txt"; then
         echo "ok   $(wc -l < "$OUT/trace-new.txt" | tr -d ' ') events, the same in both"
         return 0
@@ -75,6 +79,9 @@ run_trace() {
     event=$(sed -n "${line}p" "$OUT/trace-ref.txt" | cut -d' ' -f1)
     "$OUT/trace-ref" --dump "$event" > "$OUT/dump-ref.txt"
     "$OUT/trace-new" --dump "$event" > "$OUT/dump-new.txt"
+    if [ ${#flags[@]} -gt 0 ]; then
+        echo "  (the dumps have every color; the comparison was made with: ${flags[*]})"
+    fi
     echo "  the draw calls of event $event, $ref's then the working tree's (all in $OUT/dump-*.txt):"
     diff "$OUT/dump-ref.txt" "$OUT/dump-new.txt" | head -40
     return 1
@@ -114,11 +121,19 @@ EOF
 
 case "${1:-all}" in
 tests) run_tests ;;
-trace) run_trace "${2:-HEAD}" ;;
+trace)
+    shift
+    ref=HEAD
+    if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then
+        ref=$1
+        shift
+    fi
+    run_trace "$ref" "$@"
+    ;;
 bench) shift; run_bench "$@" ;;
 all) run_tests && run_trace HEAD ;;
 *)
-    sed -n '2,9p' "$0"
+    sed -n '2,11p' "$0"
     exit 2
     ;;
 esac
