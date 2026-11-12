@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <deque>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -21,8 +22,13 @@
 extern std::deque<struct gfx_event> g_events;
 /* Called at the start of every event read: after the Editor has handled the last event, before it gets the next */
 extern void (*g_beforeEventRead)();
-/* The in-memory file system, by absolute path */
+/**
+ * The in-memory file system: files by absolute path, and folders, which are those the files' paths go through, and
+ * those in g_dirs, as "/name/". open() fails for one in g_unreadable
+ */
 extern std::map<std::string, std::string> g_files;
+extern std::set<std::string> g_dirs;
+extern std::set<std::string> g_unreadable;
 void clipboardReset();
 
 static inline struct gfx_event testEvent(int type, int data = 0, int data2 = 0, int flags = 0)

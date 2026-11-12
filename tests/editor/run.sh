@@ -3,7 +3,7 @@
 # edit.cpp, with tests/editor/stubs standing in for libgraphic, the system calls and the other apps/utils classes.
 # Run from anywhere:
 #   tests/editor/run.sh               the tests, then the trace against HEAD
-#   tests/editor/run.sh tests         the tests, under AddressSanitizer and UBSan
+#   tests/editor/run.sh tests         the tests, of the Editor and of the real TreeView, under AddressSanitizer and UBSan
 #   tests/editor/run.sh trace [REF]   the trace of the working tree's Editor against REF's (default HEAD)
 #   tests/editor/run.sh bench [REF]   the benchmark, of the working tree's Editor, or REF's
 # Its builds go in tests/editor/out.
@@ -20,11 +20,13 @@ mkdir -p "$OUT"
 # include/ itself can't go on the path: its string.h and the rest would hide the host's own
 INC=$OUT/inc
 rm -rf "$INC"
-mkdir -p "$INC/gfx" "$INC/fs"
+mkdir -p "$INC/gfx" "$INC/fs" "$INC/utils"
 cp include/keyboard.h include/colors.h include/syscall_helper.h include/errors.h include/clipboard.h include/rtc.h \
     include/image.h "$INC/"
 cp include/gfx/events.h "$INC/gfx/"
 cp include/fs/fs_types.h "$INC/fs/"
+# What the real TreeView needs from apps/utils, which the tree's tests build
+cp apps/utils/StringHelper.hpp apps/utils/Function.hpp "$INC/utils/"
 
 # build NAME SOURCE EDITOR_DIR FLAGS...: SOURCE, with the Editor whose edit.cpp and edit.hpp are in EDITOR_DIR
 build() {
@@ -45,7 +47,9 @@ export_editor() {
 run_tests() {
     echo "== tests"
     build tests "$T/tests.cpp" apps/editor $SAN || return 1
-    "$OUT/tests"
+    "$OUT/tests" || return 1
+    build treeview "$T/treeview.cpp" apps/editor $SAN -DTREEVIEW_HPP="\"$PWD/apps/utils/TreeView.hpp\"" || return 1
+    "$OUT/treeview"
 }
 
 # The same scripted sessions through REF's Editor and the working tree's. Each prints a line per event, with a hash

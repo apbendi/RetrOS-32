@@ -1,6 +1,7 @@
 /* Host stand-in for include/libc.h: the host's C library, and csprintf, which drawStatusLine formats with */
 #ifndef EDITOR_TEST_LIBC_H
 #define EDITOR_TEST_LIBC_H
+#include <cctype>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>

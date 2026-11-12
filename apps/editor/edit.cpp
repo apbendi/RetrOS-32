@@ -3275,7 +3275,7 @@ bool Editor::Save()
     m_undoSaved = m_undoDone;
     m_undoJoin = EDITOR_UNDO_CLOSED;
     if (creates && treeView != nullptr) {
-        /* Reloading collapses every directory, so the new file's are expanded again */
+        /* Reloading keeps the open folders open; reveal opens the new file's, if they weren't */
         treeView->refresh();
         treeView->reveal(m_currentPath);
         drawTreePane();

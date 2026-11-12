@@ -19,5 +19,6 @@ int write(int fd, void* buffer, int size);
 int read(int fd, void* buffer, int size);
 int fclose(int fd);
 int stat(const char* path, struct fs_dirent* out);
+int readdir(int fd, struct fs_dirent* out);
 int getcwd(char* buf, int size);
 #endif
