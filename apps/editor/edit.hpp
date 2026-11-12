@@ -113,8 +113,8 @@ enum {
 
 /**
  * A prompt on the status line, which takes every key until it's closed: Ctrl+G's line number and Ctrl+F's Find (#137).
- * What's typed at it holds up to EDITOR_PROMPT_MAX characters, and a line number up to EDITOR_LINE_DIGITS, since a
- * 64 KB text has at most 65,537 lines
+ * What's typed at it holds up to EDITOR_PROMPT_MAX characters, and a line number up to EDITOR_LINE_DIGITS, since the
+ * text, at most 65,535 characters (EDITOR_BUFFER_SIZE less the 0 after it), has at most 65,536 lines
  */
 enum {
     EDITOR_PROMPT_NONE = 0,
