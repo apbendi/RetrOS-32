@@ -25,7 +25,7 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
 | `apps/` | Userspace apps. Each has a `Makefile` that includes `apps/app.mk`. `apps/utils/Graphics.hpp` is the C++ `Window` class |
 | `include/` | Headers for everything above |
 | `rootfs/` | Files copied into the disk image. `rootfs/sysutil/startup.sh` is run at boot. `rootfs/bin/` (installed apps), `rootfs/usr/` (the C library), `rootfs/lib/tcc/` (TinyCC's headers and runtime) and `rootfs/sysutil/symbols.map` are generated |
-| `tests/` | `tests/fs/`: the file system harness (the `test-filesystem` skill). `tests/c/`: the C harness (the `test-c` skill). The rest is host-side tests (`make test`), not exercised recently; the CI workflow has them commented out |
+| `tests/` | `tests/fs/`: the file system harness (the `test-filesystem` skill). `tests/c/`: the C harness (the `test-c` skill). `tests/editor/`: the Editor's host tests, trace and benchmark. `tests/images/`: the BMP reader's. The rest is host-side tests (`make test`), not exercised recently; the CI workflow has them commented out |
 | `apps/tcc` | TinyCC (TCC), the C compiler, installed as `/bin/tcc.o`. `tinycc/` is upstream's whole tree, with a few patches; `README.md` lists them. See "C programs" below |
 | `libc/` | The standard C library for C programs: `musl/`, a whole musl release, built in part, with RetrOS's own startup, system calls and `malloc` in `src/`. See "C programs" below |
 
@@ -157,6 +157,11 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 
 - **Kernel C:** use a short Python script to cut the function's source text out of the real file and paste it into a C harness with stub types and a stub `putpixel`. Surround the buffer with guard bytes to catch overflows. Running the same harness against `git show HEAD:<file>` shows the bug before the fix.
 - **C++ apps:** put a stub `utils/Graphics.hpp` in a scratch directory that records draw calls into a vector. Include the app's `.cpp` after `#define private public`, with `main` renamed. Then test geometry and event handling.
+- **The Editor** has this set up in `tests/editor/` (#213). `run.sh` builds the real `apps/editor/edit.cpp` with the host's compiler around stubs in `tests/editor/stubs`: drawing is recorded, events are scripted so `EditorLoop` runs, files are kept in memory, and `exit()` throws, so `Quit` returns to the test.
+  - **`run.sh tests`:** tests of Ctrl+G and Ctrl+F, and where the cursor and view land, under AddressSanitizer and UBSan.
+  - **`run.sh trace [REF]`:** the same scripted sessions through REF's Editor (default `HEAD`) and the working tree's, a line per event with the cursor, selection, view and a hash of the text and of what was drawn. A change that should do nothing different must give identical traces; at the first difference, it prints both versions' draw calls for that event.
+  - **`run.sh bench [REF]`:** time, characters laid out and newline comparisons per key, at 16 KB to 1 MB of text, with the counters added to a copy.
+  - **Text goes in through `Open`,** and keys through `putChar` or `EditorLoop`, as a user's would, so the harness keeps working as the Editor's insides change.
 
 **Things these checks can't tell you:** how it looks, timing, and anything involving real hardware or QEMU. Say so when handing work back, and give the human a short test script. With the human's OK, the `run-in-qemu` skill covers behaviour in QEMU, but not how it feels in use.
 

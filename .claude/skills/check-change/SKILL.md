@@ -33,8 +33,9 @@ Use this for bounds checks, geometry, buffer copies, event handling and state ma
   1. In a scratch directory, write a stub `utils/Graphics.hpp` with a do-nothing `Window` class and `gfx_*` functions that record their calls. Also add an empty `libc.h` and a `colors.h` with the constants used.
   2. Include the app's `.cpp` after `#define private public`, with its `main` renamed so the test can have its own.
   3. Build it with the host `c++` and `-I <scratch dir>`.
+- **The Editor** (`apps/editor`) already has this, in `tests/editor/`: run `tests/editor/run.sh`, which runs its tests, then traces the same scripted sessions through `HEAD`'s Editor and yours. A change meant to do nothing different must give identical traces. Add tests for what you change to `tests/editor/tests.cpp`, and `run.sh bench` shows how a key's work grows with the text's size. AGENTS.md has more.
 
-Keep harnesses in a scratch directory, not in the repo.
+Keep other harnesses in a scratch directory, not in the repo.
 
 ## 3. Check protocol and build changes
 
