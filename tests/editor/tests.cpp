@@ -1726,6 +1726,443 @@ static void testKeywords()
     delete e;
 }
 
+/**
+ * A reference lexer for C's colors (#143), written apart from the Editor's: it scans the whole text from its start, a
+ * token at a time, where the Editor's goes a character at a time from a state kept for a line. It gives every
+ * character's color, and each line's state at its start, as EDITOR_LEX_COMMENT and EDITOR_LEX_PREPROC
+ */
+static const std::vector<std::string> c_types = {"char", "double", "enum", "float", "int", "long", "short", "signed",
+                                                 "struct", "union", "unsigned", "void", "_Bool", "_Complex", "_Imaginary"};
+static const std::vector<std::string> c_storage = {"auto", "const", "extern", "inline", "register", "restrict", "static",
+                                                   "typedef", "volatile"};
+static const std::vector<std::string> c_control = {"break", "case", "continue", "default", "do", "else", "for", "goto",
+                                                   "if", "return", "sizeof", "switch", "while"};
+
+static int refKeywordColor(const std::string& w)
+{
+    for (auto& t : c_types) {
+        if (t == w) {
+            return EDITOR_COLOR_TYPE;
+        }
+    }
+    for (auto& t : c_storage) {
+        if (t == w) {
+            return EDITOR_COLOR_STORAGE;
+        }
+    }
+    for (auto& t : c_control) {
+        if (t == w) {
+            return EDITOR_COLOR_CONTROL;
+        }
+    }
+    return COLOR_TEXT;
+}
+
+static bool refWordChar(char c)
+{
+    return isalnum((unsigned char)c) || c == '_';
+}
+
+struct RefLex {
+    std::vector<int> colors;
+    /* Each line's state at its start, and where it starts */
+    std::vector<int> states;
+    std::vector<int> starts;
+};
+
+static RefLex refLex(const std::string& t)
+{
+    RefLex r;
+    int n = (int)t.size();
+    r.colors.assign(n, COLOR_TEXT);
+    r.states.push_back(0);
+    r.starts.push_back(0);
+    bool preproc = false;
+    bool blank = true;
+    int line_start = 0;
+
+    /* The newline at p, in a block comment or not: the next line's state */
+    auto newline = [&](int p, bool comment) {
+        int k = p - 1;
+        while (k >= line_start && t[k] == '\r') {
+            k--;
+        }
+        bool splice = k >= line_start && t[k] == '\\';
+        preproc = preproc && (comment || splice);
+        blank = true;
+        line_start = p + 1;
+        r.states.push_back((comment ? EDITOR_LEX_COMMENT : 0) | (preproc ? EDITOR_LEX_PREPROC : 0));
+        r.starts.push_back(p + 1);
+    };
+    auto fill = [&](int from, int to, int color) {
+        for (int k = from; k < to; k++) {
+            r.colors[k] = color;
+        }
+    };
+
+    int i = 0;
+    while (i < n) {
+        char c = t[i];
+        if (c == '\n') {
+            newline(i, false);
+            i++;
+            continue;
+        }
+        if (t.compare(i, 2, "//") == 0) {
+            int j = (int)t.find('\n', i);
+            j = j < 0 ? n : j;
+            fill(i, j, EDITOR_COLOR_COMMENT);
+            i = j;
+            continue;
+        }
+        if (t.compare(i, 2, "/*") == 0) {
+            int end = (int)t.find("*/", i + 2);
+            int j = end < 0 ? n : end + 2;
+            fill(i, j, EDITOR_COLOR_COMMENT);
+            for (int k = i; k < j; k++) {
+                if (t[k] == '\n') {
+                    r.colors[k] = COLOR_TEXT;
+                    newline(k, true);
+                }
+            }
+            i = j;
+            continue;
+        }
+        bool first = blank;
+        if (c != ' ' && c != '\t') {
+            blank = false;
+        }
+        if (c == '"' || c == '\'') {
+            int j = i + 1;
+            while (j < n && t[j] != '\n') {
+                if (t[j] == '\\') {
+                    j++;
+                    if (j < n && t[j] != '\n') {
+                        j++;
+                    }
+                    continue;
+                }
+                j++;
+                if (t[j - 1] == c) {
+                    break;
+                }
+            }
+            fill(i, j, preproc ? EDITOR_COLOR_PREPROC : EDITOR_COLOR_STRING);
+            i = j;
+            continue;
+        }
+        if (first && c == '#') {
+            preproc = true;
+        }
+        if (preproc) {
+            r.colors[i++] = EDITOR_COLOR_PREPROC;
+            continue;
+        }
+        if (isdigit((unsigned char)c) || (c == '.' && i + 1 < n && isdigit((unsigned char)t[i + 1]))) {
+            int j = i + 1;
+            while (j < n && (refWordChar(t[j]) || t[j] == '.')) {
+                j++;
+            }
+            fill(i, j, EDITOR_COLOR_NUMBER);
+            i = j;
+            continue;
+        }
+        if (refWordChar(c)) {
+            int j = i;
+            while (j < n && refWordChar(t[j])) {
+                j++;
+            }
+            fill(i, j, refKeywordColor(t.substr(i, j - i)));
+            i = j;
+            continue;
+        }
+        i++;
+    }
+    return r;
+}
+
+/* Pieces random C-like texts are made of, many of them the edges of what's colored */
+static const char* const c_pieces[] = {
+    "int", "x1", "static", "if", "while", "_Bool", "sizeof", "for", "foo", "e", "L", " ", " ", "  ", "\t", "\n", "\n",
+    "\n", "\n", "\r\n", "42", "0x1F", "10UL", ".5", "1.5e3", "1.", ".", "-", "+", "(", ")", ";", "{", "}", "*", "/",
+    "/*", "*/", "/**/", "/*/", "//", "#", "#define X ", "#include <stdio.h>", "  # if", "\\", "\\\n", "\\\r\n",
+    "\"", "\"str\"", "\"es\\\"c\"", "\"\\\\\"", "'", "'a'", "'\\''", "'\\\\'", "a.b", "x.5", "1..2", "#x\"/*\"",
+};
+
+static std::string randomC(std::mt19937& rng, int pieces)
+{
+    std::string t;
+    int count = (int)(sizeof(c_pieces) / sizeof(c_pieces[0]));
+    for (int i = 0; i < pieces; i++) {
+        t += c_pieces[rng() % count];
+    }
+    return t;
+}
+
+/* Two letters for a color, to show where colors differ */
+static char colorLetter(int c)
+{
+    switch (c) {
+    case COLOR_TEXT: return 't';
+    case EDITOR_COLOR_COMMENT: return 'c';
+    case EDITOR_COLOR_STRING: return 's';
+    case EDITOR_COLOR_NUMBER: return 'n';
+    case EDITOR_COLOR_PREPROC: return 'p';
+    case EDITOR_COLOR_TYPE: return 'T';
+    case EDITOR_COLOR_STORAGE: return 'S';
+    case EDITOR_COLOR_CONTROL: return 'C';
+    }
+    return '?';
+}
+
+/**
+ * Whether the characters e draws, from its view's start, are in the reference's colors. @return how many were
+ * compared, or -1, with what differs in *wrong, if any isn't
+ */
+static int viewColorsMatch(Editor* e, const RefLex& ref, std::string* wrong)
+{
+    std::vector<int> colors = drawnColors(e);
+    int i = e->viewStartIndex(e->visibleColumns());
+    size_t at = 0;
+    for (; at < colors.size() && i < e->m_bufferHead; i++) {
+        unsigned char ch = e->m_textBuffer[i];
+        if (ch == '\n' || ch == '\t') {
+            continue;
+        }
+        if (colors[at] != ref.colors[i]) {
+            char buf[160];
+            int from = std::max(0, i - 20);
+            std::string around((const char*)&e->m_textBuffer[from], std::min(e->m_bufferHead, i + 10) - from);
+            snprintf(buf, sizeof(buf), "at %d, %c drawn, %c wanted, after: ", i, colorLetter(colors[at]), colorLetter(ref.colors[i]));
+            *wrong = buf + around;
+            return -1;
+        }
+        at++;
+    }
+    if (at != colors.size()) {
+        *wrong = "more characters drawn than the text has";
+        return -1;
+    }
+    return (int)at;
+}
+
+/* Whether the states e keeps, its checkpoints and its anchor, are the reference's */
+static bool lexKeptMatch(Editor* e, const RefLex& ref, std::string* wrong)
+{
+    for (int k = 0; k < e->m_lexPoints; k++) {
+        int line = k * EDITOR_LEX_LINES;
+        if (line >= (int)ref.starts.size() || e->m_lexIndex[k] != ref.starts[line] || e->m_lexState[k] != ref.states[line]) {
+            *wrong = "checkpoint " + std::to_string(k) + " of " + std::to_string(e->m_lexPoints);
+            return false;
+        }
+    }
+    if (e->m_lexAnchor >= 0) {
+        auto it = std::lower_bound(ref.starts.begin(), ref.starts.end(), e->m_lexAnchor);
+        if (it == ref.starts.end() || *it != e->m_lexAnchor || e->m_lexAnchorState != ref.states[it - ref.starts.begin()]) {
+            *wrong = "the anchor at " + std::to_string(e->m_lexAnchor);
+            return false;
+        }
+    }
+    return true;
+}
+
+/* The issue's own cases, each line's colors as letters (colorLetter), tabs and newlines left out as they aren't drawn */
+static void testLexFixed()
+{
+    struct {
+        const char* text;
+        const char* colors;
+    } cases[] = {
+        {"// note", "ccccccc"},
+        {"/* one\n   two\n   three */ int x;", "cccccc" "cccccc" "ccccccccccc" "tTTTttt"},
+        {"printf(\"if %d\\n\", x);", "ttttttt" "sssssssss" "ttttt"},
+        {"'a' '\\'' 42 x", "ssst" "sssst" "nnt" "t"},
+        {"#include <stdio.h>", "pppppppppppppppppp"},
+        {"  #define X 1 /* c */ \"s\"", "tt" "pppppppppppp" "ccccccc" "pppp"},
+        {"#define M(a) \\\n  (a + 1)\nint y;", "pppppppppppppp" "ppppppppp" "TTTttt"},
+        {"0x1F 10UL 1.5e3 .5 x1 a.b", "nnnnt" "nnnnt" "nnnnnt" "nnt" "ttt" "ttt"},
+        {"/*/ still */ x", "cccccccccccc" "tt"},
+        {"x = \"/* not\"; // \"no\"", "tttt" "ssssssss" "tt" "ccccccc"},
+        {"/* a */ # if 1", "ccccccc" "t" "pppppp"},
+        {"int32_t intx", "tttttttttttt"},
+        {"\"open", "sssss"},
+    };
+    Editor* e = new Editor();
+    for (auto& c : cases) {
+        std::string text = c.text;
+        CHECK(openText(e, text, "/fixed.c"), "couldn't open %s", c.text);
+        std::vector<int> colors = drawnColors(e);
+        std::string got;
+        for (int col : colors) {
+            got += colorLetter(col);
+        }
+        CHECK(got == c.colors, "%s: %s drawn, %s wanted", c.text, got.c_str(), c.colors);
+
+        /* The reference agrees */
+        RefLex ref = refLex(text);
+        std::string want;
+        for (size_t i = 0; i < text.size(); i++) {
+            if (text[i] != '\n' && text[i] != '\t') {
+                want += colorLetter(ref.colors[i]);
+            }
+        }
+        CHECK(want == c.colors, "%s: the reference gives %s", c.text, want.c_str());
+    }
+
+    /* The cursor's character, drawn again over its block, in its own color */
+    std::string text = "int x = 42; /* c */ \"s\"";
+    openText(e, text, "/fixed.c");
+    RefLex ref = refLex(text);
+    for (int i = 0; i < (int)text.size(); i++) {
+        if (text[i] == ' ') {
+            continue;
+        }
+        e->m_bufferEdit = i;
+        g_calls.clear();
+        e->reDraw(0, e->m_bufferHead);
+        const DrawCall* last = nullptr;
+        for (const DrawCall& d : g_calls) {
+            if (d.kind == 'c') {
+                last = &d;
+            }
+        }
+        CHECK(last != nullptr && last->color == ref.colors[i], "the cursor on %d, '%c': %c", i, text[i],
+              last ? colorLetter(last->color) : '-');
+    }
+
+    /* Not a C file: nothing colored */
+    openText(e, "/* c */ \"s\" 42 #x int", "/fixed.txt");
+    bool plain = true;
+    for (int col : drawnColors(e)) {
+        plain = plain && col == COLOR_TEXT;
+    }
+    CHECK(plain, "a .txt file colored");
+    delete e;
+}
+
+/* Random C-like texts, views and widths: every character drawn is in the reference's color */
+static void testLexRandom(std::mt19937& rng, int trials)
+{
+    Editor* e = new Editor();
+    long compared = 0;
+    int far = 0;
+    for (int t = 0; t < trials; t++) {
+        std::string text = randomC(rng, 20 + (int)(rng() % (t % 4 == 0 ? 6000 : 400)));
+        if (!openText(e, text, "/random.c")) {
+            CHECK(false, "couldn't open a text of %d", (int)text.size());
+            continue;
+        }
+        RefLex ref = refLex(text);
+        e->applyResolution(EDITOR_DEFAULT_WINDOW_WIDTH - (int)(rng() % 400), EDITOR_DEFAULT_HEIGHT);
+        int cols = e->visibleColumns();
+        for (int v = 0; v < 4; v++) {
+            int total = e->textRows(cols);
+            e->scrollToRow((int)(rng() % total));
+            int line = e->lineNumberAtIndex(e->viewStartIndex(cols)) - 1;
+            far += line >= EDITOR_LEX_LINES;
+            std::string wrong;
+            int n = viewColorsMatch(e, ref, &wrong);
+            CHECK(n >= 0, "trial %d, view at line %d, %d columns: %s", t, line, cols, wrong.c_str());
+            compared += n > 0 ? n : 0;
+            CHECK(lexKeptMatch(e, ref, &wrong), "trial %d: %s", t, wrong.c_str());
+        }
+    }
+    e->applyResolution(EDITOR_DEFAULT_WINDOW_WIDTH, EDITOR_DEFAULT_HEIGHT);
+    CHECK(far > 0, "no view past the first checkpoint");
+    printf("Lexer: %d texts, %ld characters compared, %d views past line %d\n", trials, compared, far, EDITOR_LEX_LINES);
+    delete e;
+}
+
+/* A view far into a block comment, or a continued #define, opened hundreds of lines above, past checkpoints */
+static void testLexFarAbove()
+{
+    Editor* e = new Editor();
+    for (int kind = 0; kind < 2; kind++) {
+        std::string text = "int a;\n";
+        text += kind == 0 ? "/* opened here\n" : "#define LONG \\\n";
+        for (int i = 0; i < 700; i++) {
+            text += kind == 0 ? "   int x = 42; \"no string\"\n" : "   int x = 42; \"in it\" \\\n";
+        }
+        text += kind == 0 ? "*/ int after;\n" : "   last\nint after;\n";
+        openText(e, text, "/far.c");
+        RefLex ref = refLex(text);
+        int cols = e->visibleColumns();
+        for (int line : {300, 520, 650, 700}) {
+            e->scrollToRow(line);
+            std::string wrong;
+            CHECK(viewColorsMatch(e, ref, &wrong) > 0, "%s, line %d: %s", kind ? "#define" : "comment", line, wrong.c_str());
+            std::vector<int> colors = drawnColors(e);
+            int want = kind == 0 ? EDITOR_COLOR_COMMENT : EDITOR_COLOR_PREPROC;
+            CHECK(!colors.empty() && colors[3] == want, "%s, line %d: the view's first line isn't in it", kind ? "#define" : "comment", line);
+            CHECK(lexKeptMatch(e, ref, &wrong), "%s: %s", kind ? "#define" : "comment", wrong.c_str());
+        }
+        CHECK(e->m_lexPoints >= 3, "%d checkpoints", e->m_lexPoints);
+        (void)cols;
+    }
+    delete e;
+}
+
+/**
+ * The states kept stay right through random edits, undos and redos: those kept, and the state at any line's start,
+ * are the reference's, and so is what's drawn
+ */
+static void testLexEdits(std::mt19937& rng, int sessions)
+{
+    Editor* e = new Editor();
+    int checked = 0;
+    for (int s = 0; s < sessions; s++) {
+        std::string text = randomC(rng, 2000 + (int)(rng() % 3000));
+        openText(e, text, "/edit.c");
+        for (int op = 0; op < 60; op++) {
+            int r = (int)(rng() % 12);
+            e->m_selAnchor = -1;
+            e->m_bufferEdit = (int)(rng() % (e->m_bufferHead + 1));
+            if (r == 10) {
+                /* Straight through the buffer functions, with nothing drawn after, to check what they leave kept */
+                std::string piece = randomC(rng, 1 + (int)(rng() % 4));
+                e->bufferInsertText(e->m_bufferEdit, (const unsigned char*)piece.data(), (int)piece.size());
+            } else if (r == 11) {
+                e->bufferDeleteRange(e->m_bufferEdit, std::min(e->m_bufferHead - e->m_bufferEdit, 1 + (int)(rng() % 8)));
+            } else if (r < 4) {
+                std::string piece = randomC(rng, 1 + (int)(rng() % 4));
+                for (char c : piece) {
+                    e->putChar((unsigned char)c);
+                }
+            } else if (r < 6) {
+                int n = 1 + (int)(rng() % 6);
+                for (int k = 0; k < n; k++) {
+                    e->putChar(rng() % 2 ? '\b' : KEY_DELETE);
+                }
+            } else if (r < 7) {
+                e->m_selAnchor = (int)(rng() % (e->m_bufferHead + 1));
+                e->putChar(KEY_DELETE);
+            } else if (r < 9) {
+                int n = 1 + (int)(rng() % 4);
+                for (int k = 0; k < n; k++) {
+                    e->putChar(CTRLZ);
+                }
+            } else {
+                e->putChar(CTRLY);
+            }
+
+            std::string now((const char*)e->m_textBuffer, e->m_bufferHead);
+            RefLex ref = refLex(now);
+            std::string wrong;
+            CHECK(lexKeptMatch(e, ref, &wrong), "session %d, op %d: %s", s, op, wrong.c_str());
+
+            /* A line anywhere, which may work out checkpoints, then what's drawn */
+            int line = (int)(rng() % ref.starts.size());
+            int state = e->lexStateAt(line, ref.starts[line]);
+            CHECK(state == ref.states[line], "session %d, op %d: line %d's state %d, wanted %d", s, op, line, state, ref.states[line]);
+            CHECK(lexKeptMatch(e, ref, &wrong), "session %d, op %d, after line %d: %s", s, op, line, wrong.c_str());
+            CHECK(viewColorsMatch(e, ref, &wrong) >= 0, "session %d, op %d: %s", s, op, wrong.c_str());
+            checked++;
+        }
+    }
+    printf("Lexer edits: %d edits checked in %d sessions\n", checked, sessions);
+    delete e;
+}
+
 int main()
 {
     std::mt19937 rng(137);
@@ -1746,6 +2183,10 @@ int main()
     testShownWhileLoading();
     testRefreshButton();
     testKeywords();
+    testLexFixed();
+    testLexRandom(rng, 400);
+    testLexFarAbove();
+    testLexEdits(rng, 12);
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures != 0;
 }
