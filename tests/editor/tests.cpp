@@ -1438,6 +1438,51 @@ static void testBiggerTexts()
     delete e;
 }
 
+/* Where the first call of kind (and with text, if it's given) is in g_calls from `from`, or -1 */
+static int firstCall(char kind, int from = 0, const char* text = nullptr)
+{
+    for (int i = from; i < (int)g_calls.size(); i++) {
+        if (g_calls[i].kind == kind && (text == nullptr || g_calls[i].text.find(text) != std::string::npos)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/**
+ * The window shows while the Editor loads (#210): the layout is drawn and its frame ended before the tree and icons are
+ * read, and a file's "Opening..." before the file is
+ */
+static void testShownWhileLoading()
+{
+    g_calls.clear();
+    Editor* e = new Editor();
+    int ended = firstCall('e');
+    int tree = firstCall('V');
+    int icon = firstCall('I');
+    CHECK(ended >= 0 && tree > ended && icon > ended, "first frame's end %d, tree made %d, first icon %d", ended, tree, icon);
+    int loading = firstCall('f', 0, "Loading...");
+    CHECK(loading >= 0 && loading < ended, "\"Loading...\" drawn at %d, before the frame's end at %d", loading, ended);
+    int image = firstCall('i');
+    CHECK(image < 0 || image > icon, "an icon drawn at %d, before the first loaded at %d", image, icon);
+    CHECK(firstCall('V', ended) >= 0 && firstCall('T', tree) >= 0, "the tree isn't drawn once it's loaded");
+
+    /* Opening a file: "Opening <path>..." and a frame's end before the first read */
+    g_calls.clear();
+    openText(e, numberedLines(50, true), "/open.c");
+    int read = firstCall('R');
+    int opening = firstCall('f', 0, "Opening /open.c...");
+    int shown = firstCall('e', opening < 0 ? 0 : opening);
+    CHECK(opening >= 0 && shown > opening && read > shown, "\"Opening\" at %d, the frame's end at %d, the first read at %d", opening, shown, read);
+
+    /* A new file has nothing to read, so nothing to say */
+    g_calls.clear();
+    char name[] = "/new.c";
+    e->Open(name);
+    CHECK(firstCall('f', 0, "Opening") < 0, "\"Opening\" for a new file");
+    delete e;
+}
+
 int main()
 {
     std::mt19937 rng(137);
@@ -1455,6 +1500,7 @@ int main()
     testUndoAllRandom(rng, 120);
     testScrollToRow(rng, 3000);
     testBiggerTexts();
+    testShownWhileLoading();
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures != 0;
 }

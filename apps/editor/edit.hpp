@@ -312,6 +312,8 @@ private:
     int m_windowWidth;
     bool m_treeCollapsed;
     int m_treeOpenWidth;
+    /* The constructor hasn't loaded the tree yet, so its box says so (#210) */
+    bool m_treeLoading;
     /* Set from a press on the tree's border until its release. m_treeGrabX is where the press was, from the border */
     bool m_resizingTree;
     int m_treeGrabX;

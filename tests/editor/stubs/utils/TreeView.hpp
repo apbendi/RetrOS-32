@@ -7,7 +7,7 @@
 
 class TreeView {
 public:
-    TreeView(int, int, int, int) {}
+    TreeView(int, int, int, int) { g_calls.push_back({'V', 0, 0, 0, 0, 0, ""}); }
     void setScrollable(bool) {}
     void setBox(int, int, bool) {}
     int mouse(const struct gfx_event&) { return 0; }

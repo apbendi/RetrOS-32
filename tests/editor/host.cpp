@@ -68,7 +68,7 @@ int gfx_end_frame(void)
 /* Every icon is the library's placeholder size, with no pixels: nothing reads them, since drawing one is recorded */
 int gfx_load_icon(const char* name, struct image* image)
 {
-    (void)name;
+    g_calls.push_back({'I', 0, 0, 0, 0, 0, name ? name : ""});
     image->width = 16;
     image->height = 16;
     image->pixels = nullptr;
@@ -153,6 +153,7 @@ int read(int fd, void* buffer, int size)
     size_t n = file->position < text.size() ? std::min((size_t)size, text.size() - file->position) : 0;
     memcpy(buffer, text.data() + file->position, n);
     file->position += n;
+    g_calls.push_back({'R', fd, 0, (int)n, 0, 0, ""});
     return (int)n;
 }
 
