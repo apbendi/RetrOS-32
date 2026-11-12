@@ -515,6 +515,9 @@ Editor::Editor()
     m_mouseHeld = false;
     m_pressOnTree = false;
     m_keepStatus = 0;
+    m_lineCount = 1;
+    m_anchorLine = 0;
+    m_anchorIndex = 0;
     m_prompt = EDITOR_PROMPT_NONE;
     m_promptText[0] = 0;
     m_promptLen = 0;
@@ -628,36 +631,77 @@ int Editor::visibleColumns() const
     return w / 8;
 }
 
-int Editor::lineNumberAtIndex(int index) const
+/* The newlines in the text from index from up to to */
+int Editor::countNewlines(int from, int to) const
 {
-    int line = 1;
-    int i = clampInt(index, 0, m_bufferHead);
-
-    for (int j = 0; j < i; j++) {
-        if (m_textBuffer[j] == '\n') {
-            line++;
+    int newlines = 0;
+    for (int i = from; i < to; i++) {
+        if (m_textBuffer[i] == '\n') {
+            newlines++;
         }
     }
-
-    return line;
+    return newlines;
 }
 
+/**
+ * The line index is on, from 1, counted from the line anchor rather than the text's start, so it costs the distance
+ * from the last line looked up (#213). The anchor moves to it, since what's asked next is likely near: the view, the cursor
+ */
+int Editor::lineNumberAtIndex(int index) const
+{
+    int i = clampInt(index, 0, m_bufferHead);
+    int line = m_anchorLine;
+    if (i >= m_anchorIndex) {
+        line += countNewlines(m_anchorIndex, i);
+    } else {
+        line -= countNewlines(i, m_anchorIndex);
+    }
+
+    m_anchorLine = line;
+    m_anchorIndex = lineStart(i);
+    return line + 1;
+}
+
+/**
+ * Where line starts, counting lines from 0, or the text's end if it has fewer. Counted from the line anchor, which
+ * moves there, as lineNumberAtIndex does
+ */
 int Editor::indexFromLine(int line) const
 {
     if (line <= 0) {
         return 0;
     }
 
-    int currentLine = 0;
-    int i = 0;
-    while (i < m_bufferHead && currentLine < line) {
-        if (m_textBuffer[i] == '\n') {
-            currentLine++;
+    int i = m_anchorIndex;
+    int current = m_anchorLine;
+    if (line >= current) {
+        while (i < m_bufferHead && current < line) {
+            if (m_textBuffer[i] == '\n') {
+                current++;
+            }
+            i++;
         }
-        i++;
+    } else {
+        /* Back from one line's start to the start of the line before, which ends with the newline before it */
+        while (current > line) {
+            i = lineStart(i - 1);
+            current--;
+        }
     }
 
+    if (current == line) {
+        m_anchorLine = line;
+        m_anchorIndex = i;
+    }
     return i;
+}
+
+/* After the whole text is replaced: its lines counted, and the anchor at its start */
+void Editor::resetLines()
+{
+    m_lineCount = 1 + countNewlines(0, m_bufferHead);
+    m_anchorLine = 0;
+    m_anchorIndex = 0;
 }
 
 int Editor::lineStart(int index) const
@@ -769,8 +813,11 @@ int Editor::prevVisualRowStart(int row_start_index, int cols) const
         return 0;
     }
 
-    /* The last row that starts before target: the one whose next row is target, or would be past it */
-    int cur = 0;
+    /**
+     * The last row that starts before target: the one whose next row is target, or would be past it. Rows never cross
+     * a newline, and each line is laid out afresh, so it's found from the start of the line before target (#213)
+     */
+    int cur = lineStart(target - 1);
 
     while (cur < target) {
         int next = nextVisualRowStart(cur, cols);
@@ -840,16 +887,9 @@ void Editor::setScrollFromIndex(int index, int cols)
 {
     int idx = clampInt(index, 0, m_bufferHead);
 
-    int line = 0;
-    int line_start = 0;
-    for (int i = 0; i < idx; i++) {
-        if (m_textBuffer[i] == '\n') {
-            line++;
-            line_start = i + 1;
-        }
-    }
-
-    scrollY = line;
+    /* The line idx is on, counted from the anchor, and its start */
+    scrollY = lineNumberAtIndex(idx) - 1;
+    int line_start = lineStart(idx);
     m_scrollWrap = 0;
 
     int row_start = line_start;
@@ -895,36 +935,35 @@ void Editor::ensureCursorVisible(int cols, int rows)
 
     normalizeScroll(cols);
 
-    int guard_max = m_bufferHead + rows + 16;
-    if (guard_max < 64) {
-        guard_max = 64;
+    /**
+     * The view moves a row at a time, until the cursor is on its first row or its last (#213). Each row costs its
+     * line, not a pass over the text, so a cursor that's moved far, as Ctrl+A and undo can move it, costs the distance
+     * once rather than for every row.
+     * - Above the view: up until the view starts at or before the cursor.
+     * - Below it: the cursor's row is laid out once. Rows are laid out a line at a time, so each row the view moves
+     *   down moves the cursor's row up one.
+     */
+    int view_start = viewStartIndex(cols);
+    while (m_bufferEdit < view_start) {
+        int prev = prevVisualRowStart(view_start, cols);
+        if (prev == view_start) {
+            break;
+        }
+        setScrollFromIndex(prev, cols);
+        view_start = viewStartIndex(cols);
     }
 
-    for (int guard = 0; guard < guard_max; guard++) {
-        int view_start = viewStartIndex(cols);
-        int cursor_row = 0;
-        int cursor_col = 0;
-        cursorFromViewStart(view_start, cols, &cursor_row, &cursor_col);
-
-        if (cursor_row < 0) {
-            int prev = prevVisualRowStart(view_start, cols);
-            if (prev == view_start) {
-                break;
-            }
-            setScrollFromIndex(prev, cols);
-            continue;
+    int cursor_row = 0;
+    int cursor_col = 0;
+    cursorFromViewStart(view_start, cols, &cursor_row, &cursor_col);
+    while (cursor_row >= rows) {
+        int next = nextVisualRowStart(view_start, cols);
+        if (next == view_start) {
+            break;
         }
-
-        if (cursor_row >= rows) {
-            int next = nextVisualRowStart(view_start, cols);
-            if (next == view_start) {
-                break;
-            }
-            setScrollFromIndex(next, cols);
-            continue;
-        }
-
-        break;
+        setScrollFromIndex(next, cols);
+        view_start = viewStartIndex(cols);
+        cursor_row--;
     }
 
     normalizeScroll(cols);
@@ -2090,15 +2129,10 @@ void Editor::highlightWordAt(int index)
     highlightSyntax(&m_textBuffer[start]);
 }
 
+/* The text's lines, one more than its newlines, as the buffer* functions keep it */
 int Editor::countLines() const
 {
-    int lines = 1;
-    for (int i = 0; i < m_bufferHead; i++) {
-        if (m_textBuffer[i] == '\n') {
-            lines++;
-        }
-    }
-    return lines;
+    return m_lineCount;
 }
 
 /* Whether the text differs from the last save, which undoing or redoing back to it makes it not. Without a history, whether it was edited */
@@ -2189,6 +2223,14 @@ bool Editor::bufferInsertText(int index, const unsigned char* data, int len)
     memcpy(&m_textBuffer[index], data, len);
     m_bufferHead += len;
     m_textBuffer[m_bufferHead] = 0;
+
+    /* Text before the anchor's line moves it along, by its lines too. Text at its start leaves where that line starts */
+    int newlines = countNewlines(index, index + len);
+    m_lineCount += newlines;
+    if (index < m_anchorIndex) {
+        m_anchorIndex += len;
+        m_anchorLine += newlines;
+    }
     autoBracesInserted(index, len);
     undoInserted(index, data, len);
     return true;
@@ -2212,9 +2254,26 @@ bool Editor::bufferDeleteRange(int index, int count)
 
     /* Recorded while they're still there */
     undoDeleting(index, count);
+
+    /**
+     * Text before the anchor's line moves it back, by its lines too. If the newline before that line goes, it joins
+     * the line before, which index is then on: its number is the anchor's less the newlines from index to the anchor
+     */
+    int newlines = countNewlines(index, index + count);
+    int anchor_back = index < m_anchorIndex && index + count >= m_anchorIndex ? countNewlines(index, m_anchorIndex) : 0;
+
     memmove(&m_textBuffer[index], &m_textBuffer[index + count], m_bufferHead - index - count);
     m_bufferHead -= count;
     m_textBuffer[m_bufferHead] = 0;
+
+    m_lineCount -= newlines;
+    if (index + count < m_anchorIndex) {
+        m_anchorIndex -= count;
+        m_anchorLine -= newlines;
+    } else if (index < m_anchorIndex) {
+        m_anchorLine -= anchor_back;
+        m_anchorIndex = lineStart(index);
+    }
     autoBracesDeleted(index, count);
     return true;
 }
@@ -2672,6 +2731,7 @@ void Editor::Reset()
 
     memset(m_textBuffer, 0, m_bufferSize);
     m_bufferHead = 0;
+    resetLines();
     m_bufferEdit = 0;
     m_fileSize = 0;
     m_dirty = 0;
@@ -2798,6 +2858,7 @@ bool Editor::Open(char* path)
 
     m_textBuffer[read_bytes] = 0;
     m_bufferHead = read_bytes;
+    resetLines();
 
     if (read_error < 0) {
         if (m_fd >= 0) {

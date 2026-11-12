@@ -1115,6 +1115,30 @@ static void testFindLoop()
     delete e;
 }
 
+/**
+ * Whether what the Editor keeps about the text's lines is right (#213): the line count, and the line anchor, which has
+ * to be a line's start, with the number of newlines before it
+ */
+static bool linesKeptRight(Editor* e)
+{
+    int newlines = 0;
+    for (int i = 0; i < e->m_bufferHead; i++) {
+        newlines += e->m_textBuffer[i] == '\n';
+    }
+    int at = e->m_anchorIndex;
+    if (e->m_lineCount != newlines + 1 || at < 0 || at > e->m_bufferHead) {
+        return false;
+    }
+    if (at > 0 && e->m_textBuffer[at - 1] != '\n') {
+        return false;
+    }
+    int before = 0;
+    for (int i = 0; i < at; i++) {
+        before += e->m_textBuffer[i] == '\n';
+    }
+    return before == e->m_anchorLine;
+}
+
 /* The text as it is, for comparing with a model */
 static std::string textOf(Editor* e)
 {
@@ -1240,6 +1264,7 @@ static void testUndoAllRandom(std::mt19937& rng, int trials)
             default: press(e, "xyz}"[rng() % 4]); break;
             }
             CHECK(e->m_bufferHead <= most && e->m_textBuffer[e->m_bufferHead] == 0, "trial %d: %d characters, or no 0 after them", trial, e->m_bufferHead);
+            CHECK(linesKeptRight(e), "trial %d, edit %d: %d lines kept, anchor line %d at %d", trial, i, e->m_lineCount, e->m_anchorLine, e->m_anchorIndex);
         }
         std::string after = textOf(e);
         if (e->m_undoFailed || e->m_undoDropped > 0) {
@@ -1249,12 +1274,14 @@ static void testUndoAllRandom(std::mt19937& rng, int trials)
         /* Each press redraws, so only as many as there are steps, and a few over to be sure nothing's left */
         for (int guard = 3 * edits + 2; e->m_undoAt > 0 && guard > 0; guard--) {
             press(e, CTRLZ);
+            CHECK(linesKeptRight(e), "trial %d, undoing: %d lines kept, anchor line %d at %d", trial, e->m_lineCount, e->m_anchorLine, e->m_anchorIndex);
         }
         press(e, CTRLZ);
         press(e, CTRLZ);
         CHECK(textOf(e) == text, "trial %d: undoing %d edits on %d characters didn't give the text back", trial, edits, size);
         for (int guard = 3 * edits + 2; e->m_undoAt < e->m_undoUsed && guard > 0; guard--) {
             press(e, CTRLY);
+            CHECK(linesKeptRight(e), "trial %d, redoing: %d lines kept, anchor line %d at %d", trial, e->m_lineCount, e->m_anchorLine, e->m_anchorIndex);
         }
         press(e, CTRLY);
         press(e, CTRLY);

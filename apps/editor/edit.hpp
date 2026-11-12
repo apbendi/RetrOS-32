@@ -214,8 +214,10 @@ private:
 
     int visibleLines() const;
     int visibleColumns() const;
+    int countNewlines(int from, int to) const;
     int lineNumberAtIndex(int index) const;
     int indexFromLine(int line) const;
+    void resetLines();
     int lineStart(int index) const;
     int lineEnd(int index) const;
     int lineRowsFromStart(int line_start, int cols) const;
@@ -320,6 +322,15 @@ private:
     int m_fd;
     /* The text: its m_bufferHead characters, then a 0, in m_bufferSize bytes. Edited only by the buffer* functions */
     unsigned char* m_textBuffer;
+    /* The text's lines, one more than its newlines, which the buffer* functions keep as they change it */
+    int m_lineCount;
+    /**
+     * The line anchor: line m_anchorLine, counted from 0, starts at m_anchorIndex. lineNumberAtIndex and indexFromLine
+     * count from it rather than from the text's start, and move it to where they end up; the buffer* functions keep
+     * it right as they change the text (#213)
+     */
+    mutable int m_anchorLine;
+    mutable int m_anchorIndex;
     int m_bufferSize;
     int m_fileSize;
     int m_bufferHead;
