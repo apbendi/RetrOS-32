@@ -154,16 +154,16 @@ static void testPromptKeys()
     status = lastStatusText(e);
     CHECK(status != nullptr && status->text == "Go to line (1-301): 57", "status '%s'", status ? status->text.c_str() : "(none)");
 
-    /* Backspace, and at most five digits */
+    /* Backspace, and at most EDITOR_LINE_DIGITS digits */
     key(e, '\b');
     CHECK(std::string(e->m_promptText) == "5", "typed '%s'", e->m_promptText);
     key(e, '\b');
     key(e, '\b');
     CHECK(std::string(e->m_promptText) == "", "typed '%s'", e->m_promptText);
-    for (const char* p = "1234567"; *p; p++) {
+    for (const char* p = "12345678"; *p; p++) {
         key(e, *p);
     }
-    CHECK(std::string(e->m_promptText) == "12345", "typed '%s'", e->m_promptText);
+    CHECK(std::string(e->m_promptText) == std::string("12345678").substr(0, EDITOR_LINE_DIGITS), "typed '%s'", e->m_promptText);
 
     /* Esc closes it, moving nothing, and the file's status line comes back */
     g_calls.clear();
@@ -282,7 +282,7 @@ static void testPromptRandom(std::mt19937& rng)
                 if (!model.empty()) {
                     model.pop_back();
                 }
-            } else if (c >= '0' && c <= '9' && model.size() < 5) {
+            } else if (c >= '0' && c <= '9' && (int)model.size() < EDITOR_LINE_DIGITS) {
                 model += (char)c;
             }
         }
@@ -461,9 +461,9 @@ static void testGoToLineFixed()
 static void testPromptLayout()
 {
     Editor* e = new Editor();
-    /* As many lines as the Editor holds: 65,535 newlines, its most characters */
-    std::string many(65535, '\n');
-    struct { std::string text; int lines; } texts[] = {{"", 1}, {numberedLines(300, false), 300}, {many, 65536}};
+    /* As many lines as the Editor holds: as many newlines as its most characters */
+    std::string many(EDITOR_BUFFER_SIZE - 1, '\n');
+    struct { std::string text; int lines; } texts[] = {{"", 1}, {numberedLines(300, false), 300}, {many, EDITOR_BUFFER_SIZE}};
 
     for (auto& t : texts) {
         setText(e, t.text);
@@ -473,7 +473,7 @@ static void testPromptLayout()
             if (max_chars < 1) {
                 max_chars = 1;
             }
-            for (const char* typed : {"", "7", "12345"}) {
+            for (const char* typed : {"", "7", "12345", "123456"}) {
                 e->m_prompt = EDITOR_PROMPT_LINE;
                 strcpy(e->m_promptText, typed);
                 e->m_promptLen = (int)strlen(typed);
@@ -1184,7 +1184,7 @@ static void press(Editor* e, unsigned char c, int mods = 0)
 static void testUndoAtLimit()
 {
     Editor* e = new Editor();
-    int most = e->m_bufferSize - 1;
+    int most = EDITOR_BUFFER_SIZE - 1;
 
     /* A nearly full text, replaced by a full one with Ctrl+A and Ctrl+V, then undone and redone */
     std::string before = std::string(most - 10, 'a');
@@ -1196,6 +1196,7 @@ static void testUndoAtLimit()
     CHECK(textOf(e) == full, "paste over all: %d characters", e->m_bufferHead);
     press(e, CTRLZ);
     CHECK(textOf(e) == before, "undo to the nearly full text: %d characters", e->m_bufferHead);
+    CHECK(!e->m_undoFailed, "a full paste over a full text turned undo off");
     press(e, CTRLY);
     CHECK(textOf(e) == full, "redo to the full text: %d characters", e->m_bufferHead);
     press(e, CTRLZ);
@@ -1237,7 +1238,7 @@ static void testUndoAtLimit()
 static void testUndoAllRandom(std::mt19937& rng, int trials)
 {
     Editor* e = new Editor();
-    int most = e->m_bufferSize - 1;
+    int most = EDITOR_BUFFER_SIZE - 1;
     int complete = 0;
     for (int trial = 0; trial < trials; trial++) {
         int size = (int)(rng() % 6 == 0 ? most - (int)(rng() % 64) : rng() % 3000);
@@ -1359,6 +1360,84 @@ static void testScrollToRow(std::mt19937& rng, int trials)
     delete e;
 }
 
+/**
+ * Texts up to 256 KB (#213 step 7): the buffer starts small and grows as edits and files need, shrinks for the next
+ * text, and a file over the limit opens read-only with what fits
+ */
+static void testBiggerTexts()
+{
+    Editor* e = new Editor();
+    int most = EDITOR_BUFFER_SIZE - 1;
+    CHECK(e->m_bufferSize == EDITOR_BUFFER_MIN, "starts at %d bytes", e->m_bufferSize);
+
+    /* Growing as text goes in: a paste across EDITOR_BUFFER_MIN, undone and redone */
+    std::string small = numberedLines(100, true);
+    setText(e, small);
+    CHECK(e->m_bufferSize == EDITOR_BUFFER_MIN, "a small file takes %d bytes", e->m_bufferSize);
+    std::string block(EDITOR_BUFFER_MIN * 2, 'q');
+    clipboard_set(block.data(), (int)block.size());
+    e->m_bufferEdit = 10;
+    press(e, CTRLV);
+    std::string pasted = small.substr(0, 10) + block + small.substr(10);
+    CHECK(textOf(e) == pasted && e->m_bufferSize >= (int)pasted.size() + 1, "paste across the start size: %d characters in %d bytes", e->m_bufferHead, e->m_bufferSize);
+    press(e, CTRLZ);
+    CHECK(textOf(e) == small, "undo the big paste");
+    press(e, CTRLY);
+    CHECK(textOf(e) == pasted, "redo the big paste");
+
+    /* Files: one of 100 KB, one the limit's size, editable; one character over, read-only with what fits */
+    for (int size : {100 * 1024, most, most + 1}) {
+        std::string text;
+        while ((int)text.size() < size) {
+            text += "line of text\n";
+        }
+        text.resize(size);
+        setText(e, text);
+        bool over = size > most;
+        CHECK(e->m_readOnly == over, "a %d-character file: %s", size, e->m_readOnly ? "read-only" : "editable");
+        CHECK(textOf(e) == text.substr(0, over ? most : size), "a %d-character file: %d characters loaded", size, e->m_bufferHead);
+        CHECK(linesKeptRight(e), "a %d-character file: lines kept wrong", size);
+    }
+
+    /* A small file after a big one shrinks the buffer back */
+    setText(e, small);
+    CHECK(e->m_bufferSize == EDITOR_BUFFER_MIN, "after a big file, a small one takes %d bytes", e->m_bufferSize);
+
+    /* Copying and pasting all of a big text goes through the clipboard, which holds as much as the Editor */
+    std::string big;
+    while ((int)big.size() < 200 * 1024) {
+        big += "copy me\n";
+    }
+    setText(e, big);
+    press(e, CTRLA);
+    press(e, CTRLC);
+    setText(e, "");
+    press(e, CTRLV);
+    CHECK(textOf(e) == big, "copy and paste of 200 KB: %d characters", e->m_bufferHead);
+
+    /* Six-digit line numbers: Ctrl+G takes them, and the gutter has room for them inside its line */
+    setText(e, std::string(200000, '\n'));
+    press(e, CTRLG);
+    for (const char* p = "199999"; *p; p++) {
+        press(e, (unsigned char)*p);
+    }
+    g_calls.clear();
+    key(e, '\n');
+    CHECK(e->lineNumberAtIndex(e->m_bufferEdit) == 199999, "Ctrl+G 199999 went to line %d", e->lineNumberAtIndex(e->m_bufferEdit));
+    int gutter_x = e->m_treeWidth;
+    int gutter_w = e->gutterWidth();
+    int numbers = 0;
+    for (const DrawCall& c : g_calls) {
+        if (c.kind == 'f' && c.x >= gutter_x && c.x < gutter_x + gutter_w && c.text.size() == 6) {
+            numbers++;
+            CHECK(c.x >= gutter_x + 1 && c.x + (int)c.text.size() * 8 <= gutter_x + gutter_w - 1, "line number %s at %d runs past the gutter, %d to %d",
+                  c.text.c_str(), c.x, gutter_x, gutter_x + gutter_w);
+        }
+    }
+    CHECK(numbers > 0, "no six-digit line numbers drawn");
+    delete e;
+}
+
 int main()
 {
     std::mt19937 rng(137);
@@ -1375,6 +1454,7 @@ int main()
     testUndoAtLimit();
     testUndoAllRandom(rng, 120);
     testScrollToRow(rng, 3000);
+    testBiggerTexts();
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures != 0;
 }

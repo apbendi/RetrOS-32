@@ -383,7 +383,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
 
 ## Selection and the clipboard
 
-**The clipboard** (`kernel/clipboard.c`, `include/clipboard.h`) is one text, of up to `CLIPBOARD_MAX`, 64 KB, without a terminating 0. Every program and kernel thread shares it.
+**The clipboard** (`kernel/clipboard.c`, `include/clipboard.h`) is one text, of up to `CLIPBOARD_MAX`, 256 KB, as much as the Editor holds, without a terminating 0. Every program and kernel thread shares it.
 - **Setting it:** `clipboard_set(data, size)` copies the text in, replacing the old one, and returns `size`. Too much, or no memory for the copy, returns a negative error code and leaves the old text.
 - **Reading it:** `clipboard_get(data, size)` copies out as much as fits, and returns the whole text's size. So a size of 0 asks how big it is.
 - **Who calls them:** kernel code directly; apps through `SYSCALL_CLIPBOARD_SET` and `SYSCALL_CLIPBOARD_GET`, with wrappers of the same names in `lib/syscall.c`.
@@ -397,8 +397,10 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - **The tree's own scroll bar** stays placed where it was last drawn, over the text, so the event loop gives it no mouse events then.
   - **Ctrl+B does nothing while the mouse button is held** (`m_mouseHeld`), so a drag on the tree's border or scroll bar can't be cut off halfway.
   - **The tree's box:** to make room for the toggle, the Editor moves the tree's white box 4 pixels left and 6 down, and leaves out its "Tree View" title (`TreeView::setBox`). TreeView lays out its rows, clicks and scroll bar from the box's corner. A change there has to keep doing so: Finder's tree uses the defaults, so it would still look right while the Editor's rows and clicks stopped lining up.
-- **Pasting** inserts the text exactly as it is, without the `}` typing a `{` adds. What doesn't fit in the 64 KB buffer is left out, and the status line says so.
-- **The text** is one array, `m_textBuffer`: `m_bufferHead` characters, at most 65,535, then a 0 (#213). Everything reads it as it is.
+- **Pasting** inserts the text exactly as it is, without the `}` typing a `{` adds. What doesn't fit in the 262,143 characters the Editor holds is left out, and the status line says so. The room is made first, so a paste without the memory leaves the selection as it was.
+- **The text** is one array, `m_textBuffer`: `m_bufferHead` characters, at most 262,143, then a 0 (#213). Everything reads it as it is.
+  - **Its buffer** starts at `EDITOR_BUFFER_MIN`, 16 KB, or as much as the file opened needs, and doubles as edits need, up to `EDITOR_BUFFER_SIZE`, 256 KB (`reserveText`). A new text shrinks it back (`shrinkText`). So a pointer into the text is no good after an insert.
+  - **A bigger file,** or one the memory can't hold, opens read-only, showing what fits (#133).
   - **Changing it:** only through `bufferInsertChar`, `bufferInsertText`, `bufferDeleteChar` and `bufferDeleteRange`, which move the rest of the text with `memmove`. Each refuses, changing nothing, what doesn't fit.
   - **Before #213** the text was also kept as a rope, a list of 256-byte chunks, each a `malloc`, which every edit then copied back into the array. Nothing else read it, so it only cost time and memory.
 - **Drawing:** `drawSelection` draws the selection's background before the text, laying rows out as `reDraw` does.
@@ -416,14 +418,14 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - **Recording:** the four functions that edit the text, `bufferInsertChar`, `bufferInsertText`, `bufferDeleteChar` and `bufferDeleteRange`, record each change, next to #119's brace tracking. So the `}` that `{` adds, paste and cut are covered too. Undo and redo go through the same functions, with `m_undoing` set so they aren't recorded.
   - **Steps:** `putChar` groups a key's changes into a step. Characters typed one after another join one step, as does a run of Backspaces or of Deletes; Enter, Tab, paste and cut are a step each. A step is at most one delete and one insert at the same place, and keeps the cursor and selection from before it, which undo puts back.
   - **Applying a step:** undo and redo take the old text out, then put the new text in (`undoApply`). They check first that the result fits, so a failure changes nothing. It always fits, since it's the text from before or after the step.
-  - **Memory:** one block, allocated at the first edit, from 16 KB doubling to 256 KB (`EDITOR_UNDO_MAX`), then dropping the oldest steps. Without the memory, editing goes on unrecorded. `clearHistory` frees it, so opening a file starts afresh.
+  - **Memory:** one block, allocated at the first edit, from 16 KB doubling to 1 MB (`EDITOR_UNDO_MAX`, four times the text's limit, so a full paste over a full text fits as one step), then dropping the oldest steps. A step bigger than that would turn undo off for the rest of the text. Without the memory, editing goes on unrecorded. `clearHistory` frees it, so opening a file starts afresh.
   - **Unsaved changes:** `hasUnsavedChanges` compares the history's position with the last save's, so undoing back to it clears the `*`. Without a history, it's `m_dirty`, as before.
 - **Go to line and Find** (#137): Ctrl+G and Ctrl+F open a prompt on the status line. Esc, or the key that opened it, closes it, and Enter with nothing typed does too.
   - **Go to line:** `Go to line (1-N): `, or `Line: ` when the window is too narrow. Enter moves the cursor to the start of the line typed, clamped to the lines there are, clears the selection and closes the prompt (`goToLine`).
   - **Find:** `Find: `, filled in with the selection if it's on one line and fits, or else the last search. Filled-in text is highlighted, and the first key typed replaces it. Enter selects the next match after the cursor, or after the selection's start, and Shift+Enter the one before, going round the end (`findNext`). The prompt stays open and shows `3 of 12` or, in red, `Not found`. Esc leaves the match selected.
     - **Matches** are exact, case included, and every place the text has one counts, overlapping ones too, so the steps and the count agree: `aa` is in `aaaa` 3 times.
     - **Searching on Enter, not as you type,** because each search redraws the whole text, and the Editor draws a character per system call (#208).
-  - **The prompt** (`m_prompt`, `promptKey`) takes every key while it's open: `putChar` hands them over before anything else, so no key can edit the text behind it. A line number takes up to 5 digits, and Find up to 64 characters from 32 to 126. A mouse press anywhere closes it first, then does what it does.
+  - **The prompt** (`m_prompt`, `promptKey`) takes every key while it's open: `putChar` hands them over before anything else, so no key can edit the text behind it. A line number takes up to 6 digits (`EDITOR_LINE_DIGITS`), and Find up to 64 characters from 32 to 126. A mouse press anywhere closes it first, then does what it does.
   - **Drawing:** the status line goes through `drawStatus`, which draws the prompt while one is open, so a redraw or a resize keeps it. Find's text, when it doesn't fit, shows its end after `...`; the count goes first, unless that leaves less than 4 characters of the text.
   - **Where it lands** (`revealRange`): a line or match already in view doesn't scroll. Otherwise the view puts its start in the middle, or lower when that would show rows past the text's end.
 

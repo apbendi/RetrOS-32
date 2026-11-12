@@ -78,7 +78,12 @@
 /* A tab is drawn as space to the next multiple of this many columns, and the Tab key inserts this many spaces (#135) */
 #define EDITOR_TAB_WIDTH 4
 
-#define EDITOR_BUFFER_SIZE (64 * 1024)
+/**
+ * The most the text's buffer grows to: the text and the 0 after it, so 262,143 characters (#213). A bigger file opens
+ * read-only. The buffer starts at EDITOR_BUFFER_MIN, or as much as the file opened needs, and doubles as edits need
+ */
+#define EDITOR_BUFFER_SIZE (256 * 1024)
+#define EDITOR_BUFFER_MIN (16 * 1024)
 #define EDITOR_DEFAULT_TEXT_WIDTH 400
 #define EDITOR_DEFAULT_GUTTER_WIDTH 32
 #define EDITOR_DEFAULT_RIGHT_PANE_WIDTH (EDITOR_DEFAULT_TEXT_WIDTH + EDITOR_DEFAULT_GUTTER_WIDTH + (2 * TEXT_PADDING) + SCROLLBAR_WIDTH)
@@ -94,11 +99,12 @@
 /* How many of the } that typing { adds are kept track of, one per block still open; past that, the oldest is dropped */
 #define EDITOR_AUTO_BRACES_MAX 32
 /**
- * The undo history's first block, and the most it grows to, doubling, before the oldest steps are dropped. One step can
- * hold about 128 KB, a 64 KB paste over a 64 KB text
+ * The undo history's first block, and the most it grows to, doubling, before the oldest steps are dropped. It holds a
+ * step of twice the text, a full paste over a full text, with as much again for the steps before it: a step bigger
+ * than the history turns it off for the rest of the text (undoReserve)
  */
 #define EDITOR_UNDO_MIN (16 * 1024)
-#define EDITOR_UNDO_MAX (256 * 1024)
+#define EDITOR_UNDO_MAX (4 * EDITOR_BUFFER_SIZE)
 
 /* What kind of key made an undo step: typing, Backspace or Delete join the step the last key of the same kind made */
 enum {
@@ -113,7 +119,7 @@ enum {
 /**
  * A prompt on the status line, which takes every key until it's closed: Ctrl+G's line number and Ctrl+F's Find (#137).
  * What's typed at it holds up to EDITOR_PROMPT_MAX characters, and a line number up to EDITOR_LINE_DIGITS, since the
- * text, at most 65,535 characters (EDITOR_BUFFER_SIZE less the 0 after it), has at most 65,536 lines
+ * text, at most 262,143 characters (EDITOR_BUFFER_SIZE less the 0 after it), has at most 262,144 lines
  */
 enum {
     EDITOR_PROMPT_NONE = 0,
@@ -121,7 +127,7 @@ enum {
     EDITOR_PROMPT_FIND
 };
 #define EDITOR_PROMPT_MAX 64
-#define EDITOR_LINE_DIGITS 5
+#define EDITOR_LINE_DIGITS 6
 
 /* The header's buttons: New and Save from the left, and Help at the right */
 enum {
@@ -267,6 +273,8 @@ private:
     bool showNewFileDialog(char* path, int path_size);
 
     void clearHistory();
+    bool reserveText(int length);
+    void shrinkText();
     bool bufferInsertChar(int index, unsigned char c);
     bool bufferInsertText(int index, const unsigned char* data, int len);
     bool bufferDeleteChar(int index);
@@ -328,7 +336,10 @@ private:
     bool m_pressedShown;
 
     int m_fd;
-    /* The text: its m_bufferHead characters, then a 0, in m_bufferSize bytes. Edited only by the buffer* functions */
+    /**
+     * The text: its m_bufferHead characters, then a 0, in m_bufferSize bytes, which grow as edits need, up to
+     * EDITOR_BUFFER_SIZE (reserveText). Edited only by the buffer* functions
+     */
     unsigned char* m_textBuffer;
     /* The text's lines, one more than its newlines, which the buffer* functions keep as they change it */
     int m_lineCount;
