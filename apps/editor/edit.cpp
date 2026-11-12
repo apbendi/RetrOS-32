@@ -505,6 +505,7 @@ Editor::Editor()
     m_pressedButton = EDITOR_BUTTON_NONE;
     m_pressedShown = false;
     m_treeWidth = TREE_VIEW_WIDTH;
+    m_treeLoading = false;
     m_windowWidth = EDITOR_DEFAULT_WINDOW_WIDTH;
     m_treeCollapsed = false;
     m_treeOpenWidth = TREE_VIEW_WIDTH;
@@ -535,6 +536,8 @@ Editor::Editor()
     c_width = EDITOR_DEFAULT_RIGHT_PANE_WIDTH;
     c_height = EDITOR_DEFAULT_HEIGHT;
 
+    memset(m_buttonIcons, 0, sizeof(m_buttonIcons));
+
     m_textBuffer = (unsigned char*) malloc(m_bufferSize);
     if (m_textBuffer == nullptr) {
         exit();
@@ -542,6 +545,17 @@ Editor::Editor()
 
     memset(m_textBuffer, 0, m_bufferSize);
     memset(m_currentPath, 0, sizeof(m_currentPath));
+
+    /**
+     * What needs nothing from the disk, shown before the tree and the icons are read, which on slow hardware takes a
+     * while (#210): the buttons without their icons, and the tree's box saying it's loading
+     */
+    m_treeLoading = true;
+    gfx_draw_rectangle(0, 0, EDITOR_DEFAULT_WINDOW_WIDTH, c_height, COLOR_BG);
+    reDrawHeader();
+    drawTreePane();
+    reDraw(0, 0);
+    endFrame();
 
     treeView = new TreeView(0, 0, m_treeWidth, c_height);
     if (treeView != nullptr) {
@@ -553,11 +567,10 @@ Editor::Editor()
     for (int button = 0; button < EDITOR_BUTTON_COUNT; button++) {
         gfx_load_icon(editor_button_icons[button], &m_buttonIcons[button]);
     }
-
-    gfx_draw_rectangle(0, 0, EDITOR_DEFAULT_WINDOW_WIDTH, c_height, COLOR_BG);
-    gfx_draw_format_text(20, 20, COLOR_VGA_MEDIUM_GRAY, "Loading...");
+    m_treeLoading = false;
 
     reDrawHeader();
+    drawTreePane();
     reDraw(0, 0);
 }
 
@@ -1566,8 +1579,11 @@ void Editor::drawButton(int button, bool pressed)
     int size = EDITOR_BUTTON_SIZE;
     gfx_draw_bevel(x, y, size, size, pressed);
 
-    /* A pixel down and right when pressed, as if pushed in */
+    /* A pixel down and right when pressed, as if pushed in. Before the icons are loaded, the button alone */
     const struct image* icon = &m_buttonIcons[button];
+    if (icon->width <= 0) {
+        return;
+    }
     int shift = pressed ? 1 : 0;
     drawImage(x + (size - icon->width) / 2 + shift, y + (size - icon->height) / 2 + shift, icon);
 }
@@ -1620,6 +1636,14 @@ void Editor::drawTreePane()
 {
     if (m_treeCollapsed) {
         drawContouredRect(0, 0, m_treeWidth, c_height);
+    } else if (treeView == nullptr) {
+        /* Not loaded yet, or there wasn't the memory: the tree's empty box, as TreeView draws it */
+        drawContouredRect(0, 0, m_treeWidth, c_height);
+        drawContouredBox(EDITOR_TREE_TOGGLE_X, EDITOR_TREE_BOX_TOP, m_treeWidth - EDITOR_TREE_TOGGLE_X - 8,
+                         c_height - EDITOR_TREE_BOX_TOP - 8, COLOR_WHITE);
+        if (m_treeLoading) {
+            gfx_draw_format_text(EDITOR_TREE_TOGGLE_X + 4, EDITOR_TREE_BOX_TOP + 4, COLOR_VGA_MEDIUM_GRAY, "Loading...");
+        }
     } else {
         treeView->drawTree(this, m_currentPath);
 
@@ -3050,6 +3074,12 @@ bool Editor::Open(char* path)
 
     strncpy(m_currentPath, absolute, (uint32_t)(sizeof(m_currentPath) - 1));
     m_currentPath[sizeof(m_currentPath) - 1] = 0;
+
+    /* Reading takes a while on slow hardware, so say what's happening, with the title naming the file, and show it (#210) */
+    if (m_fd >= 0) {
+        drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "Opening %s...", absolute);
+        endFrame();
+    }
 
     shrinkText();
     memset(m_textBuffer, 0, m_bufferSize);

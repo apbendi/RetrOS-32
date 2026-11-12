@@ -117,6 +117,9 @@ public:
     Finder() : Window(WIDTH, HEIGHT, "Finder", 0){
         drawRect(0, 0, WIDTH, HEIGHT, 30);
 
+        /* Shown now, rather than once the tree and icons are read from the disk (#210) */
+        endFrame();
+
         treeView = new TreeView(0, 0, TREE_VIEW_WIDTH, HEIGHT);
 
         /* From /sysutil/icons, shared with the kernel. A file that can't be read gives a placeholder (#169) */
