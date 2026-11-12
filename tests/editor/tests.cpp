@@ -1512,7 +1512,7 @@ static int refreshes(int from = 0)
  */
 static void testRefreshButton()
 {
-    g_iconSizes["refresh_8"] = {8, 7};
+    g_iconSizes["refresh_7"] = {7, 7};
     g_calls.clear();
     Editor* e = new Editor();
     int x = e->treeRefreshX();
@@ -1522,7 +1522,7 @@ static void testRefreshButton()
     /* The icon, centered on the face inside the bevel's edges, 9 by 7 */
     bool icon = false;
     for (const DrawCall& c : g_calls) {
-        icon = icon || (c.kind == 'i' && c.x == x + 1 && c.y == EDITOR_TREE_TOGGLE_Y + 1 && c.w == 8 && c.h == 7);
+        icon = icon || (c.kind == 'i' && c.x == x + 2 && c.y == EDITOR_TREE_TOGGLE_Y + 1 && c.w == 7 && c.h == 7);
     }
     CHECK(icon, "the icon isn't drawn on the button's face");
 
@@ -1584,7 +1584,7 @@ static void testRefreshButton()
     key(e, CTRLB);
 
     /* A missing icon, the 16 by 16 placeholder, is left off */
-    g_iconSizes.erase("refresh_8");
+    g_iconSizes.erase("refresh_7");
     delete e;
     g_calls.clear();
     e = new Editor();

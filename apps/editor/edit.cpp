@@ -571,7 +571,7 @@ Editor::Editor()
     for (int button = 0; button < EDITOR_BUTTON_COUNT; button++) {
         gfx_load_icon(editor_button_icons[button], &m_buttonIcons[button]);
     }
-    gfx_load_icon("refresh_8", &m_refreshIcon);
+    gfx_load_icon("refresh_7", &m_refreshIcon);
     m_treeLoading = false;
 
     reDrawHeader();
