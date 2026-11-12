@@ -79,7 +79,6 @@
 #define EDITOR_TAB_WIDTH 4
 
 #define EDITOR_BUFFER_SIZE (64 * 1024)
-#define ROPE_CHUNK_SIZE 256
 #define EDITOR_DEFAULT_TEXT_WIDTH 400
 #define EDITOR_DEFAULT_GUTTER_WIDTH 32
 #define EDITOR_DEFAULT_RIGHT_PANE_WIDTH (EDITOR_DEFAULT_TEXT_WIDTH + EDITOR_DEFAULT_GUTTER_WIDTH + (2 * TEXT_PADDING) + SCROLLBAR_WIDTH)
@@ -163,13 +162,6 @@ public:
     int countLines() const;
 
 private:
-    struct rope_node {
-        struct rope_node* prev;
-        struct rope_node* next;
-        int len;
-        unsigned char data[ROPE_CHUNK_SIZE];
-    };
-
     /**
      * One undo step: del characters at pos became ins characters. The step is followed in the history by the del
      * characters, then the ins characters, then padding to a multiple of 4, so the next step's ints are aligned
@@ -264,19 +256,11 @@ private:
     void applyResolution(int window_width, int window_height);
     bool showNewFileDialog(char* path, int path_size);
 
-    void ropeClear();
-    bool ropeLoadFromBuffer(const unsigned char* data, int len);
-    bool ropeSyncToBuffer();
-    bool ropeInsertChar(int index, unsigned char c);
-    bool ropeAddChar(int index, unsigned char c);
-    bool ropeDeleteChar(int index);
-    bool ropeDeleteRange(int index, int count);
-    bool ropeInsertText(int index, const unsigned char* data, int len);
-    bool ropeLocate(int index, struct rope_node** out_node, int* out_offset) const;
-    void ropeCopy(int index, int count, unsigned char* out) const;
-    struct rope_node* ropeCreateNode();
-    void ropeDetachNode(struct rope_node* node);
-    void ropeTryMerge(struct rope_node* node);
+    void clearHistory();
+    bool bufferInsertChar(int index, unsigned char c);
+    bool bufferInsertText(int index, const unsigned char* data, int len);
+    bool bufferDeleteChar(int index);
+    bool bufferDeleteRange(int index, int count);
 
     void autoBracesInserted(int index, int len);
     void autoBracesDeleted(int index, int count);
@@ -334,6 +318,7 @@ private:
     bool m_pressedShown;
 
     int m_fd;
+    /* The text: its m_bufferHead characters, then a 0, in m_bufferSize bytes. Edited only by the buffer* functions */
     unsigned char* m_textBuffer;
     int m_bufferSize;
     int m_fileSize;
@@ -347,8 +332,8 @@ private:
     int m_autoBraces[EDITOR_AUTO_BRACES_MAX];
     int m_autoBraceCount;
     /**
-     * The undo history (#161): the steps done, oldest first, then those undone, which redo does again. The four rope
-     * functions that edit record into it. Allocated at the first edit, m_undoSize bytes, and freed with the text
+     * The undo history (#161): the steps done, oldest first, then those undone, which redo does again. The four buffer*
+     * functions that edit the text record into it. Allocated at the first edit, m_undoSize bytes, and freed with the text
      */
     unsigned char* m_undo;
     int m_undoSize;
@@ -412,9 +397,6 @@ private:
 
     int c_width;
     int c_height;
-
-    struct rope_node* m_ropeHead;
-    struct rope_node* m_ropeTail;
 };
 
 #endif /* D2830F9E_59AE_4E2A_B9AB_EB0EC93872EF */

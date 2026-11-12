@@ -1115,6 +1115,155 @@ static void testFindLoop()
     delete e;
 }
 
+/* The text as it is, for comparing with a model */
+static std::string textOf(Editor* e)
+{
+    return std::string((const char*)e->m_textBuffer, e->m_bufferHead);
+}
+
+static void pressTimes(Editor* e, unsigned char c, int times, int mods = 0)
+{
+    for (int i = 0; i < times; i++) {
+        key(e, c, mods);
+    }
+}
+
+/* A key whose drawing isn't looked at: forgetting it keeps g_calls from growing through thousands of keys */
+static void press(Editor* e, unsigned char c, int mods = 0)
+{
+    key(e, c, mods);
+    g_calls.clear();
+}
+
+/**
+ * Undo and redo with the text at the Editor's limit (#213 step 3). Undo used to put the text coming in before taking
+ * the text going out, so for a moment the text held both; it now takes out first, and must still get both ways right
+ */
+static void testUndoAtLimit()
+{
+    Editor* e = new Editor();
+    int most = e->m_bufferSize - 1;
+
+    /* A nearly full text, replaced by a full one with Ctrl+A and Ctrl+V, then undone and redone */
+    std::string before = std::string(most - 10, 'a');
+    std::string full = std::string(most, 'b');
+    setText(e, before);
+    clipboard_set(full.data(), (int)full.size());
+    press(e, CTRLA);
+    press(e, CTRLV);
+    CHECK(textOf(e) == full, "paste over all: %d characters", e->m_bufferHead);
+    press(e, CTRLZ);
+    CHECK(textOf(e) == before, "undo to the nearly full text: %d characters", e->m_bufferHead);
+    press(e, CTRLY);
+    CHECK(textOf(e) == full, "redo to the full text: %d characters", e->m_bufferHead);
+    press(e, CTRLZ);
+    CHECK(textOf(e) == before, "undo again: %d characters", e->m_bufferHead);
+
+    /* A paste that doesn't all fit goes in as far as it does, and undoes and redoes as that */
+    setText(e, std::string(most - 5, 'c'));
+    clipboard_set("0123456789", 10);
+    e->m_bufferEdit = 100;
+    press(e, CTRLV);
+    std::string cut_short = std::string(100, 'c') + "01234" + std::string(most - 105, 'c');
+    CHECK(textOf(e) == cut_short, "paste cut short: %d characters", e->m_bufferHead);
+    press(e, CTRLZ);
+    CHECK(textOf(e) == std::string(most - 5, 'c'), "undo the paste cut short");
+    press(e, CTRLY);
+    CHECK(textOf(e) == cut_short, "redo the paste cut short");
+
+    /* A full text takes no more typing, and that changes nothing to undo */
+    setText(e, full);
+    e->m_bufferEdit = 50;
+    press(e, 'x');
+    CHECK(textOf(e) == full, "typing into a full text changed it");
+    press(e, '\b');
+    press(e, 'x');
+    std::string typed = full;
+    typed[49] = 'x';
+    CHECK(textOf(e) == typed, "Backspace then typing in a full text");
+    for (int i = 0; i < 3; i++) {
+        press(e, CTRLZ);
+    }
+    CHECK(textOf(e) == full, "undo in a full text");
+    delete e;
+}
+
+/**
+ * Random edits near the limit, then undo until there's nothing left to undo, which must give back the text as it was
+ * opened, and redo until there's nothing left to redo, which must give back the text as it was after the edits
+ */
+static void testUndoAllRandom(std::mt19937& rng, int trials)
+{
+    Editor* e = new Editor();
+    int most = e->m_bufferSize - 1;
+    int complete = 0;
+    for (int trial = 0; trial < trials; trial++) {
+        int size = (int)(rng() % 6 == 0 ? most - (int)(rng() % 64) : rng() % 3000);
+        std::string text;
+        for (int i = 0; i < size; i++) {
+            text += "ab {}\n\t"[rng() % 7];
+        }
+        setText(e, text);
+
+        /**
+         * In a big text, edits stay near the cursor, as a user's mostly do, starting from the top or the middle. A far
+         * one makes ensureCursorVisible scroll there a row at a time, each row a pass over the text (#213), which
+         * under ASan takes seconds. Small texts get edits anywhere
+         */
+        bool big = size > 4000;
+        if (big && rng() % 2) {
+            press(e, CTRLG);
+            for (char c : std::to_string(e->countLines() / 2)) {
+                press(e, (unsigned char)c);
+            }
+            press(e, '\n');
+        }
+        auto somewhere = [&](int from) {
+            int head = e->m_bufferHead;
+            int at = big ? from + (int)(rng() % 601) - 300 : (int)(rng() % (head + 1));
+            return clampInt(at, 0, head);
+        };
+
+        int edits = 1 + (int)(rng() % (big ? 12 : 25));
+        for (int i = 0; i < edits; i++) {
+            e->m_bufferEdit = somewhere(e->m_bufferEdit);
+            e->m_selAnchor = rng() % 3 == 0 ? somewhere(e->m_bufferEdit) : -1;
+            switch (rng() % 10) {
+            case 0: press(e, '\b'); break;
+            case 1: press(e, KEY_DELETE); break;
+            case 2: press(e, '\n'); break;
+            case 3: press(e, '\t'); break;
+            case 4: press(e, CTRLX); break;
+            case 5: press(e, CTRLC); press(e, CTRLV); break;
+            case 6: press(e, CTRLV); break;
+            case 7: press(e, '{'); break;
+            default: press(e, "xyz}"[rng() % 4]); break;
+            }
+            CHECK(e->m_bufferHead <= most && e->m_textBuffer[e->m_bufferHead] == 0, "trial %d: %d characters, or no 0 after them", trial, e->m_bufferHead);
+        }
+        std::string after = textOf(e);
+        if (e->m_undoFailed || e->m_undoDropped > 0) {
+            continue;
+        }
+        complete++;
+        /* Each press redraws, so only as many as there are steps, and a few over to be sure nothing's left */
+        for (int guard = 3 * edits + 2; e->m_undoAt > 0 && guard > 0; guard--) {
+            press(e, CTRLZ);
+        }
+        press(e, CTRLZ);
+        press(e, CTRLZ);
+        CHECK(textOf(e) == text, "trial %d: undoing %d edits on %d characters didn't give the text back", trial, edits, size);
+        for (int guard = 3 * edits + 2; e->m_undoAt < e->m_undoUsed && guard > 0; guard--) {
+            press(e, CTRLY);
+        }
+        press(e, CTRLY);
+        press(e, CTRLY);
+        CHECK(textOf(e) == after, "trial %d: redoing them didn't give the edited text back", trial);
+    }
+    printf("Undo all: %d of %d sessions undone and redone in full\n", complete, trials);
+    delete e;
+}
+
 int main()
 {
     std::mt19937 rng(137);
@@ -1128,6 +1277,8 @@ int main()
     testFindRandom(rng, 4000);
     testFindLayout();
     testFindLoop();
+    testUndoAtLimit();
+    testUndoAllRandom(rng, 120);
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures != 0;
 }

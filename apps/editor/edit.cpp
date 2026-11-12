@@ -527,8 +527,6 @@ Editor::Editor()
     m_textColor = COLOR_TEXT;
     c_width = EDITOR_DEFAULT_RIGHT_PANE_WIDTH;
     c_height = EDITOR_DEFAULT_HEIGHT;
-    m_ropeHead = nullptr;
-    m_ropeTail = nullptr;
 
     m_textBuffer = (unsigned char*) malloc(m_bufferSize);
     if (m_textBuffer == nullptr) {
@@ -572,7 +570,7 @@ Editor::~Editor()
         gfx_free_icon(&m_buttonIcons[button]);
     }
 
-    ropeClear();
+    undoClear();
 
     if (m_textBuffer != nullptr) {
         free(m_textBuffer);
@@ -2123,128 +2121,11 @@ void Editor::Lex()
 {
 }
 
-bool Editor::ropeLocate(int index, struct rope_node** out_node, int* out_offset) const
+/* Forgets what's kept about the text's past: the } that typing { added, and the undo history. The text is the caller's */
+void Editor::clearHistory()
 {
-    if (index < 0 || index > m_bufferHead) {
-        return false;
-    }
-
-    int pos = 0;
-    struct rope_node* node = m_ropeHead;
-    while (node != nullptr) {
-        if (index <= pos + node->len) {
-            *out_node = node;
-            *out_offset = index - pos;
-            return true;
-        }
-
-        pos += node->len;
-        node = node->next;
-    }
-
-    if (index == pos) {
-        *out_node = nullptr;
-        *out_offset = 0;
-        return true;
-    }
-
-    return false;
-}
-
-Editor::rope_node* Editor::ropeCreateNode()
-{
-    struct rope_node* node = (struct rope_node*) malloc(sizeof(struct rope_node));
-    if (node == nullptr) {
-        return nullptr;
-    }
-
-    memset(node, 0, sizeof(struct rope_node));
-    node->prev = nullptr;
-    node->next = nullptr;
-    node->len = 0;
-    return node;
-}
-
-void Editor::ropeDetachNode(struct rope_node* node)
-{
-    if (node == nullptr) {
-        return;
-    }
-
-    if (node->prev != nullptr) {
-        node->prev->next = node->next;
-    } else {
-        m_ropeHead = node->next;
-    }
-
-    if (node->next != nullptr) {
-        node->next->prev = node->prev;
-    } else {
-        m_ropeTail = node->prev;
-    }
-
-    free(node);
-}
-
-void Editor::ropeTryMerge(struct rope_node* node)
-{
-    if (node == nullptr) {
-        return;
-    }
-
-    if (node->next != nullptr) {
-        struct rope_node* next = node->next;
-        if (node->len + next->len <= ROPE_CHUNK_SIZE) {
-            memcpy(&node->data[node->len], next->data, next->len);
-            node->len += next->len;
-            ropeDetachNode(next);
-        }
-    }
-
-    if (node->prev != nullptr) {
-        struct rope_node* prev = node->prev;
-        if (prev->len + node->len <= ROPE_CHUNK_SIZE) {
-            memcpy(&prev->data[prev->len], node->data, node->len);
-            prev->len += node->len;
-            ropeDetachNode(node);
-        }
-    }
-}
-
-void Editor::ropeClear()
-{
-    struct rope_node* node = m_ropeHead;
-    while (node != nullptr) {
-        struct rope_node* next = node->next;
-        free(node);
-        node = next;
-    }
-
-    m_ropeHead = nullptr;
-    m_ropeTail = nullptr;
     m_autoBraceCount = 0;
     undoClear();
-}
-
-/* Copies count characters from index in the rope to out, which ropeDeleteRange can't do once they're gone */
-void Editor::ropeCopy(int index, int count, unsigned char* out) const
-{
-    struct rope_node* node = nullptr;
-    int offset = 0;
-    if (count <= 0 || !ropeLocate(index, &node, &offset)) {
-        return;
-    }
-
-    while (node != nullptr && count > 0) {
-        int take = minInt(count, node->len - offset);
-        if (take > 0) {
-            memcpy(out, &node->data[offset], take);
-            out += take;
-            count -= take;
-        }
-        node = node->next;
-        offset = 0;
-    }
 }
 
 /* len characters went in at index: the } at or after it move along */
@@ -2282,279 +2163,45 @@ int Editor::autoBraceAt(int index) const
     return -1;
 }
 
-bool Editor::ropeLoadFromBuffer(const unsigned char* data, int len)
+/**
+ * The four functions that change the text, m_textBuffer's first m_bufferHead characters, with a 0 after them. Each
+ * moves the } kept in m_autoBraces, and records the change for undo (#161). The text holds at most m_bufferSize - 1
+ * characters.
+ */
+
+/* Inserts c at index. @return false without the room */
+bool Editor::bufferInsertChar(int index, unsigned char c)
 {
-    ropeClear();
-
-    if (data == nullptr || len <= 0) {
-        m_bufferHead = 0;
-        return true;
-    }
-
-    int pos = 0;
-    while (pos < len) {
-        int chunk = len - pos;
-        if (chunk > ROPE_CHUNK_SIZE) {
-            chunk = ROPE_CHUNK_SIZE;
-        }
-
-        struct rope_node* node = ropeCreateNode();
-        if (node == nullptr) {
-            ropeClear();
-            return false;
-        }
-
-        memcpy(node->data, &data[pos], chunk);
-        node->len = chunk;
-
-        if (m_ropeTail == nullptr) {
-            m_ropeHead = node;
-            m_ropeTail = node;
-        } else {
-            m_ropeTail->next = node;
-            node->prev = m_ropeTail;
-            m_ropeTail = node;
-        }
-
-        pos += chunk;
-    }
-
-    m_bufferHead = len;
-    return true;
+    return bufferInsertText(index, &c, 1);
 }
 
-bool Editor::ropeSyncToBuffer()
+/* Inserts len characters at index, moving the rest along. @return false, having changed nothing, without the room */
+bool Editor::bufferInsertText(int index, const unsigned char* data, int len)
 {
-    int pos = 0;
-    struct rope_node* node = m_ropeHead;
-    while (node != nullptr) {
-        int to_copy = node->len;
-        if (to_copy < 0) {
-            to_copy = 0;
-        }
-
-        if (pos + to_copy > m_bufferSize - 1) {
-            to_copy = (m_bufferSize - 1) - pos;
-            if (to_copy < 0) {
-                to_copy = 0;
-            }
-        }
-
-        if (to_copy > 0) {
-            memcpy(&m_textBuffer[pos], node->data, to_copy);
-            pos += to_copy;
-        }
-
-        if (pos >= m_bufferSize - 1) {
-            break;
-        }
-
-        node = node->next;
+    if (len <= 0) {
+        return true;
+    }
+    if (index < 0 || index > m_bufferHead || m_bufferHead + len > m_bufferSize - 1) {
+        return false;
     }
 
-    m_bufferHead = pos;
+    memmove(&m_textBuffer[index + len], &m_textBuffer[index], m_bufferHead - index);
+    memcpy(&m_textBuffer[index], data, len);
+    m_bufferHead += len;
     m_textBuffer[m_bufferHead] = 0;
-
-    if (m_bufferEdit > m_bufferHead) {
-        m_bufferEdit = m_bufferHead;
-    }
-
+    autoBracesInserted(index, len);
+    undoInserted(index, data, len);
     return true;
 }
 
-bool Editor::ropeInsertChar(int index, unsigned char c)
+/* Deletes the character at index. @return false if there's none */
+bool Editor::bufferDeleteChar(int index)
 {
-    if (!ropeAddChar(index, c)) {
-        return false;
-    }
-
-    autoBracesInserted(index, 1);
-    undoInserted(index, &c, 1);
-    return true;
+    return index >= 0 && index < m_bufferHead && bufferDeleteRange(index, 1);
 }
 
-/* Inserts c at index in the rope. ropeInsertChar also moves the } kept in m_autoBraces, and records the edit for undo */
-bool Editor::ropeAddChar(int index, unsigned char c)
-{
-    if (m_bufferHead >= m_bufferSize - 1) {
-        return false;
-    }
-
-    struct rope_node* node = nullptr;
-    int offset = 0;
-    if (!ropeLocate(index, &node, &offset)) {
-        return false;
-    }
-
-    if (m_ropeHead == nullptr) {
-        struct rope_node* fresh = ropeCreateNode();
-        if (fresh == nullptr) {
-            return false;
-        }
-
-        fresh->data[0] = c;
-        fresh->len = 1;
-        m_ropeHead = fresh;
-        m_ropeTail = fresh;
-        m_bufferHead++;
-        return true;
-    }
-
-    if (node == nullptr) {
-        if (m_ropeTail->len < ROPE_CHUNK_SIZE) {
-            m_ropeTail->data[m_ropeTail->len++] = c;
-        } else {
-            struct rope_node* fresh = ropeCreateNode();
-            if (fresh == nullptr) {
-                return false;
-            }
-
-            fresh->data[0] = c;
-            fresh->len = 1;
-            fresh->prev = m_ropeTail;
-            m_ropeTail->next = fresh;
-            m_ropeTail = fresh;
-        }
-
-        m_bufferHead++;
-        return true;
-    }
-
-    if (offset == node->len && node->len < ROPE_CHUNK_SIZE) {
-        node->data[node->len++] = c;
-        m_bufferHead++;
-        return true;
-    }
-
-    if (offset == 0 && node->len < ROPE_CHUNK_SIZE) {
-        memmove(&node->data[1], &node->data[0], node->len);
-        node->data[0] = c;
-        node->len++;
-        m_bufferHead++;
-        return true;
-    }
-
-    if (offset > 0 && offset < node->len) {
-        int right_len = node->len - offset;
-
-        struct rope_node* right = ropeCreateNode();
-        if (right == nullptr) {
-            return false;
-        }
-
-        memcpy(right->data, &node->data[offset], right_len);
-        right->len = right_len;
-
-        node->len = offset;
-
-        right->next = node->next;
-        right->prev = node;
-        if (node->next != nullptr) {
-            node->next->prev = right;
-        } else {
-            m_ropeTail = right;
-        }
-        node->next = right;
-
-        if (node->len < ROPE_CHUNK_SIZE) {
-            node->data[node->len++] = c;
-        } else {
-            struct rope_node* mid = ropeCreateNode();
-            if (mid == nullptr) {
-                return false;
-            }
-
-            mid->data[0] = c;
-            mid->len = 1;
-
-            mid->prev = node;
-            mid->next = right;
-            node->next = mid;
-            right->prev = mid;
-        }
-
-        m_bufferHead++;
-        return true;
-    }
-
-    struct rope_node* fresh = ropeCreateNode();
-    if (fresh == nullptr) {
-        return false;
-    }
-
-    fresh->data[0] = c;
-    fresh->len = 1;
-
-    if (offset <= 0) {
-        fresh->prev = node->prev;
-        fresh->next = node;
-        if (node->prev != nullptr) {
-            node->prev->next = fresh;
-        } else {
-            m_ropeHead = fresh;
-        }
-        node->prev = fresh;
-    } else {
-        fresh->next = node->next;
-        fresh->prev = node;
-        if (node->next != nullptr) {
-            node->next->prev = fresh;
-        } else {
-            m_ropeTail = fresh;
-        }
-        node->next = fresh;
-    }
-
-    m_bufferHead++;
-    return true;
-}
-
-bool Editor::ropeDeleteChar(int index)
-{
-    if (index < 0 || index >= m_bufferHead) {
-        return false;
-    }
-
-    struct rope_node* node = nullptr;
-    int offset = 0;
-    if (!ropeLocate(index, &node, &offset)) {
-        return false;
-    }
-
-    if (node == nullptr) {
-        return false;
-    }
-
-    if (offset == node->len && node->next != nullptr) {
-        node = node->next;
-        offset = 0;
-    }
-
-    if (offset < 0 || offset >= node->len) {
-        return false;
-    }
-
-    undoDeleting(index, 1);
-    memmove(&node->data[offset], &node->data[offset + 1], node->len - offset - 1);
-    node->len--;
-    m_bufferHead--;
-    autoBracesDeleted(index, 1);
-
-    if (node->len <= 0) {
-        ropeDetachNode(node);
-    } else {
-        ropeTryMerge(node);
-    }
-
-    if (m_bufferHead < 0) {
-        m_bufferHead = 0;
-    }
-
-    return true;
-}
-
-/* Deletes count characters from index, cutting each node they're in once. @return false if they aren't all in the text */
-bool Editor::ropeDeleteRange(int index, int count)
+/* Deletes count characters from index, moving the rest back. @return false, having changed nothing, if they aren't all in the text */
+bool Editor::bufferDeleteRange(int index, int count)
 {
     if (index < 0 || count < 0 || index + count > m_bufferHead) {
         return false;
@@ -2563,147 +2210,12 @@ bool Editor::ropeDeleteRange(int index, int count)
         return true;
     }
 
-    struct rope_node* node = nullptr;
-    int offset = 0;
-    if (!ropeLocate(index, &node, &offset) || node == nullptr) {
-        return false;
-    }
-
-    /* The check above means they're all there, so they all go */
+    /* Recorded while they're still there */
     undoDeleting(index, count);
-
-    /* At the end of a node, the first character to go is in the next */
-    int left = count;
-    while (node != nullptr && left > 0) {
-        struct rope_node* next = node->next;
-        int take = minInt(left, node->len - offset);
-        if (take > 0) {
-            memmove(&node->data[offset], &node->data[offset + take], node->len - offset - take);
-            node->len -= take;
-            left -= take;
-            m_bufferHead -= take;
-            if (node->len == 0) {
-                ropeDetachNode(node);
-            }
-        }
-        node = next;
-        offset = 0;
-    }
-
-    autoBracesDeleted(index, count - left);
-
-    /* Joins the nodes either side of the gap, if they fit in one */
-    if (ropeLocate(index, &node, &offset) && node != nullptr) {
-        ropeTryMerge(node);
-    }
-
-    return left == 0;
-}
-
-/**
- * Inserts len characters at index, in nodes of their own, splitting the node index is in the middle of.
- * @return false, having changed nothing, without the room in the buffer or the memory for the nodes
- */
-bool Editor::ropeInsertText(int index, const unsigned char* data, int len)
-{
-    if (len <= 0) {
-        return true;
-    }
-    /* Undo and redo put the new text in before taking the old out, so the rope can hold more than the buffer meanwhile (undoApply) */
-    if (index < 0 || index > m_bufferHead || (!m_undoing && m_bufferHead + len > m_bufferSize - 1)) {
-        return false;
-    }
-
-    /* The new nodes first, so running out of memory leaves the rope as it was */
-    struct rope_node* first = nullptr;
-    struct rope_node* last = nullptr;
-    for (int pos = 0; pos < len; pos += ROPE_CHUNK_SIZE) {
-        struct rope_node* fresh = ropeCreateNode();
-        if (fresh == nullptr) {
-            while (first != nullptr) {
-                struct rope_node* next = first->next;
-                free(first);
-                first = next;
-            }
-            return false;
-        }
-
-        fresh->len = minInt(ROPE_CHUNK_SIZE, len - pos);
-        memcpy(fresh->data, &data[pos], fresh->len);
-        fresh->prev = last;
-        if (last != nullptr) {
-            last->next = fresh;
-        } else {
-            first = fresh;
-        }
-        last = fresh;
-    }
-
-    struct rope_node* node = nullptr;
-    int offset = 0;
-    ropeLocate(index, &node, &offset);
-
-    /* They go between prev and next. An empty rope has neither */
-    struct rope_node* prev = nullptr;
-    struct rope_node* next = nullptr;
-    if (node != nullptr && offset == 0) {
-        prev = node->prev;
-        next = node;
-    } else if (node != nullptr && offset == node->len) {
-        prev = node;
-        next = node->next;
-    } else if (node != nullptr) {
-        struct rope_node* right = ropeCreateNode();
-        if (right == nullptr) {
-            while (first != nullptr) {
-                struct rope_node* following = first->next;
-                free(first);
-                first = following;
-            }
-            return false;
-        }
-
-        right->len = node->len - offset;
-        memcpy(right->data, &node->data[offset], right->len);
-        node->len = offset;
-
-        right->prev = node;
-        right->next = node->next;
-        if (node->next != nullptr) {
-            node->next->prev = right;
-        } else {
-            m_ropeTail = right;
-        }
-        node->next = right;
-
-        prev = node;
-        next = right;
-    }
-
-    first->prev = prev;
-    last->next = next;
-    if (prev != nullptr) {
-        prev->next = first;
-    } else {
-        m_ropeHead = first;
-    }
-    if (next != nullptr) {
-        next->prev = last;
-    } else {
-        m_ropeTail = last;
-    }
-    m_bufferHead += len;
-    autoBracesInserted(index, len);
-    undoInserted(index, data, len);
-
-    /* Joins the nodes at either end, if they fit in one */
-    if (ropeLocate(index, &node, &offset) && node != nullptr) {
-        ropeTryMerge(node);
-    }
-    if (ropeLocate(index + len, &node, &offset) && node != nullptr) {
-        ropeTryMerge(node);
-    }
-
+    memmove(&m_textBuffer[index], &m_textBuffer[index + count], m_bufferHead - index - count);
+    m_bufferHead -= count;
+    m_textBuffer[m_bufferHead] = 0;
+    autoBracesDeleted(index, count);
     return true;
 }
 
@@ -2735,11 +2247,10 @@ bool Editor::deleteRange(int start, int end)
 {
     start = clampInt(start, 0, m_bufferHead);
     end = clampInt(end, start, m_bufferHead);
-    if (end == start || !ropeDeleteRange(start, end - start)) {
+    if (end == start || !bufferDeleteRange(start, end - start)) {
         return false;
     }
 
-    ropeSyncToBuffer();
     m_bufferEdit = start;
     m_dirty = 1;
     m_preferredColumn = -1;
@@ -2762,11 +2273,10 @@ bool Editor::deleteSelection()
 /* Inserts len characters at index, and puts the cursor after them. @return false without the room or the memory */
 bool Editor::insertText(int index, const unsigned char* data, int len)
 {
-    if (!ropeInsertText(index, data, len)) {
+    if (!bufferInsertText(index, data, len)) {
         return false;
     }
 
-    ropeSyncToBuffer();
     m_bufferEdit = index + len;
     m_dirty = 1;
     m_preferredColumn = -1;
@@ -2996,7 +2506,7 @@ void Editor::undoInserted(int index, const unsigned char* data, int len)
     step->ins += len;
 }
 
-/* Records for undo that len characters are about to go from index, copying them out of the rope while they're there */
+/* Records for undo that len characters are about to go from index, copying them out of the text while they're there */
 void Editor::undoDeleting(int index, int len)
 {
     struct undo_step* step = undoStepFor(index, len, false);
@@ -3008,8 +2518,12 @@ void Editor::undoDeleting(int index, int len)
     unsigned char* del = (unsigned char*)(step + 1);
     int ahead = step->pos - index;
     memmove(&del[ahead], del, step->del);
-    ropeCopy(index, ahead, del);
-    ropeCopy(step->pos, len - ahead, &del[ahead + step->del]);
+    if (ahead > 0) {
+        memcpy(del, &m_textBuffer[index], ahead);
+    }
+    if (len - ahead > 0) {
+        memcpy(&del[ahead + step->del], &m_textBuffer[step->pos], len - ahead);
+    }
     step->del += len;
     step->pos = index;
 }
@@ -3046,27 +2560,25 @@ void Editor::undoKeyEnd()
 }
 
 /**
- * Changes the text as the step did, or back as it was. The text going in goes in after the text coming out, before
- * that's deleted, so running out of memory changes nothing. Meanwhile the rope can hold both, more than the buffer, so
- * ropeInsertText lets it while m_undoing, and the buffer is synced after.
- * @return false without the memory
+ * Changes the text as the step did, or back as it was: the text going out comes out, then the text coming in goes in.
+ * The result is the text from before or after the step, which fitted then, but that's checked first, so a failure
+ * changes nothing.
+ * @return false if the result wouldn't fit
  */
 bool Editor::undoApply(const struct undo_step* step, bool redo)
 {
     const unsigned char* del = (const unsigned char*)(step + 1);
     const unsigned char* ins = del + step->del;
     int out = redo ? step->del : step->ins;
+    const unsigned char* in = redo ? ins : del;
+    int in_len = redo ? step->ins : step->del;
+    if (step->pos + out > m_bufferHead || m_bufferHead - out + in_len > m_bufferSize - 1) {
+        return false;
+    }
 
     m_undoing = true;
-    bool done = redo ? ropeInsertText(step->pos + out, ins, step->ins) : ropeInsertText(step->pos + out, del, step->del);
-    if (done) {
-        ropeDeleteRange(step->pos, out);
-    }
+    bool done = bufferDeleteRange(step->pos, out) && bufferInsertText(step->pos, in, in_len);
     m_undoing = false;
-
-    if (done) {
-        ropeSyncToBuffer();
-    }
     return done;
 }
 
@@ -3156,7 +2668,7 @@ void Editor::scroll(int lines)
 
 void Editor::Reset()
 {
-    ropeClear();
+    clearHistory();
 
     memset(m_textBuffer, 0, m_bufferSize);
     m_bufferHead = 0;
@@ -3287,21 +2799,20 @@ bool Editor::Open(char* path)
     m_textBuffer[read_bytes] = 0;
     m_bufferHead = read_bytes;
 
-    if (read_error < 0 || !ropeLoadFromBuffer(m_textBuffer, m_bufferHead)) {
+    if (read_error < 0) {
         if (m_fd >= 0) {
             fclose(m_fd);
             m_fd = -1;
         }
-        /* An empty, untitled text. After a failed read the rope still holds the last file, which Reset empties too */
+        /* An empty, untitled text, with nothing kept from the last file */
         setTitle("Editor");
         Reset();
-        if (read_error < 0) {
-            drawStatusLine(COLOR_VGA_RED, "Can't read %s: %s", absolute, error_get_string(read_error));
-        } else {
-            drawStatusLine(COLOR_VGA_RED, "Out of memory while loading file.");
-        }
+        drawStatusLine(COLOR_VGA_RED, "Can't read %s: %s", absolute, error_get_string(read_error));
         return false;
     }
+
+    /* A new text, so nothing from the last one's past applies */
+    clearHistory();
 
     m_bufferEdit = 0;
     scrollY = 0;
@@ -3398,11 +2909,6 @@ bool Editor::Save()
 
     if (m_readOnly) {
         drawStatusLine(COLOR_VGA_RED, "Read-only: too big for the Editor to save.");
-        return false;
-    }
-
-    if (!ropeSyncToBuffer()) {
-        drawStatusLine(COLOR_VGA_RED, "Save failed.");
         return false;
     }
 
@@ -3962,7 +3468,7 @@ void Editor::handleKey(unsigned char c, int modifiers)
 
         /* Right after a {, the } that typing it added goes too */
         if (m_textBuffer[m_bufferEdit - 1] == '{' && autoBraceAt(m_bufferEdit) >= 0) {
-            if (ropeDeleteRange(m_bufferEdit - 1, 2)) {
+            if (bufferDeleteRange(m_bufferEdit - 1, 2)) {
                 m_bufferEdit--;
                 m_dirty = 1;
                 m_preferredColumn = -1;
@@ -3971,7 +3477,7 @@ void Editor::handleKey(unsigned char c, int modifiers)
             break;
         }
 
-        if (ropeDeleteChar(m_bufferEdit - 1)) {
+        if (bufferDeleteChar(m_bufferEdit - 1)) {
             m_bufferEdit--;
             m_dirty = 1;
             m_preferredColumn = -1;
@@ -4039,7 +3545,7 @@ void Editor::handleKey(unsigned char c, int modifiers)
             return;
         }
 
-        if (ropeDeleteChar(m_bufferEdit)) {
+        if (bufferDeleteChar(m_bufferEdit)) {
             m_dirty = 1;
             m_preferredColumn = -1;
             buffer_changed = true;
@@ -4089,7 +3595,7 @@ void Editor::handleKey(unsigned char c, int modifiers)
     default:
         if (c == '\t') {
             for (int n = 0; n < EDITOR_TAB_WIDTH; n++) {
-                if (!ropeInsertChar(m_bufferEdit, ' ')) {
+                if (!bufferInsertChar(m_bufferEdit, ' ')) {
                     break;
                 }
                 m_bufferEdit++;
@@ -4124,14 +3630,14 @@ void Editor::handleKey(unsigned char c, int modifiers)
             }
         }
 
-        if (!ropeInsertChar(m_bufferEdit, c)) {
+        if (!bufferInsertChar(m_bufferEdit, c)) {
             return;
         }
 
         m_bufferEdit++;
         buffer_changed = true;
 
-        if (c == '{' && ropeInsertChar(m_bufferEdit, '}')) {
+        if (c == '{' && bufferInsertChar(m_bufferEdit, '}')) {
             /* Kept track of until it's typed over or deleted. With too many blocks open, the oldest is forgotten */
             if (m_autoBraceCount == EDITOR_AUTO_BRACES_MAX) {
                 memmove(&m_autoBraces[0], &m_autoBraces[1], (EDITOR_AUTO_BRACES_MAX - 1) * sizeof(int));
@@ -4147,10 +3653,6 @@ void Editor::handleKey(unsigned char c, int modifiers)
 
     if (m_bufferEdit < 0) {
         m_bufferEdit = 0;
-    }
-
-    if (buffer_changed) {
-        ropeSyncToBuffer();
     }
 
     if (m_bufferEdit > m_bufferHead) {
