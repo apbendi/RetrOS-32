@@ -513,6 +513,8 @@ Editor::Editor()
     m_treeGrabX = 0;
     m_togglePressed = false;
     m_toggleShown = false;
+    m_refreshPressed = false;
+    m_refreshShown = false;
     m_mouseHeld = false;
     m_pressOnTree = false;
     m_keepStatus = 0;
@@ -537,6 +539,7 @@ Editor::Editor()
     c_height = EDITOR_DEFAULT_HEIGHT;
 
     memset(m_buttonIcons, 0, sizeof(m_buttonIcons));
+    memset(&m_refreshIcon, 0, sizeof(m_refreshIcon));
 
     m_textBuffer = (unsigned char*) malloc(m_bufferSize);
     if (m_textBuffer == nullptr) {
@@ -567,6 +570,7 @@ Editor::Editor()
     for (int button = 0; button < EDITOR_BUTTON_COUNT; button++) {
         gfx_load_icon(editor_button_icons[button], &m_buttonIcons[button]);
     }
+    gfx_load_icon("refresh_8", &m_refreshIcon);
     m_treeLoading = false;
 
     reDrawHeader();
@@ -589,6 +593,7 @@ Editor::~Editor()
     for (int button = 0; button < EDITOR_BUTTON_COUNT; button++) {
         gfx_free_icon(&m_buttonIcons[button]);
     }
+    gfx_free_icon(&m_refreshIcon);
 
     undoClear();
 
@@ -1653,6 +1658,10 @@ void Editor::drawTreePane()
         }
     }
 
+    if (!m_treeCollapsed) {
+        drawTreeRefresh(m_refreshPressed && m_refreshShown);
+    }
+
     drawTreeToggle(m_togglePressed && m_toggleShown);
 }
 
@@ -1777,6 +1786,87 @@ void Editor::drawTreeToggle(bool pressed)
  * pushed in while the mouse stays over it, and a release over it clicks it.
  * @return whether the event was the toggle's. clicked gets whether it was clicked
  */
+/* Where the refresh button's left side is: the toggle's mirror image (EDITOR_TREE_REFRESH_RIGHT) */
+int Editor::treeRefreshX() const
+{
+    return m_treeWidth - EDITOR_TREE_REFRESH_RIGHT - EDITOR_TREE_TOGGLE_WIDTH;
+}
+
+/* Whether x, y is on the refresh button, which isn't there while the tree is collapsed */
+bool Editor::treeRefreshAt(int x, int y) const
+{
+    int left = treeRefreshX();
+    return !m_treeCollapsed && x >= left && x < left + EDITOR_TREE_TOGGLE_WIDTH && y >= EDITOR_TREE_TOGGLE_Y &&
+           y < EDITOR_TREE_TOGGLE_Y + EDITOR_TREE_TOGGLE_HEIGHT;
+}
+
+/**
+ * The refresh button, drawn as the toggle is, with its icon centered on the face inside the bevel's edges, a pixel
+ * down and right when pressed. An icon bigger than the face, as the 16 by 16 placeholder for a missing one is, is left out
+ */
+void Editor::drawTreeRefresh(bool pressed)
+{
+    int x = treeRefreshX();
+    int y = EDITOR_TREE_TOGGLE_Y;
+    gfx_draw_bevel(x, y, EDITOR_TREE_TOGGLE_WIDTH, EDITOR_TREE_TOGGLE_HEIGHT, pressed);
+
+    /* The face: inside the light edge at the top and left, and the dark edge and shadow at the bottom and right */
+    int face_width = EDITOR_TREE_TOGGLE_WIDTH - 3;
+    int face_height = EDITOR_TREE_TOGGLE_HEIGHT - 3;
+    const struct image* icon = &m_refreshIcon;
+    if (icon->width <= 0 || icon->width > face_width || icon->height > face_height) {
+        return;
+    }
+    int shift = pressed ? 1 : 0;
+    drawImage(x + 1 + ((face_width - icon->width) / 2) + shift, y + 1 + ((face_height - icon->height) / 2) + shift, icon);
+}
+
+/* A press on the refresh button, and its moves and release, as treeToggleMouse handles the toggle's */
+bool Editor::treeRefreshMouse(const struct gfx_event& event, bool* clicked)
+{
+    int x = (int16_t)event.data;
+    int y = (int16_t)event.data2;
+    *clicked = false;
+
+    if (event.event == GFX_EVENT_MOUSE_DOWN) {
+        m_refreshPressed = treeRefreshAt(x, y);
+        if (!m_refreshPressed) {
+            return false;
+        }
+        m_refreshShown = true;
+        drawTreeRefresh(true);
+        return true;
+    }
+
+    if (!m_refreshPressed) {
+        return false;
+    }
+
+    bool over = treeRefreshAt(x, y);
+    if (event.event == GFX_EVENT_MOUSE_UP) {
+        *clicked = over;
+        m_refreshPressed = false;
+        m_refreshShown = false;
+        drawTreeRefresh(false);
+    } else if (over != m_refreshShown) {
+        m_refreshShown = over;
+        drawTreeRefresh(over);
+    }
+    return true;
+}
+
+/**
+ * Ctrl+R and the refresh button: reads the tree again, keeping the folders that are open open, so it shows files
+ * made or deleted since (#141). While the tree is collapsed, it's read for when it's opened
+ */
+void Editor::refreshTree()
+{
+    if (treeView != nullptr) {
+        treeView->refresh();
+    }
+    drawTreePane();
+}
+
 bool Editor::treeToggleMouse(const struct gfx_event& event, bool* clicked)
 {
     int x = (int16_t)event.data;
@@ -3388,6 +3478,7 @@ static const char* const editor_help[] = {
     "Ctrl+N: New file",
     "Ctrl+H: Show this help",
     "Ctrl+B: Hide/show the file tree",
+    "Ctrl+R: Refresh the file tree",
     "F2/F3: Scroll up/down",
     "",
     "Arrow keys: Move cursor",
@@ -3550,6 +3641,16 @@ void Editor::EditorLoop()
                 m_pressOnTree = false;
                 if (toggled) {
                     putChar(CTRLB);
+                }
+                break;
+            }
+
+            /* The refresh button, which presses Ctrl+R when it's clicked, before the tree's rows and border */
+            bool refreshed = false;
+            if (treeRefreshMouse(event, &refreshed)) {
+                m_pressOnTree = false;
+                if (refreshed) {
+                    putChar(CTRLR);
                 }
                 break;
             }
@@ -3898,6 +3999,13 @@ void Editor::handleKey(unsigned char c, int modifiers)
     case CTRLB:
         if (!m_mouseHeld) {
             setTreeCollapsed(!m_treeCollapsed);
+        }
+        return;
+
+    case CTRLR:
+        /* Not while the mouse button is held, so a drag on the tree's scroll bar isn't cut off, as for Ctrl+B */
+        if (!m_mouseHeld) {
+            refreshTree();
         }
         return;
 

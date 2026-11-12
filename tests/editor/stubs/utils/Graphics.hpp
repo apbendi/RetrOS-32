@@ -16,7 +16,7 @@
  * One call: kind is 't' text, 'f' formatted text, 'c' a character, 'r' a rectangle, 'l' a line, 'b' a bevel, 'i' an
  * image, 'e' a frame's end (gfx_end_frame), and from the other stubs, 's' ScrollBar::set (x total, y visible, w first),
  * 'p' ScrollBar::place, 'd' ScrollBar::draw, 'T' TreeView::drawTree (text the path), 'v' TreeView::reveal,
- * 'z' TreeView::resize, 'V' a TreeView made, and 'n' a title. Not drawing, but recorded for where they come among the
+ * 'z' TreeView::resize, 'V' a TreeView made, 'F' TreeView::refresh, and 'n' a title. Not drawing, but recorded for where they come among the
  * drawing: 'I' an icon loaded (gfx_load_icon, text its name) and 'R' a file read (x the descriptor, w what it read)
  */
 struct DrawCall {

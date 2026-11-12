@@ -42,6 +42,13 @@
 /* The collapsed tree's bar, the whole of which takes clicks: the toggle at its top, with as much of the bar either side */
 #define EDITOR_TREE_COLLAPSED_WIDTH ((2 * EDITOR_TREE_TOGGLE_X) + EDITOR_TREE_TOGGLE_WIDTH)
 /**
+ * The tree's refresh button, which reads the tree again, as Ctrl+R does (#141): the toggle's mirror image, as big and
+ * as far down, with its right side at the tree box's right side, which TreeView draws this far in from the tree's
+ * edge, as the toggle's left side is at the box's left. That leaves it clear of the border's drag. Hidden while the
+ * tree is collapsed
+ */
+#define EDITOR_TREE_REFRESH_RIGHT 8
+/**
  * The header's buttons: squares, each with an icon from /sysutil/icons, with EDITOR_BUTTON_PAD of the bar above and
  * below them. New's left side is EDITOR_BUTTON_MARGIN in from the bar's left edge, and Help's right side as far in
  * from its right edge
@@ -215,6 +222,11 @@ private:
     bool treeToggleAt(int x, int y) const;
     void drawTreeToggle(bool pressed);
     bool treeToggleMouse(const struct gfx_event& event, bool* clicked);
+    int treeRefreshX() const;
+    bool treeRefreshAt(int x, int y) const;
+    void drawTreeRefresh(bool pressed);
+    bool treeRefreshMouse(const struct gfx_event& event, bool* clicked);
+    void refreshTree();
     void selectAround(int index, bool line);
     void dragScrollTick();
 
@@ -320,6 +332,10 @@ private:
     /* Set from a press on the tree's toggle until its release. It's drawn pressed while the mouse is over it, m_toggleShown */
     bool m_togglePressed;
     bool m_toggleShown;
+    /* The same for the refresh button, and its icon, loaded with the toolbar's */
+    bool m_refreshPressed;
+    bool m_refreshShown;
+    struct image m_refreshIcon;
     /**
      * Set from any press until its release. Ctrl+B does nothing meanwhile, so a drag on the tree, its border or its
      * scroll bar isn't left half done, with the tree's scroll bar thinking it's still pressed

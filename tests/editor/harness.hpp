@@ -30,6 +30,8 @@ extern std::map<std::string, std::string> g_files;
 extern std::set<std::string> g_dirs;
 extern std::set<std::string> g_unreadable;
 void clipboardReset();
+/* The width and height gfx_load_icon gives an icon, by name; 16 by 16, as the placeholder is, for one not in it */
+extern std::map<std::string, std::pair<int, int>> g_iconSizes;
 
 static inline struct gfx_event testEvent(int type, int data = 0, int data2 = 0, int flags = 0)
 {

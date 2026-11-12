@@ -13,6 +13,7 @@ void (*g_beforeEventRead)() = nullptr;
 std::map<std::string, std::string> g_files;
 std::set<std::string> g_dirs;
 std::set<std::string> g_unreadable;
+std::map<std::string, std::pair<int, int>> g_iconSizes;
 
 int gfx_draw_text(int x, int y, const char* text, unsigned char color)
 {
@@ -71,8 +72,9 @@ int gfx_end_frame(void)
 int gfx_load_icon(const char* name, struct image* image)
 {
     g_calls.push_back({'I', 0, 0, 0, 0, 0, name ? name : ""});
-    image->width = 16;
-    image->height = 16;
+    auto size = g_iconSizes.find(name ? name : "");
+    image->width = size != g_iconSizes.end() ? size->second.first : 16;
+    image->height = size != g_iconSizes.end() ? size->second.second : 16;
     image->pixels = nullptr;
     return 0;
 }
