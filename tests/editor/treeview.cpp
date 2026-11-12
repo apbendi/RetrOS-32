@@ -275,6 +275,59 @@ static void testScroll()
     delete tree;
 }
 
+/**
+ * Each row's icon, by how the file's name ends, in any case: C and header files, text, web pages, settings and images
+ * have their own, and everything else, .sh, .o and .out included, the plain file's. A folder is a folder, whatever its
+ * name
+ */
+static void testIcons()
+{
+    static const struct {
+        const char* path;
+        const char* icon;
+    } cases[] = {
+        {"/a.c", "cfile_16"},      {"/B.C", "cfile_16"},     {"/c.h", "hfile_16"},     {"/D.H", "hfile_16"},
+        {"/e.txt", "text_16"},     {"/F.Txt", "text_16"},    {"/g.htm", "html_16"},    {"/h.html", "html_16"},
+        {"/I.HTML", "html_16"},    {"/j.cfg", "cfg_16"},     {"/k.bmp", "image_16"},   {"/L.BMP", "image_16"},
+        {"/m.sh", "file_16"},      {"/n.o", "file_16"},      {"/o.out", "file_16"},    {"/p", "file_16"},
+        {"/qc", "file_16"},        {"/r.cc", "file_16"},     {"/s.cfgx", "file_16"},   {"/t.c.txt", "text_16"},
+        {"/u.html.c", "cfile_16"}, {"/v.htmlx", "file_16"},  {"/w.txt/", "folder_16"},
+    };
+    files({});
+    for (const auto& c : cases) {
+        int len = (int)strlen(c.path);
+        if (c.path[len - 1] == '/') {
+            FILES(g_dirs.insert(c.path));
+        } else {
+            FILES(g_files[c.path] = "x");
+        }
+    }
+    TreeView* tree = new TreeView(0, 0, 130, 2000);
+    Window window(130, 2000, "test", 0);
+    g_calls.clear();
+    tree->drawTree(&window);
+
+    int total = tree->countRows(&tree->root);
+    CHECK(total == (int)(sizeof(cases) / sizeof(cases[0])), "%d rows: %s", total, rows(tree).c_str());
+    for (int i = 0; i < total; i++) {
+        int row = 0;
+        TreeView::TreeNode* node = tree->findNodeByRow(&tree->root, &row, i);
+        const char* name = node != nullptr ? node->name->getData() : "?";
+        std::string icon = "none";
+        for (const DrawCall& call : g_calls) {
+            if (call.kind == 'i' && call.y == tree->rowY(i - tree->firstRow())) {
+                icon = call.text;
+            }
+        }
+        const char* expected = "?";
+        for (const auto& c : cases) {
+            expected = strcmp(c.path, name) == 0 ? c.icon : expected;
+        }
+        CHECK(icon == expected, "%s drawn with %s, not %s", name, icon.c_str(), expected);
+    }
+    delete tree;
+}
+
 int main()
 {
     /* So recording draw calls doesn't allocate while counting */
@@ -285,6 +338,7 @@ int main()
     testReading();
     testRefresh();
     testScroll();
+    testIcons();
     printf("TreeView: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures != 0;
 }
