@@ -11,6 +11,8 @@ std::vector<DrawCall> g_calls;
 std::deque<struct gfx_event> g_events;
 void (*g_beforeEventRead)() = nullptr;
 std::map<std::string, std::string> g_files;
+std::set<std::string> g_dirs;
+std::set<std::string> g_unreadable;
 
 int gfx_draw_text(int x, int y, const char* text, unsigned char color)
 {
@@ -108,17 +110,67 @@ int gfx_get_event(struct gfx_event* event, gfx_event_flag_t flags)
     return 0;
 }
 
-/* Files: a table of open ones, each a path and a position in g_files' text */
+/**
+ * Files: a table of open ones, each a path and a position in g_files' text. A folder opened gets the names in it, as
+ * readdir gives them, in name order
+ */
 struct OpenFile {
     bool used;
     std::string path;
     size_t position;
+    std::vector<std::pair<std::string, bool>> entries;
 };
 static OpenFile files[32];
+
+/* The entries of the folder dir, "/" or "/name/", by name, each with whether it's a folder; false if it isn't one */
+static bool listFolder(const std::string& dir, std::vector<std::pair<std::string, bool>>& entries)
+{
+    std::map<std::string, bool> names;
+    bool exists = dir == "/" || g_dirs.count(dir) > 0;
+    auto add = [&](const std::string& path, bool is_dir) {
+        if (path.size() <= dir.size() || path.compare(0, dir.size(), dir) != 0) {
+            return;
+        }
+        exists = true;
+        std::string rest = path.substr(dir.size());
+        size_t slash = rest.find('/');
+        if (slash == std::string::npos) {
+            names[rest] = names[rest] || is_dir;
+        } else if (slash > 0) {
+            names[rest.substr(0, slash)] = true;
+        }
+    };
+    for (auto& f : g_files) {
+        add(f.first, false);
+    }
+    for (auto& d : g_dirs) {
+        add(d, true);
+    }
+    entries.assign(names.begin(), names.end());
+    return exists;
+}
 
 int open(const char* name, int flags)
 {
     std::string path = name ? name : "";
+    if (g_unreadable.count(path)) {
+        return -ERROR_FILE_NOT_FOUND;
+    }
+
+    std::vector<std::pair<std::string, bool>> entries;
+    if (!path.empty() && path.back() == '/') {
+        if (!listFolder(path, entries)) {
+            return -ERROR_FILE_NOT_FOUND;
+        }
+        for (int fd = 3; fd < 32; fd++) {
+            if (!files[fd].used) {
+                files[fd] = {true, path, 0, entries};
+                return fd;
+            }
+        }
+        return -ERROR_INDEX;
+    }
+
     auto found = g_files.find(path);
     if (found == g_files.end()) {
         if (!(flags & FS_FILE_FLAG_CREATE)) {
@@ -131,7 +183,7 @@ int open(const char* name, int flags)
 
     for (int fd = 3; fd < 32; fd++) {
         if (!files[fd].used) {
-            files[fd] = {true, path, (flags & FS_FILE_FLAG_APPEND) ? g_files[path].size() : 0};
+            files[fd] = {true, path, (flags & FS_FILE_FLAG_APPEND) ? g_files[path].size() : 0, {}};
             return fd;
         }
     }
@@ -179,7 +231,25 @@ int fclose(int fd)
         return -ERROR_INVALID_ARGUMENTS;
     }
     file->used = false;
+    std::vector<std::pair<std::string, bool>>().swap(file->entries);
     return 0;
+}
+
+/* The next entry of a folder opened. @return 1 for one, 0 at the end */
+int readdir(int fd, struct fs_dirent* out)
+{
+    OpenFile* file = fileOf(fd);
+    if (file == nullptr) {
+        return -ERROR_INVALID_ARGUMENTS;
+    }
+    if (file->position >= file->entries.size()) {
+        return 0;
+    }
+    auto& entry = file->entries[file->position++];
+    memset(out, 0, sizeof(*out));
+    snprintf(out->name, sizeof(out->name), "%s", entry.first.c_str());
+    out->attributes = entry.second ? FS_ATTR_DIRECTORY : 0;
+    return 1;
 }
 
 int stat(const char* path, struct fs_dirent* out)

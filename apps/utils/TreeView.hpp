@@ -161,19 +161,13 @@ public:
         height = newHeight;
     }
 
-    void refresh() {
-        clearChildren(&root);
-        if (root.children == nullptr) {
-            root.childrenCapacity = 16;
-            root.children = new TreeNode[root.childrenCapacity];
-            if (root.children == nullptr) {
-                root.childrenCapacity = 0;
-                return;
-            }
-        }
-        memset(root.children, 0, root.childrenCapacity * sizeof(TreeNode));
-        root.childrenCount = 0;
-        loadDirectory(&root);
+    /**
+     * Reads the tree again from the disk, keeping open the folders that were and still are, and the scroll position,
+     * which the next draw keeps within the rows there now are (#141). If the root can't be read, it stays as it was.
+     * @return whether the root was read
+     */
+    bool refresh() {
+        return reloadDirectory(&root);
     }
 
     const char* click(int x, int y) {
@@ -204,8 +198,9 @@ public:
         }
 
         if (hit->isDirectory) {
-            if (!hit->isExpanded && !hit->isLoaded) {
-                loadDirectory(hit);
+            /* Opening a folder reads it again, so it shows what's there now (#141). One that can't be read stays as it was */
+            if (!hit->isExpanded) {
+                reloadDirectory(hit);
             }
             hit->isExpanded = !hit->isExpanded;
             return nullptr;
@@ -538,12 +533,85 @@ private:
     }
 
 
+    /* The child of node whose name, its full path, is name, or nullptr */
+    struct TreeNode* findChild(struct TreeNode* node, const char* name)
+    {
+        for (int i = 0; i < node->childrenCount; i++) {
+            if (strcmp(node->children[i].name->getData(), name) == 0) {
+                return &node->children[i];
+            }
+        }
+        return nullptr;
+    }
+
+    /* Moves from's entries into into, which has none, leaving from with none */
+    void takeChildren(struct TreeNode* into, struct TreeNode* from)
+    {
+        into->children = from->children;
+        into->childrenCount = from->childrenCount;
+        into->childrenCapacity = from->childrenCapacity;
+        into->isLoaded = from->isLoaded;
+        from->children = nullptr;
+        from->childrenCount = 0;
+        from->childrenCapacity = 0;
+    }
+
+    /**
+     * Reads into into, which has no entries, those of the directory it names, and opens again the folders among them
+     * that were open in was, reading them too. One of those that can't be read now gets what it had in was.
+     * @return false if into's directory can't be read
+     */
+    bool readAgain(struct TreeNode* into, struct TreeNode* was)
+    {
+        if (loadDirectory(into) < 0) {
+            return false;
+        }
+
+        for (int i = 0; i < into->childrenCount; i++) {
+            struct TreeNode* child = &into->children[i];
+            struct TreeNode* before = child->isDirectory ? findChild(was, child->name->getData()) : nullptr;
+            if (before == nullptr || !before->isExpanded) {
+                continue;
+            }
+            child->isExpanded = 1;
+            if (!readAgain(child, before)) {
+                takeChildren(child, before);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Reads node, a directory, again, keeping open the folders among its entries that were, and reading them again too
+     * (#141). The entries are read into a fresh node first, and replace node's only if that worked, so a directory that
+     * can't be read stays as it was. Folders that weren't open are read when they are, as at first.
+     * @return false if node can't be read
+     */
+    bool reloadDirectory(struct TreeNode* node)
+    {
+        struct TreeNode fresh;
+        memset(&fresh, 0, sizeof(fresh));
+        fresh.name = node->name;
+        fresh.isDirectory = 1;
+
+        bool read = readAgain(&fresh, node);
+        if (read) {
+            clearChildren(node);
+            delete[] node->children;
+            takeChildren(node, &fresh);
+        }
+
+        /* What wasn't taken, with fresh's name left to node */
+        fresh.name = nullptr;
+        clearNodeRecursive(&fresh);
+        return read;
+    }
+
     /**
      * Adds the entries of node, a directory, with readdir, without reading the directories among them: each is read
-     * when it's first expanded (click) or revealed (revealIn). Each entry's name is its full path, with a "/" after a
-     * directory's.
-     * @return the number of entries added, or -1 if the directory can't be read, which leaves it unread, so expanding
-     * it again tries again
+     * when it's expanded (click, reloadDirectory) or revealed (revealIn). Each entry's name is its full path, with a
+     * "/" after a directory's.
+     * @return the number of entries added, or -1 if the directory can't be read, which leaves it unread
      */
     int loadDirectory(struct TreeNode* node){
         int fd = open(node->name->getData(), FS_FILE_FLAG_READ);
