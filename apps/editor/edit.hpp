@@ -111,6 +111,18 @@ enum {
     EDITOR_UNDO_ALONE
 };
 
+/**
+ * A prompt on the status line, which takes every key until Enter or Esc: Ctrl+G's line number (#137). What's typed at
+ * it holds up to EDITOR_PROMPT_MAX characters, and a line number up to EDITOR_LINE_DIGITS, since a 64 KB text has at
+ * most 65,537 lines
+ */
+enum {
+    EDITOR_PROMPT_NONE = 0,
+    EDITOR_PROMPT_LINE
+};
+#define EDITOR_PROMPT_MAX 64
+#define EDITOR_LINE_DIGITS 5
+
 /* The header's buttons: New and Save from the left, and Help at the right */
 enum {
     EDITOR_BUTTON_NONE = -1,
@@ -237,7 +249,13 @@ private:
     bool hasUnsavedChanges() const;
 
     void drawLineNumbers(const int* row_lines, int row_count);
+    void drawStatus();
     void drawStatusLine(color_t color, const char* fmt, ...);
+    void openPrompt(int kind);
+    void closePrompt();
+    void drawPrompt();
+    void promptKey(unsigned char c);
+    void goToLine(int line);
     void applyResolution(int window_width, int window_height);
     bool showNewFileDialog(char* path, int path_size);
 
@@ -358,6 +376,10 @@ private:
     char m_currentPath[FS_PATH_MAX];
     /* A message, like an error, is on the status line, which redraws leave in place of the file's name until the next event */
     int m_keepStatus;
+    /* The prompt on the status line, EDITOR_PROMPT_NONE for none, and what's typed at it: m_promptLen characters and a 0 */
+    int m_prompt;
+    char m_promptText[EDITOR_PROMPT_MAX + 1];
+    int m_promptLen;
 
     int scrollY;
     int m_scrollWrap;

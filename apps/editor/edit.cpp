@@ -515,6 +515,9 @@ Editor::Editor()
     m_mouseHeld = false;
     m_pressOnTree = false;
     m_keepStatus = 0;
+    m_prompt = EDITOR_PROMPT_NONE;
+    m_promptText[0] = 0;
+    m_promptLen = 0;
     scrollY = 0;
     m_scrollWrap = 0;
     m_textColor = COLOR_TEXT;
@@ -1006,6 +1009,138 @@ void Editor::drawStatusLine(color_t color, const char* fmt, ...)
     /* Inside the field's edge and a pixel of space */
     gfx_draw_format_text(x, field_y + 2, color, "%s", msg);
     m_keepStatus = color == COLOR_VGA_RED;
+}
+
+/* Opens a prompt on the status line, EDITOR_PROMPT_*, which takes every key until it's closed (promptKey) */
+void Editor::openPrompt(int kind)
+{
+    m_prompt = kind;
+    m_promptText[0] = 0;
+    m_promptLen = 0;
+    drawStatus();
+}
+
+/* Closes the prompt. The status line is the file's again at its next draw */
+void Editor::closePrompt()
+{
+    m_prompt = EDITOR_PROMPT_NONE;
+    m_promptText[0] = 0;
+    m_promptLen = 0;
+}
+
+/**
+ * The prompt: its label, what's typed, and a block after that for the cursor. The line number's prompt shows the
+ * lines there are, unless that leaves no room for the cursor, when it's only "Line:"
+ */
+void Editor::drawPrompt()
+{
+    /* Static, as drawStatusLine's is. The longest is "Go to line (1-65537): " and EDITOR_PROMPT_MAX characters */
+    static char prompt[EDITOR_PROMPT_MAX + 32];
+
+    int max_chars = textClipWidth() / 8;
+    int len = sprintf(prompt, "Go to line (1-%d): %s", countLines(), m_promptText);
+    if (len + 1 > max_chars) {
+        len = sprintf(prompt, "Line: %s", m_promptText);
+    }
+
+    drawStatusLine(COLOR_BLACK, "%s", prompt);
+
+    /* Where drawStatusLine draws the text, and only if the cursor's whole block fits in the field */
+    if (len < max_chars) {
+        int y = c_height - STATUS_HEIGHT + EDITOR_STATUS_MARGIN + 2;
+        gfx_draw_rectangle(textStartX() + (len * 8), y, 8, 8, COLOR_VGA_MEDIUM_GRAY);
+    }
+}
+
+/**
+ * A key typed while a prompt is open. Enter acts on what's typed and closes the prompt; Esc, or Ctrl+G again, closes
+ * it. Backspace deletes what was typed last. A line number takes only digits, and every other key does nothing, so
+ * no key meant for the prompt can change the text behind it
+ */
+void Editor::promptKey(unsigned char c)
+{
+    if (c == 27 || c == CTRLG) {
+        closePrompt();
+        drawStatus();
+        return;
+    }
+
+    if (c == '\n' || c == '\r') {
+        int kind = m_prompt;
+        int number = 0;
+        for (int i = 0; i < m_promptLen; i++) {
+            number = (number * 10) + (m_promptText[i] - '0');
+        }
+        bool typed = m_promptLen > 0;
+        closePrompt();
+
+        /* Enter with nothing typed only closes it */
+        if (kind == EDITOR_PROMPT_LINE && typed) {
+            goToLine(number);
+            reDraw(0, m_bufferHead);
+            return;
+        }
+        drawStatus();
+        return;
+    }
+
+    if (c == '\b') {
+        if (m_promptLen > 0) {
+            m_promptText[--m_promptLen] = 0;
+            drawStatus();
+        }
+        return;
+    }
+
+    if (m_prompt == EDITOR_PROMPT_LINE && (c < '0' || c > '9' || m_promptLen >= EDITOR_LINE_DIGITS)) {
+        return;
+    }
+    if (c < 32 || c > 126 || m_promptLen >= EDITOR_PROMPT_MAX) {
+        return;
+    }
+
+    m_promptText[m_promptLen++] = (char)c;
+    m_promptText[m_promptLen] = 0;
+    drawStatus();
+}
+
+/**
+ * Moves the cursor to the start of line, counted from 1 as the gutter counts them, and clamped to the lines there are
+ * (#137). It clears the selection. A line whose start is in view stays where it is. Otherwise the view puts it in the
+ * middle, or lower, so the view doesn't run past the text's end when there's text above to show instead
+ */
+void Editor::goToLine(int line)
+{
+    line = clampInt(line, 1, countLines());
+    m_bufferEdit = indexFromLine(line - 1);
+    m_preferredColumn = -1;
+    clearSelection();
+
+    int cols = visibleColumns();
+    int rows = visibleLines();
+    if (cols < 1) {
+        cols = 1;
+    }
+    if (rows < 1) {
+        rows = 1;
+    }
+    normalizeScroll(cols);
+
+    int row = 0;
+    int col = 0;
+    cursorFromViewStart(viewStartIndex(cols), cols, &row, &col);
+    if (row >= 0 && row < rows) {
+        return;
+    }
+
+    /* The line at the top, then half a screen of rows above it, then as many more as the view would show past the end */
+    setScrollFromIndex(m_bufferEdit, cols);
+    scroll(-(rows / 2));
+    int below = rowsFrom(viewStartIndex(cols), cols);
+    if (below < rows) {
+        scroll(below - rows);
+    }
+    ensureCursorVisible(cols, rows);
 }
 
 /* The bar above the text, drawn as Graphics.hpp's drawHeaderTable draws its shorter one, with the buttons */
@@ -1670,6 +1805,16 @@ void Editor::reDraw(int from, int to)
     }
 
     drawTextScrollBar(cols, rows, view_start);
+    drawStatus();
+}
+
+/* The status line: the prompt, while one is open, or the file's name and the cursor's position, unless a message is kept there */
+void Editor::drawStatus()
+{
+    if (m_prompt != EDITOR_PROMPT_NONE) {
+        drawPrompt();
+        return;
+    }
 
     int line = 1;
     int colnum = 1;
@@ -3221,6 +3366,7 @@ static const char* const editor_help[] = {
     "Arrow keys: Move cursor",
     "Home/End: Start/end of line",
     "PgUp/PgDn: Move a page",
+    "Ctrl+G: Go to line",
     "Shift+move: Select",
     "Ctrl+A: Select all",
     "Esc: Clear selection",
@@ -3361,6 +3507,12 @@ void Editor::EditorLoop()
             m_mouseHeld = event.event != GFX_EVENT_MOUSE_UP;
             if (event.event == GFX_EVENT_MOUSE_DOWN) {
                 m_pressOnTree = (int16_t)event.data < m_treeWidth - EDITOR_TREE_GRAB_LEFT;
+
+                /* A press anywhere closes the prompt, as Esc does, then does what it does */
+                if (m_prompt != EDITOR_PROMPT_NONE) {
+                    closePrompt();
+                    drawStatus();
+                }
             }
 
             /* The tree's toggle, which presses Ctrl+B when it's clicked. A press on it isn't on a row either */
@@ -3499,6 +3651,12 @@ static bool isMovementKey(unsigned char c)
 /* Handles a key typed, with the modifier keys held, KEY_MOD_* from keyboard.h. Its edits make an undo step, or join the last */
 void Editor::putChar(unsigned char c, int modifiers)
 {
+    /* A prompt on the status line takes every key while it's open. Opening it ended the undo step, as any other key does */
+    if (m_prompt != EDITOR_PROMPT_NONE) {
+        promptKey(c);
+        return;
+    }
+
     int kind = EDITOR_UNDO_CLOSED;
     if (c == '\b') {
         kind = EDITOR_UNDO_BACKSPACE;
@@ -3723,6 +3881,11 @@ void Editor::handleKey(unsigned char c, int modifiers)
         m_preferredColumn = -1;
         Save();
         break;
+
+    case CTRLG:
+        /* Moves nothing until Enter (promptKey) */
+        openPrompt(EDITOR_PROMPT_LINE);
+        return;
 
     default:
         if (c == '\t') {
