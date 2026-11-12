@@ -232,6 +232,14 @@ private:
     int nextVisualRowStart(int row_start_index, int cols) const;
     int prevVisualRowStart(int row_start_index, int cols) const;
     int rowsFrom(int index, int cols) const;
+    int rowsOfLine(int line_start, int cols) const;
+    int nextLineStart(int line_start) const;
+    int rowsOfLines(int from, int to, int cols) const;
+    void countRows(int cols) const;
+    int textRows(int cols) const;
+    int rowsBeforeLine(int line_start, int cols) const;
+    int rowsAbove(int index, int cols) const;
+    int rowsBelow(int index, int cols) const;
     void cursorFromViewStart(int view_start, int cols, int* out_row, int* out_col) const;
     void placeFromViewStart(int index, int view_start, int cols, int* out_row, int* out_col) const;
 
@@ -331,6 +339,15 @@ private:
      */
     mutable int m_anchorLine;
     mutable int m_anchorIndex;
+    /**
+     * The text's rows at m_rowsCols columns, for the scroll bar and paging, or none counted while m_rowsCols is 0:
+     * m_totalRows in all, and the row anchor, the line starting at m_rowAnchorIndex with m_rowAnchorRows rows above it.
+     * countRows counts them for a new width; the buffer* functions keep them right as they change the text (#213)
+     */
+    mutable int m_rowsCols;
+    mutable int m_totalRows;
+    mutable int m_rowAnchorIndex;
+    mutable int m_rowAnchorRows;
     int m_bufferSize;
     int m_fileSize;
     int m_bufferHead;
