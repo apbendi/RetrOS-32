@@ -17,6 +17,14 @@
 /* Behind selected text: a pale blue in the standard VGA palette */
 #define COLOR_SELECTED 80
 
+/**
+ * The colors of C, in .c and .h files only (#143): indexes into the VGA palette (lib/palette.c), dark enough to read
+ * on COLOR_BG, white, and on COLOR_SELECTED, pale blue, and apart from each other. Each kind of keyword has its own
+ */
+#define EDITOR_COLOR_TYPE COLOR_VGA_LIGHT_BLUE /* blue: 0, 124, 252 */
+#define EDITOR_COLOR_STORAGE 107               /* dark violet: 84, 0, 112 */
+#define EDITOR_COLOR_CONTROL COLOR_VGA_RED     /* dark red: 168, 0, 0 */
+
 /* The tree's width when the Editor opens. Dragging its right border changes it, down to EDITOR_TREE_MIN_WIDTH */
 #define TREE_VIEW_WIDTH 130
 /* The narrowest the tree can be: wide enough for a few characters of each top-level name beside its scroll bar */
@@ -145,10 +153,6 @@ enum {
     EDITOR_BUTTON_COUNT
 };
 
-struct keyword {
-    char word[10];
-    color_t color;
-};
 
 class Editor : public Window {
 public:
@@ -439,18 +443,8 @@ private:
     int m_scrollWrap;
 
     color_t m_textColor;
-
-#define KEYWORD_TYPE COLOR_VGA_LIGHT_BLUE
-#define KEYWORD_SYS COLOR_VGA_PURPLE
-#define KEYWORD_BRANCH COLOR_VGA_RED
-#define KEYWORD_FUNC COLOR_VGA_MEDIUM_DARK_GRAY
-    struct keyword keyWords[20] = {
-        {"char", KEYWORD_TYPE},
-        {"else", KEYWORD_BRANCH}, {"enum", KEYWORD_TYPE}, {"if", KEYWORD_BRANCH},
-        {"int", KEYWORD_TYPE}, {"return", KEYWORD_SYS}, {"sizeof", KEYWORD_FUNC},
-        {"while", KEYWORD_BRANCH}, {"open", KEYWORD_FUNC}, {"printf", KEYWORD_FUNC},
-        {"malloc", KEYWORD_FUNC}, {"main", KEYWORD_FUNC}, {"void", KEYWORD_TYPE}
-    };
+    /* The text is colored as C, being a .c or .h file's; set as reDraw starts */
+    bool m_colorC;
 
     int c_width;
     int c_height;

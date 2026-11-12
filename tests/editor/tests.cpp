@@ -1596,6 +1596,136 @@ static void testRefreshButton()
     delete e;
 }
 
+/**
+ * The colors reDraw draws the text's characters in, in order, with the cursor at the text's end so none is drawn
+ * twice: one per character drawn, which is every one but tabs and newlines
+ */
+static std::vector<int> drawnColors(Editor* e)
+{
+    e->m_bufferEdit = e->m_bufferHead;
+    e->m_selAnchor = -1;
+    g_calls.clear();
+    e->reDraw(0, e->m_bufferHead);
+    std::vector<int> colors;
+    for (const DrawCall& c : g_calls) {
+        if (c.kind == 'c') {
+            colors.push_back(c.color);
+        }
+    }
+    return colors;
+}
+
+/* Whether each word of words is drawn in the color colorOf gives it, opened as path */
+template <typename F> static bool wordsColored(Editor* e, const std::vector<std::string>& words, const char* path, F colorOf, std::string* wrong)
+{
+    std::string text;
+    int line = 0;
+    for (const std::string& w : words) {
+        if (line + (int)w.size() + 1 > 40) {
+            text += "\n";
+            line = 0;
+        }
+        text += w + " ";
+        line += (int)w.size() + 1;
+    }
+    setText(e, text);
+    char name[FS_PATH_MAX];
+    snprintf(name, sizeof(name), "%s", path);
+    g_files[name] = text;
+    e->Open(name);
+
+    /* Each word's characters in its color, and the spaces between, which are drawn too, in the text's */
+    std::vector<int> colors = drawnColors(e);
+    size_t at = 0;
+    size_t i = 0;
+    while (i < text.size()) {
+        if (text[i] == '\n') {
+            i++;
+            continue;
+        }
+        if (text[i] == ' ') {
+            if (at >= colors.size() || colors[at] != COLOR_TEXT) {
+                *wrong = "a space";
+                return false;
+            }
+            at++;
+            i++;
+            continue;
+        }
+        size_t end = text.find_first_of(" \n", i);
+        std::string w = text.substr(i, end - i);
+        int want = colorOf(w);
+        for (size_t k = 0; k < w.size(); k++, at++) {
+            if (at >= colors.size() || colors[at] != want) {
+                *wrong = w;
+                return false;
+            }
+        }
+        i = end;
+    }
+    return at == colors.size();
+}
+
+/* C's keywords colored by kind, in C files only (#143) */
+static void testKeywords()
+{
+    const std::vector<std::string> types = {"char", "double", "enum", "float", "int", "long", "short", "signed", "struct",
+                                            "union", "unsigned", "void", "_Bool", "_Complex", "_Imaginary"};
+    const std::vector<std::string> storage = {"auto", "const", "extern", "inline", "register", "restrict", "static",
+                                              "typedef", "volatile"};
+    const std::vector<std::string> control = {"break", "case", "continue", "default", "do", "else", "for", "goto",
+                                              "if", "return", "sizeof", "switch", "while"};
+    const std::vector<std::string> plain = {"int32_t", "printf", "main", "malloc", "open", "Int", "iff", "_Boolean",
+                                            "x", "fors", "structs", "x1", "e1"};
+    CHECK(types.size() + storage.size() + control.size() == 37, "%d keywords", (int)(types.size() + storage.size() + control.size()));
+
+    std::vector<std::string> all;
+    for (auto* list : {&types, &storage, &control, &plain}) {
+        all.insert(all.end(), list->begin(), list->end());
+    }
+    auto colorOf = [&](const std::string& w) {
+        for (auto& t : types) {
+            if (t == w) {
+                return (int)EDITOR_COLOR_TYPE;
+            }
+        }
+        for (auto& t : storage) {
+            if (t == w) {
+                return (int)EDITOR_COLOR_STORAGE;
+            }
+        }
+        for (auto& t : control) {
+            if (t == w) {
+                return (int)EDITOR_COLOR_CONTROL;
+            }
+        }
+        return (int)COLOR_TEXT;
+    };
+    auto plainColor = [](const std::string&) { return (int)COLOR_TEXT; };
+
+    Editor* e = new Editor();
+    std::string wrong;
+    CHECK(wordsColored(e, all, "/k.c", colorOf, &wrong), "in k.c, %s", wrong.c_str());
+    CHECK(wordsColored(e, all, "/k.h", colorOf, &wrong), "in k.h, %s", wrong.c_str());
+    CHECK(wordsColored(e, all, "/MAIN.C", colorOf, &wrong), "in MAIN.C, %s", wrong.c_str());
+    CHECK(wordsColored(e, all, "/k.txt", plainColor, &wrong), "in k.txt, %s", wrong.c_str());
+    CHECK(wordsColored(e, all, "/k.cpp", plainColor, &wrong), "in k.cpp, %s", wrong.c_str());
+    CHECK(wordsColored(e, all, "/c", plainColor, &wrong), "in a file named c, %s", wrong.c_str());
+    CHECK(wordsColored(e, all, "/dir/.c", plainColor, &wrong), "in a file named .c, %s", wrong.c_str());
+
+    /* An untitled text isn't colored */
+    e->Reset();
+    std::string text = "int x;";
+    e->bufferInsertText(0, (const unsigned char*)text.data(), (int)text.size());
+    std::vector<int> colors = drawnColors(e);
+    bool none = true;
+    for (int c : colors) {
+        none = none && c == COLOR_TEXT;
+    }
+    CHECK(none && colors.size() == 6, "an untitled text colored: %d characters", (int)colors.size());
+    delete e;
+}
+
 int main()
 {
     std::mt19937 rng(137);
@@ -1615,6 +1745,7 @@ int main()
     testBiggerTexts();
     testShownWhileLoading();
     testRefreshButton();
+    testKeywords();
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures != 0;
 }

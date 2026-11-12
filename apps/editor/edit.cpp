@@ -535,6 +535,7 @@ Editor::Editor()
     scrollY = 0;
     m_scrollWrap = 0;
     m_textColor = COLOR_TEXT;
+    m_colorC = false;
     c_width = EDITOR_DEFAULT_RIGHT_PANE_WIDTH;
     c_height = EDITOR_DEFAULT_HEIGHT;
 
@@ -2165,6 +2166,40 @@ void Editor::dragScrollTick()
     reDraw(0, m_bufferHead);
 }
 
+/* C99's 37 keywords, each with its kind's color (#143) */
+static const struct {
+    const char* word;
+    color_t color;
+} editor_keywords[] = {
+    /* Types */
+    {"char", EDITOR_COLOR_TYPE}, {"double", EDITOR_COLOR_TYPE}, {"enum", EDITOR_COLOR_TYPE},
+    {"float", EDITOR_COLOR_TYPE}, {"int", EDITOR_COLOR_TYPE}, {"long", EDITOR_COLOR_TYPE},
+    {"short", EDITOR_COLOR_TYPE}, {"signed", EDITOR_COLOR_TYPE}, {"struct", EDITOR_COLOR_TYPE},
+    {"union", EDITOR_COLOR_TYPE}, {"unsigned", EDITOR_COLOR_TYPE}, {"void", EDITOR_COLOR_TYPE},
+    {"_Bool", EDITOR_COLOR_TYPE}, {"_Complex", EDITOR_COLOR_TYPE}, {"_Imaginary", EDITOR_COLOR_TYPE},
+    /* Storage classes and qualifiers */
+    {"auto", EDITOR_COLOR_STORAGE}, {"const", EDITOR_COLOR_STORAGE}, {"extern", EDITOR_COLOR_STORAGE},
+    {"inline", EDITOR_COLOR_STORAGE}, {"register", EDITOR_COLOR_STORAGE}, {"restrict", EDITOR_COLOR_STORAGE},
+    {"static", EDITOR_COLOR_STORAGE}, {"typedef", EDITOR_COLOR_STORAGE}, {"volatile", EDITOR_COLOR_STORAGE},
+    /* Control flow, and sizeof */
+    {"break", EDITOR_COLOR_CONTROL}, {"case", EDITOR_COLOR_CONTROL}, {"continue", EDITOR_COLOR_CONTROL},
+    {"default", EDITOR_COLOR_CONTROL}, {"do", EDITOR_COLOR_CONTROL}, {"else", EDITOR_COLOR_CONTROL},
+    {"for", EDITOR_COLOR_CONTROL}, {"goto", EDITOR_COLOR_CONTROL}, {"if", EDITOR_COLOR_CONTROL},
+    {"return", EDITOR_COLOR_CONTROL}, {"sizeof", EDITOR_COLOR_CONTROL}, {"switch", EDITOR_COLOR_CONTROL},
+    {"while", EDITOR_COLOR_CONTROL},
+};
+
+/* Whether path is a C file's, whose text is colored: one ending in .c or .h, in any case, as FAT names are (#143) */
+static bool isCPath(const char* path)
+{
+    int len = strlen(path);
+    if (len < 3 || path[len - 2] != '.' || path[len - 3] == '/') {
+        return false;
+    }
+    char ext = (char)tolower((unsigned char)path[len - 1]);
+    return ext == 'c' || ext == 'h';
+}
+
 void Editor::reDraw(int from, int to)
 {
     (void)from;
@@ -2181,6 +2216,9 @@ void Editor::reDraw(int from, int to)
     }
 
     normalizeScroll(cols);
+
+    /* Only a C file's text is colored as C */
+    m_colorC = isCPath(m_currentPath);
 
     int text_x = textStartX();
     int text_h = c_height - HEADER_HEIGHT - STATUS_HEIGHT;
@@ -2350,20 +2388,15 @@ void Editor::highlightSyntax(unsigned char* start)
         tokenLen++;
     }
 
-    if (tokenLen == 0) {
+    if (tokenLen == 0 || !m_colorC) {
         setColor(COLOR_TEXT);
         return;
     }
 
-    for (int i = 0; i < 20; i++) {
-        struct keyword* key = &keyWords[i];
-        if (key->color == 0) {
-            break;
-        }
-
-        int keyLen = strlen(key->word);
-        if (tokenLen == keyLen && memcmp(start, key->word, keyLen) == 0) {
-            setColor(key->color);
+    for (int i = 0; i < (int)(sizeof(editor_keywords) / sizeof(editor_keywords[0])); i++) {
+        const char* word = editor_keywords[i].word;
+        if (word[0] == start[0] && (int)strlen(word) == tokenLen && memcmp(start, word, tokenLen) == 0) {
+            setColor(editor_keywords[i].color);
             return;
         }
     }
