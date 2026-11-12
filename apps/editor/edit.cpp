@@ -518,6 +518,10 @@ Editor::Editor()
     m_prompt = EDITOR_PROMPT_NONE;
     m_promptText[0] = 0;
     m_promptLen = 0;
+    m_promptFilled = false;
+    m_findText[0] = 0;
+    m_findIndex = 0;
+    m_findCount = -1;
     scrollY = 0;
     m_scrollWrap = 0;
     m_textColor = COLOR_TEXT;
@@ -805,14 +809,20 @@ int Editor::rowsFrom(int index, int cols) const
 
 void Editor::cursorFromViewStart(int view_start, int cols, int* out_row, int* out_col) const
 {
-    if (m_bufferEdit < view_start) {
+    placeFromViewStart(m_bufferEdit, view_start, cols, out_row, out_col);
+}
+
+/* Where the cursor would be drawn at index: its row from the view's start, -1 if it's above, and its column */
+void Editor::placeFromViewStart(int index, int view_start, int cols, int* out_row, int* out_col) const
+{
+    if (index < view_start) {
         *out_row = -1;
         *out_col = 0;
         return;
     }
 
     TextLayout at(cols);
-    int limit = clampInt(m_bufferEdit, 0, m_bufferHead);
+    int limit = clampInt(index, 0, m_bufferHead);
     for (int i = view_start; i < limit; i++) {
         at.place(m_textBuffer[i]);
     }
@@ -1011,12 +1021,39 @@ void Editor::drawStatusLine(color_t color, const char* fmt, ...)
     m_keepStatus = color == COLOR_VGA_RED;
 }
 
-/* Opens a prompt on the status line, EDITOR_PROMPT_*, which takes every key until it's closed (promptKey) */
+/**
+ * Opens a prompt on the status line, EDITOR_PROMPT_*, which takes every key until it's closed (promptKey). Find's is
+ * filled in with what's selected, if it's on one line and fits, or else the last search, and the first key typed
+ * replaces that
+ */
 void Editor::openPrompt(int kind)
 {
     m_prompt = kind;
     m_promptText[0] = 0;
     m_promptLen = 0;
+    m_promptFilled = false;
+    m_findCount = -1;
+
+    if (kind == EDITOR_PROMPT_FIND) {
+        int start = 0;
+        int end = 0;
+        bool fits = selectionRange(start, end) && end - start <= EDITOR_PROMPT_MAX;
+        for (int i = start; fits && i < end; i++) {
+            fits = m_textBuffer[i] >= 32 && m_textBuffer[i] <= 126;
+        }
+
+        const char* fill = m_findText;
+        int fill_len = strlen(m_findText);
+        if (fits) {
+            fill = (const char*)&m_textBuffer[start];
+            fill_len = end - start;
+        }
+        memcpy(m_promptText, fill, fill_len);
+        m_promptText[fill_len] = 0;
+        m_promptLen = fill_len;
+        m_promptFilled = fill_len > 0;
+    }
+
     drawStatus();
 }
 
@@ -1026,88 +1063,232 @@ void Editor::closePrompt()
     m_prompt = EDITOR_PROMPT_NONE;
     m_promptText[0] = 0;
     m_promptLen = 0;
+    m_promptFilled = false;
+    m_findCount = -1;
 }
 
 /**
- * The prompt: its label, what's typed, and a block after that for the cursor. The line number's prompt shows the
- * lines there are, unless that leaves no room for the cursor, when it's only "Line:"
+ * The prompt: its label, what's typed, and a block after that for the cursor, then for Find, after the last search,
+ * which match is selected, or "Not found" in red.
+ * - The line number's prompt shows the lines there are, unless that leaves no room for the cursor, when it's only "Line:".
+ * - Find's text, when it doesn't fit, shows its end after "...", since that's where typing goes. The count goes first
+ *   to make room, unless that leaves less than 4 characters of the text. A line number is never cut short that way:
+ *   all its digits are worth more than the cursor.
+ * - Find's filled-in text is drawn highlighted, as selected text is, since the first key typed replaces it.
  */
 void Editor::drawPrompt()
 {
-    /* Static, as drawStatusLine's is. The longest is "Go to line (1-65537): " and EDITOR_PROMPT_MAX characters */
-    static char prompt[EDITOR_PROMPT_MAX + 32];
+    /* Static, as drawStatusLine's is */
+    static char label[32];
+    static char shown[EDITOR_PROMPT_MAX + 4];
+    static char count[32];
 
     int max_chars = textClipWidth() / 8;
-    int len = sprintf(prompt, "Go to line (1-%d): %s", countLines(), m_promptText);
-    if (len + 1 > max_chars) {
-        len = sprintf(prompt, "Line: %s", m_promptText);
+    const char* suffix = "";
+    color_t suffix_color = COLOR_VGA_MEDIUM_DARK_GRAY;
+
+    if (m_prompt == EDITOR_PROMPT_LINE) {
+        int len = sprintf(label, "Go to line (1-%d): ", countLines());
+        if (len + m_promptLen + 1 > max_chars) {
+            sprintf(label, "Line: ");
+        }
+    } else {
+        sprintf(label, "Find: ");
+        if (m_findCount == 0) {
+            suffix = "Not found";
+            suffix_color = COLOR_VGA_RED;
+        } else if (m_findCount > 0) {
+            sprintf(count, "%d of %d", m_findIndex, m_findCount);
+            suffix = count;
+        }
     }
 
-    drawStatusLine(COLOR_BLACK, "%s", prompt);
+    int label_len = strlen(label);
+    int suffix_len = strlen(suffix);
+    /* Room for what's typed, with the cursor after it, and with the suffix after that and a space */
+    int room = max_chars - label_len - 1;
+    if (suffix_len > 0) {
+        if (room - (suffix_len + 1) >= minInt(m_promptLen, 4)) {
+            room -= suffix_len + 1;
+        } else {
+            suffix_len = 0;
+        }
+    }
 
-    /* Where drawStatusLine draws the text, and only if the cursor's whole block fits in the field */
-    if (len < max_chars) {
-        int y = c_height - STATUS_HEIGHT + EDITOR_STATUS_MARGIN + 2;
-        gfx_draw_rectangle(textStartX() + (len * 8), y, 8, 8, COLOR_VGA_MEDIUM_GRAY);
+    if (m_prompt == EDITOR_PROMPT_FIND && m_promptLen > room && room > 3) {
+        sprintf(shown, "...%s", m_promptText + m_promptLen - (room - 3));
+    } else {
+        sprintf(shown, "%s", m_promptText);
+    }
+    /* Only what fits in the field, as drawStatusLine would cut it, so the highlight covers what's shown */
+    int shown_len = strlen(shown);
+    int fit = max_chars - label_len > 0 ? max_chars - label_len : 0;
+    if (shown_len > fit) {
+        shown_len = fit;
+        shown[shown_len] = 0;
+    }
+
+    drawStatusLine(COLOR_BLACK, "%s%s", label, shown);
+
+    /* Where drawStatusLine draws the text */
+    int x = textStartX();
+    int y = c_height - STATUS_HEIGHT + EDITOR_STATUS_MARGIN + 2;
+    int end = label_len + shown_len;
+
+    if (m_promptFilled && shown_len > 0) {
+        gfx_draw_rectangle(x + (label_len * 8), y - 1, shown_len * 8, 10, COLOR_SELECTED);
+        gfx_draw_format_text(x + (label_len * 8), y, COLOR_BLACK, "%s", shown);
+    }
+
+    if (end < max_chars) {
+        gfx_draw_rectangle(x + (end * 8), y, 8, 8, COLOR_VGA_MEDIUM_GRAY);
+    }
+
+    if (suffix_len > 0 && end + 2 + suffix_len <= max_chars) {
+        gfx_draw_format_text(x + ((end + 2) * 8), y, suffix_color, "%s", suffix);
     }
 }
 
 /**
- * A key typed while a prompt is open. Enter acts on what's typed and closes the prompt; Esc, or Ctrl+G again, closes
- * it. Backspace deletes what was typed last. A line number takes only digits, and every other key does nothing, so
- * no key meant for the prompt can change the text behind it
+ * A key typed while a prompt is open, with the modifier keys held. Every key that isn't the prompt's does nothing, so
+ * no key meant for the prompt can change the text behind it.
+ * - Esc, or the key that opened the prompt, closes it.
+ * - Enter with nothing typed closes it. Ctrl+G's goes to the line typed and closes. Find's selects the next match, or
+ *   with Shift the one before, and stays open (findNext).
+ * - Backspace deletes what was typed last, or all of what was filled in.
+ * - A line number takes up to EDITOR_LINE_DIGITS digits, and Find up to EDITOR_PROMPT_MAX characters from 32 to 126.
+ *   The first replaces what was filled in.
  */
-void Editor::promptKey(unsigned char c)
+void Editor::promptKey(unsigned char c, int modifiers)
 {
-    if (c == 27 || c == CTRLG) {
+    unsigned char own = m_prompt == EDITOR_PROMPT_FIND ? CTRLF : CTRLG;
+    if (c == 27 || c == own) {
         closePrompt();
         drawStatus();
         return;
     }
 
     if (c == '\n' || c == '\r') {
-        int kind = m_prompt;
+        if (m_promptLen == 0) {
+            closePrompt();
+            drawStatus();
+            return;
+        }
+
+        if (m_prompt == EDITOR_PROMPT_FIND) {
+            findNext((modifiers & KEY_MOD_SHIFT) != 0);
+            reDraw(0, m_bufferHead);
+            return;
+        }
+
         int number = 0;
         for (int i = 0; i < m_promptLen; i++) {
             number = (number * 10) + (m_promptText[i] - '0');
         }
-        bool typed = m_promptLen > 0;
         closePrompt();
-
-        /* Enter with nothing typed only closes it */
-        if (kind == EDITOR_PROMPT_LINE && typed) {
-            goToLine(number);
-            reDraw(0, m_bufferHead);
-            return;
-        }
-        drawStatus();
+        goToLine(number);
+        reDraw(0, m_bufferHead);
         return;
     }
 
     if (c == '\b') {
-        if (m_promptLen > 0) {
-            m_promptText[--m_promptLen] = 0;
-            drawStatus();
+        if (m_promptLen == 0) {
+            return;
         }
+        m_promptLen = m_promptFilled ? 0 : m_promptLen - 1;
+        m_promptText[m_promptLen] = 0;
+        m_promptFilled = false;
+        m_findCount = -1;
+        drawStatus();
         return;
     }
 
-    if (m_prompt == EDITOR_PROMPT_LINE && (c < '0' || c > '9' || m_promptLen >= EDITOR_LINE_DIGITS)) {
+    if (c < 32 || c > 126 || (m_prompt == EDITOR_PROMPT_LINE && (c < '0' || c > '9'))) {
         return;
     }
-    if (c < 32 || c > 126 || m_promptLen >= EDITOR_PROMPT_MAX) {
+
+    if (m_promptFilled) {
+        m_promptLen = 0;
+        m_promptFilled = false;
+    }
+    if (m_promptLen >= (m_prompt == EDITOR_PROMPT_LINE ? EDITOR_LINE_DIGITS : EDITOR_PROMPT_MAX)) {
         return;
     }
 
     m_promptText[m_promptLen++] = (char)c;
     m_promptText[m_promptLen] = 0;
+    m_findCount = -1;
     drawStatus();
+}
+
+/* Whether the len characters typed at the prompt are in the text at index, case included */
+bool Editor::matchAt(int index, int len) const
+{
+    if (index < 0 || len <= 0 || index + len > m_bufferHead) {
+        return false;
+    }
+    return m_textBuffer[index] == (unsigned char)m_promptText[0] && memcmp(&m_textBuffer[index], m_promptText, len) == 0;
+}
+
+/**
+ * Selects the next match of what's typed at the Find prompt, or with backward the one before, going round the text's
+ * end, and shows it (#137). The cursor goes at its end, as after selecting it with Shift+Right.
+ * - The next starts after the selection's start, so Enter again steps past the match selected, or at the cursor
+ *   without one. The one before starts before the selection's start, or the cursor.
+ * - Every place the text has it counts, overlapping ones too, so the steps and the count, m_findIndex of
+ *   m_findCount, agree. With none, m_findCount is 0 and the selection stays as it is.
+ * - What's searched for is kept, for the next Ctrl+F without a selection.
+ */
+void Editor::findNext(bool backward)
+{
+    int len = m_promptLen;
+    memcpy(m_findText, m_promptText, len + 1);
+
+    int start = 0;
+    int end = 0;
+    bool selected = selectionRange(start, end);
+    int last = m_bufferHead - len;
+    int found = -1;
+
+    if (backward) {
+        int from = selected ? start : m_bufferEdit;
+        for (int i = minInt(from - 1, last); i >= 0 && found < 0; i--) {
+            found = matchAt(i, len) ? i : -1;
+        }
+        for (int i = last; i >= from && found < 0; i--) {
+            found = matchAt(i, len) ? i : -1;
+        }
+    } else {
+        int from = selected ? start + 1 : m_bufferEdit;
+        for (int i = from; i <= last && found < 0; i++) {
+            found = matchAt(i, len) ? i : -1;
+        }
+        for (int i = 0; i < from && i <= last && found < 0; i++) {
+            found = matchAt(i, len) ? i : -1;
+        }
+    }
+
+    m_findCount = 0;
+    m_findIndex = 0;
+    for (int i = 0; i <= last; i++) {
+        if (matchAt(i, len)) {
+            m_findCount++;
+            m_findIndex += i <= found;
+        }
+    }
+    if (found < 0) {
+        return;
+    }
+
+    m_selAnchor = found;
+    m_bufferEdit = found + len;
+    m_preferredColumn = -1;
+    revealRange(found, found + len);
 }
 
 /**
  * Moves the cursor to the start of line, counted from 1 as the gutter counts them, and clamped to the lines there are
- * (#137). It clears the selection. A line whose start is in view stays where it is. Otherwise the view puts it in the
- * middle, or lower, so the view doesn't run past the text's end when there's text above to show instead
+ * (#137). It clears the selection, and shows the line as revealRange does
  */
 void Editor::goToLine(int line)
 {
@@ -1115,7 +1296,16 @@ void Editor::goToLine(int line)
     m_bufferEdit = indexFromLine(line - 1);
     m_preferredColumn = -1;
     clearSelection();
+    revealRange(m_bufferEdit, m_bufferEdit);
+}
 
+/**
+ * Scrolls so that the text from start to end is in view, with the cursor there. If it's in view already, nothing
+ * moves. Otherwise start's row goes in the middle, or lower, so the view doesn't run past the text's end when there's
+ * text above to show instead
+ */
+void Editor::revealRange(int start, int end)
+{
     int cols = visibleColumns();
     int rows = visibleLines();
     if (cols < 1) {
@@ -1126,15 +1316,18 @@ void Editor::goToLine(int line)
     }
     normalizeScroll(cols);
 
-    int row = 0;
+    int view_start = viewStartIndex(cols);
+    int start_row = 0;
+    int end_row = 0;
     int col = 0;
-    cursorFromViewStart(viewStartIndex(cols), cols, &row, &col);
-    if (row >= 0 && row < rows) {
+    placeFromViewStart(start, view_start, cols, &start_row, &col);
+    placeFromViewStart(end, view_start, cols, &end_row, &col);
+    if (start_row >= 0 && start_row < rows && end_row >= 0 && end_row < rows) {
         return;
     }
 
-    /* The line at the top, then half a screen of rows above it, then as many more as the view would show past the end */
-    setScrollFromIndex(m_bufferEdit, cols);
+    /* Start's row at the top, then half a screen of rows above it, then as many more as the view would show past the end */
+    setScrollFromIndex(start, cols);
     scroll(-(rows / 2));
     int below = rowsFrom(viewStartIndex(cols), cols);
     if (below < rows) {
@@ -3367,6 +3560,8 @@ static const char* const editor_help[] = {
     "Home/End: Start/end of line",
     "PgUp/PgDn: Move a page",
     "Ctrl+G: Go to line",
+    "Ctrl+F: Find text",
+    "  Enter/Shift+Enter: Next/prev",
     "Shift+move: Select",
     "Ctrl+A: Select all",
     "Esc: Clear selection",
@@ -3653,7 +3848,7 @@ void Editor::putChar(unsigned char c, int modifiers)
 {
     /* A prompt on the status line takes every key while it's open. Opening it ended the undo step, as any other key does */
     if (m_prompt != EDITOR_PROMPT_NONE) {
-        promptKey(c);
+        promptKey(c, modifiers);
         return;
     }
 
@@ -3885,6 +4080,10 @@ void Editor::handleKey(unsigned char c, int modifiers)
     case CTRLG:
         /* Moves nothing until Enter (promptKey) */
         openPrompt(EDITOR_PROMPT_LINE);
+        return;
+
+    case CTRLF:
+        openPrompt(EDITOR_PROMPT_FIND);
         return;
 
     default:

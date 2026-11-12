@@ -112,13 +112,14 @@ enum {
 };
 
 /**
- * A prompt on the status line, which takes every key until Enter or Esc: Ctrl+G's line number (#137). What's typed at
- * it holds up to EDITOR_PROMPT_MAX characters, and a line number up to EDITOR_LINE_DIGITS, since a 64 KB text has at
- * most 65,537 lines
+ * A prompt on the status line, which takes every key until it's closed: Ctrl+G's line number and Ctrl+F's Find (#137).
+ * What's typed at it holds up to EDITOR_PROMPT_MAX characters, and a line number up to EDITOR_LINE_DIGITS, since a
+ * 64 KB text has at most 65,537 lines
  */
 enum {
     EDITOR_PROMPT_NONE = 0,
-    EDITOR_PROMPT_LINE
+    EDITOR_PROMPT_LINE,
+    EDITOR_PROMPT_FIND
 };
 #define EDITOR_PROMPT_MAX 64
 #define EDITOR_LINE_DIGITS 5
@@ -238,6 +239,7 @@ private:
     int prevVisualRowStart(int row_start_index, int cols) const;
     int rowsFrom(int index, int cols) const;
     void cursorFromViewStart(int view_start, int cols, int* out_row, int* out_col) const;
+    void placeFromViewStart(int index, int view_start, int cols, int* out_row, int* out_col) const;
 
     void setScrollFromIndex(int index, int cols);
     void normalizeScroll(int cols);
@@ -254,8 +256,11 @@ private:
     void openPrompt(int kind);
     void closePrompt();
     void drawPrompt();
-    void promptKey(unsigned char c);
+    void promptKey(unsigned char c, int modifiers);
+    bool matchAt(int index, int len) const;
+    void findNext(bool backward);
     void goToLine(int line);
+    void revealRange(int start, int end);
     void applyResolution(int window_width, int window_height);
     bool showNewFileDialog(char* path, int path_size);
 
@@ -380,6 +385,13 @@ private:
     int m_prompt;
     char m_promptText[EDITOR_PROMPT_MAX + 1];
     int m_promptLen;
+    /* What's at the prompt was filled in, not typed, so the first key typed replaces it */
+    bool m_promptFilled;
+    /* The last text searched for, which Ctrl+F fills in without a selection */
+    char m_findText[EDITOR_PROMPT_MAX + 1];
+    /* After a search, which match is selected, from 1, of how many; m_findCount is 0 for none, -1 until a search */
+    int m_findIndex;
+    int m_findCount;
 
     int scrollY;
     int m_scrollWrap;
