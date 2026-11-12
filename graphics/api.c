@@ -23,14 +23,21 @@ int gfx_syscall_hook(int option, void* data, int flags)
     if(option >= GFX_DRAW_UNUSED || option < 0) return -1;
     if(!(flags >= 0 && flags < 255))return -1;
 
-    ERR_ON_NULL(data);
     ERR_ON_NULL($process->current);
 
     /**
      * An app's frame is everything it draws between event reads: reading the next one ends it, and waits until the
      * window server has shown it (gfx_present). So the window server never shows a half-drawn frame, and the draw
-     * calls themselves don't wake it.
+     * calls themselves don't wake it. An app can also end one without reading an event (gfx_end_frame), as while it
+     * loads, before it reads its first; that option takes no data.
      */
+    if(option == GFX_END_FRAME_OPT){
+        gfx_present();
+        return 0;
+    }
+
+    ERR_ON_NULL(data);
+
     if(option == GFX_EVEN_LOOP_OPT){
         gfx_present();
         return gfx_event_loop((struct gfx_event*)data, flags);

@@ -58,6 +58,13 @@ void gfx_draw_bevel(int x, int y, int width, int height, int pressed)
     g_calls.push_back({'b', x, y, width, height, pressed, ""});
 }
 
+/* A frame's end, recorded where it comes among the draw calls */
+int gfx_end_frame(void)
+{
+    g_calls.push_back({'e', 0, 0, 0, 0, 0, ""});
+    return 0;
+}
+
 /* Every icon is the library's placeholder size, with no pixels: nothing reads them, since drawing one is recorded */
 int gfx_load_icon(const char* name, struct image* image)
 {

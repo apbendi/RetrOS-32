@@ -20,6 +20,7 @@ int gfx_draw_char(int x, int y, char data, unsigned char color);
 int gfx_draw_rectangle(int x, int y, int width, int height, unsigned char color);
 int gfx_draw_line(int x0, int y0, int x1, int y1, unsigned char color);
 int gfx_get_event(struct gfx_event*, gfx_event_flag_t flags);
+int gfx_end_frame(void);
 int gfx_draw_image(int x, int y, const struct image* image);
 int gfx_load_icon(const char* name, struct image* image);
 void gfx_free_icon(struct image* image);

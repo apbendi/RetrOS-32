@@ -31,6 +31,8 @@ enum gfx_lib_api_options {
     GFX_EVEN_LOOP_OPT,
     GFX_DRAW_PIXEL,
     GFX_DRAW_IMAGE,
+    /* Ends the app's frame without reading an event (gfx_end_frame); it takes no data */
+    GFX_END_FRAME_OPT,
     GFX_DRAW_UNUSED,
 };
 
@@ -84,6 +86,12 @@ int gfx_draw_rectangle(int x, int y, int width, int height, unsigned char color)
 int gfx_draw_circle(int x, int y, int r, unsigned char color, char fill);
 int gfx_draw_line(int x0, int y0, int x1, int y1, unsigned char color);
 int gfx_get_event(struct gfx_event*, gfx_event_flag_t flags);
+/**
+ * Ends the frame drawn since the last event read, so the window server shows it, without reading an event: for drawing
+ * that should show before the app reads its first, as while it loads (#210). Like a read, it waits until the frame is
+ * shown, up to GFX_PRESENT_WAIT_MS.
+ */
+int gfx_end_frame(void);
 int gfx_draw_pixel(int x, int y, unsigned char color);
 /**
  * Draws an image in one call, leaving the window as it is where the image is COLOR_TRANSPARENT.
