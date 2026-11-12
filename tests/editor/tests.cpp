@@ -1483,6 +1483,119 @@ static void testShownWhileLoading()
     delete e;
 }
 
+/* The calls since `from` that are the refresh button's bevel, at its place */
+static int refreshBevels(Editor* e, int from = 0, int pressed = -1)
+{
+    int found = 0;
+    for (int i = from; i < (int)g_calls.size(); i++) {
+        const DrawCall& c = g_calls[i];
+        if (c.kind == 'b' && c.x == e->treeRefreshX() && c.y == EDITOR_TREE_TOGGLE_Y && c.w == EDITOR_TREE_TOGGLE_WIDTH &&
+            c.h == EDITOR_TREE_TOGGLE_HEIGHT && (pressed < 0 || c.color == pressed)) {
+            found++;
+        }
+    }
+    return found;
+}
+
+static int refreshes(int from = 0)
+{
+    int found = 0;
+    for (int i = from; i < (int)g_calls.size(); i++) {
+        found += g_calls[i].kind == 'F';
+    }
+    return found;
+}
+
+/**
+ * The tree's refresh button and Ctrl+R (#141): where the button is, its icon, presses on it and off it, its last
+ * pixel against the border's first, and that it's gone while the tree is collapsed
+ */
+static void testRefreshButton()
+{
+    g_iconSizes["refresh_8"] = {8, 7};
+    g_calls.clear();
+    Editor* e = new Editor();
+    int x = e->treeRefreshX();
+    CHECK(x == e->m_treeWidth - 20, "the button at %d, tree %d wide", x, e->m_treeWidth);
+    CHECK(refreshBevels(e) > 0, "the button isn't drawn");
+
+    /* The icon, centered on the face inside the bevel's edges, 9 by 7 */
+    bool icon = false;
+    for (const DrawCall& c : g_calls) {
+        icon = icon || (c.kind == 'i' && c.x == x + 1 && c.y == EDITOR_TREE_TOGGLE_Y + 1 && c.w == 8 && c.h == 7);
+    }
+    CHECK(icon, "the icon isn't drawn on the button's face");
+
+    /* A click on it refreshes, drawn pushed in while it's held */
+    int y = EDITOR_TREE_TOGGLE_Y + 3;
+    g_events.clear();
+    g_events.push_back(testEvent(GFX_EVENT_MOUSE_DOWN, x + 3, y, 1 << GFX_EVENT_CLICKS_SHIFT));
+    g_events.push_back(testEvent(GFX_EVENT_MOUSE_UP, x + 3, y));
+    g_events.push_back(testEvent(GFX_EVENT_MOUSE, x + 3, y));
+    g_calls.clear();
+    CHECK(runLoop(e), "the loop didn't exit");
+    CHECK(refreshes() == 1, "a click refreshed %d times", refreshes());
+    CHECK(refreshBevels(e, 0, 1) > 0, "not drawn pressed while held");
+
+    /* A press on it released off it does nothing */
+    g_events.clear();
+    g_events.push_back(testEvent(GFX_EVENT_MOUSE_DOWN, x + 3, y, 1 << GFX_EVENT_CLICKS_SHIFT));
+    g_events.push_back(testEvent(GFX_EVENT_MOUSE_MOVE, x + 40, y + 40));
+    g_events.push_back(testEvent(GFX_EVENT_MOUSE_UP, x + 40, y + 40));
+    g_calls.clear();
+    CHECK(runLoop(e), "the loop didn't exit");
+    CHECK(refreshes() == 0, "released off it, refreshed %d times", refreshes());
+
+    /* Its last pixel refreshes; the next, right of it, is the border's, and starts a drag */
+    int last = x + EDITOR_TREE_TOGGLE_WIDTH - 1;
+    g_events.clear();
+    g_events.push_back(testEvent(GFX_EVENT_MOUSE_DOWN, last, y, 1 << GFX_EVENT_CLICKS_SHIFT));
+    g_events.push_back(testEvent(GFX_EVENT_MOUSE_UP, last, y));
+    g_calls.clear();
+    CHECK(runLoop(e), "the loop didn't exit");
+    CHECK(refreshes() == 1, "its last pixel refreshed %d times", refreshes());
+    g_events.clear();
+    g_events.push_back(testEvent(GFX_EVENT_MOUSE_DOWN, last + 1, y, 1 << GFX_EVENT_CLICKS_SHIFT));
+    g_calls.clear();
+    CHECK(runLoop(e), "the loop didn't exit");
+    CHECK(refreshes() == 0 && e->m_resizingTree, "the pixel after it: %d refreshes, %s", refreshes(), e->m_resizingTree ? "dragging" : "not dragging");
+    g_events.clear();
+    g_events.push_back(testEvent(GFX_EVENT_MOUSE_UP, last + 1, y));
+    CHECK(runLoop(e), "the loop didn't exit");
+
+    /* Ctrl+R refreshes too, but not while the mouse button is held */
+    g_calls.clear();
+    key(e, CTRLR);
+    CHECK(refreshes() == 1, "Ctrl+R refreshed %d times", refreshes());
+    e->m_mouseHeld = true;
+    g_calls.clear();
+    key(e, CTRLR);
+    CHECK(refreshes() == 0, "Ctrl+R with the mouse held refreshed");
+    e->m_mouseHeld = false;
+
+    /* Collapsed: the button's not drawn, and its place takes no press of its own; Ctrl+R still reads the tree */
+    g_calls.clear();
+    key(e, CTRLB);
+    CHECK(e->m_treeCollapsed && refreshBevels(e) == 0, "the button drawn while the tree is collapsed");
+    CHECK(!e->treeRefreshAt(x + 3, y), "the button's place taken while collapsed");
+    g_calls.clear();
+    key(e, CTRLR);
+    CHECK(refreshes() == 1, "Ctrl+R while collapsed refreshed %d times", refreshes());
+    key(e, CTRLB);
+
+    /* A missing icon, the 16 by 16 placeholder, is left off */
+    g_iconSizes.erase("refresh_8");
+    delete e;
+    g_calls.clear();
+    e = new Editor();
+    bool big = false;
+    for (const DrawCall& c : g_calls) {
+        big = big || (c.kind == 'i' && c.x >= e->treeRefreshX() - 4 && c.x < e->treeRefreshX() + EDITOR_TREE_TOGGLE_WIDTH && c.y < EDITOR_TREE_BOX_TOP);
+    }
+    CHECK(!big, "a placeholder icon drawn on the button");
+    delete e;
+}
+
 int main()
 {
     std::mt19937 rng(137);
@@ -1501,6 +1614,7 @@ int main()
     testScrollToRow(rng, 3000);
     testBiggerTexts();
     testShownWhileLoading();
+    testRefreshButton();
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures != 0;
 }

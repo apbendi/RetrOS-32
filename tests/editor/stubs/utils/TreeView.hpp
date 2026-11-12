@@ -13,7 +13,7 @@ public:
     int mouse(const struct gfx_event&) { return 0; }
     const char* click(int, int) { return nullptr; }
     void drawTree(Window*, const char* path) { g_calls.push_back({'T', 0, 0, 0, 0, 0, path ? path : ""}); }
-    void refresh() {}
+    bool refresh() { g_calls.push_back({'F', 0, 0, 0, 0, 0, ""}); return true; }
     void resize(int width, int height) { g_calls.push_back({'z', 0, 0, width, height, 0, ""}); }
     void reveal(const char* path) { g_calls.push_back({'v', 0, 0, 0, 0, 0, path ? path : ""}); }
 };
