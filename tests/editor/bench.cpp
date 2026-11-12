@@ -1,8 +1,9 @@
 /**
  * How a key's work in the Editor grows with the size of its text (#213). For texts of 16 KB to 1 MB, made from the
- * files given (run.sh gives libc/musl/include's headers), it times keys pressed with the cursor in the middle, and
- * counts the characters each lays out (TextLayout::place) and compares with a newline. run.sh adds those counters, and
- * raises EDITOR_BUFFER_SIZE so the bigger texts fit, in a copy of the Editor, which this includes as EDIT_CPP.
+ * files given (run.sh gives libc/musl/include's headers) and opened as a C file, it times keys pressed with the cursor
+ * in the middle, and counts the characters each lays out (TextLayout::place), compares with a newline, and lexes for
+ * C's colors (CLexer::step, #143). run.sh adds those counters, and raises EDITOR_BUFFER_SIZE so the bigger texts fit,
+ * in a copy of the Editor, which this includes as EDIT_CPP.
  */
 #define private public
 #define main editor_main
@@ -45,19 +46,23 @@ template <typename S, typename R> static void measure(const char* name, int reps
     double us = 0;
     long long placed = 0;
     long long compared = 0;
+    long long lexed = 0;
     for (int i = 0; i < reps; i++) {
         setup();
         g_calls.clear();
         long long placed_before = g_placed;
         long long compared_before = g_compared;
+        long long lexed_before = g_lexed;
         auto start = std::chrono::steady_clock::now();
         run();
         auto end = std::chrono::steady_clock::now();
         us += std::chrono::duration<double, std::micro>(end - start).count();
         placed += g_placed - placed_before;
         compared += g_compared - compared_before;
+        lexed += g_lexed - lexed_before;
     }
-    printf("  %-26s %9.2f ms %11lld laid out %11lld compared\n", name, us / reps / 1000.0, placed / reps, compared / reps);
+    printf("  %-26s %9.2f ms %11lld laid out %11lld compared %11lld lexed\n", name, us / reps / 1000.0, placed / reps,
+           compared / reps, lexed / reps);
 }
 
 int main(int argc, char** argv)

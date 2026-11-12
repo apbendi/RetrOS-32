@@ -534,8 +534,8 @@ Editor::Editor()
     m_findCount = -1;
     scrollY = 0;
     m_scrollWrap = 0;
-    m_textColor = COLOR_TEXT;
     m_colorC = false;
+    lexReset();
     c_width = EDITOR_DEFAULT_RIGHT_PANE_WIDTH;
     c_height = EDITOR_DEFAULT_HEIGHT;
 
@@ -720,13 +720,14 @@ int Editor::indexFromLine(int line) const
     return i;
 }
 
-/* After the whole text is replaced: its lines counted, and the anchor at its start */
+/* After the whole text is replaced: its lines counted, the anchor at its start, and the lexer's states dropped */
 void Editor::resetLines()
 {
     m_lineCount = 1 + countNewlines(0, m_bufferHead);
     m_anchorLine = 0;
     m_anchorIndex = 0;
     m_rowsCols = 0;
+    lexReset();
 }
 
 int Editor::lineStart(int index) const
@@ -2189,6 +2190,246 @@ static const struct {
     {"while", EDITOR_COLOR_CONTROL},
 };
 
+/* The color of the word at word, which is its keyword's, or the text's if it isn't one */
+static color_t keywordColor(const unsigned char* word)
+{
+    int len = 0;
+    while (isWordChar(word[len])) {
+        len++;
+    }
+    for (int i = 0; i < (int)(sizeof(editor_keywords) / sizeof(editor_keywords[0])); i++) {
+        const char* k = editor_keywords[i].word;
+        if (k[0] == word[0] && (int)strlen(k) == len && memcmp(word, k, len) == 0) {
+            return editor_keywords[i].color;
+        }
+    }
+    return COLOR_TEXT;
+}
+
+static bool isDigitChar(unsigned char c)
+{
+    return c >= '0' && c <= '9';
+}
+
+/**
+ * C's lexer, which colors a C file's text (#143). It's given a line's characters in turn, from the line's start, in the
+ * state the lines before leave it, and gives each one's color:
+ * - comments: // to the line's end, and slash-star to the next star-slash, which can be lines below;
+ * - strings and character constants: from the quote to the next one not escaped with a backslash, or the line's end;
+ * - numbers: a word starting with a digit, or with a . and a digit, through the letters, digits, _ and dots after it;
+ * - keywords: editor_keywords' words, whole;
+ * - preprocessor lines: a line whose first token is #, after nothing but blanks and comments, all in its color but
+ *   its comments. A \ at its end, or a comment still open there, carries it onto the next line.
+ * Everything else is the text's color. Newlines go through it too, for the next line's state, EDITOR_LEX_COMMENT and
+ * EDITOR_LEX_PREPROC, which is all that's carried from one line to the next
+ */
+class CLexer {
+public:
+    void begin(unsigned char state)
+    {
+        m_state = state;
+        m_mode = (state & EDITOR_LEX_COMMENT) ? BLOCK : CODE;
+        m_preproc = (state & EDITOR_LEX_PREPROC) != 0;
+        m_blank = true;
+        m_star = false;
+        m_escaped = false;
+        m_splice = false;
+    }
+
+    /* The state the line being lexed started in: after a newline, the next line's */
+    unsigned char lineState() const
+    {
+        return m_state;
+    }
+
+    color_t step(const unsigned char* text, int i);
+
+private:
+    enum { CODE, BLOCK_OPENING, BLOCK, LINE, QUOTED, NUMBER, WORD };
+
+    unsigned char m_state;
+    unsigned char m_mode;
+    /* The line is a preprocessor line */
+    bool m_preproc;
+    /* Nothing but blanks and comments yet on the line, so a # makes it a preprocessor line */
+    bool m_blank;
+    /* In a block comment, after a * that a / would end it with */
+    bool m_star;
+    /* In a string or character constant: its quote, and whether the last character was a backslash escaping the next */
+    unsigned char m_quote;
+    bool m_escaped;
+    /* The last character was a \, or one and a \r, which carries a preprocessor line onto the next */
+    bool m_splice;
+    /* The word being lexed's color */
+    color_t m_word;
+};
+
+/* The color of the character at i, the next of the line's, in text, which has a 0 after its end */
+color_t CLexer::step(const unsigned char* text, int i)
+{
+    unsigned char c = text[i];
+    if (c == '\n') {
+        bool comment = m_mode == BLOCK;
+        begin((comment ? EDITOR_LEX_COMMENT : 0) | (m_preproc && (comment || m_splice) ? EDITOR_LEX_PREPROC : 0));
+        return COLOR_TEXT;
+    }
+    m_splice = c == '\\' || (c == '\r' && m_splice);
+
+    switch (m_mode) {
+    case BLOCK_OPENING:
+        /* The * of slash-star, which can't also be the star of a star-slash */
+        m_mode = BLOCK;
+        return EDITOR_COLOR_COMMENT;
+    case BLOCK:
+        if (m_star && c == '/') {
+            m_mode = CODE;
+        }
+        m_star = c == '*';
+        return EDITOR_COLOR_COMMENT;
+    case LINE:
+        return EDITOR_COLOR_COMMENT;
+    case QUOTED:
+        if (m_escaped) {
+            m_escaped = false;
+        } else if (c == '\\') {
+            m_escaped = true;
+        } else if (c == m_quote) {
+            m_mode = CODE;
+        }
+        return m_preproc ? EDITOR_COLOR_PREPROC : EDITOR_COLOR_STRING;
+    case NUMBER:
+        if (isWordChar(c) || c == '.') {
+            return EDITOR_COLOR_NUMBER;
+        }
+        break;
+    case WORD:
+        if (isWordChar(c)) {
+            return m_word;
+        }
+        break;
+    }
+
+    /* Code: what this character starts */
+    m_mode = CODE;
+    if (c == '/' && text[i + 1] == '/') {
+        m_mode = LINE;
+        return EDITOR_COLOR_COMMENT;
+    }
+    if (c == '/' && text[i + 1] == '*') {
+        m_mode = BLOCK_OPENING;
+        m_star = false;
+        return EDITOR_COLOR_COMMENT;
+    }
+
+    bool first = m_blank;
+    if (c != ' ' && c != '\t') {
+        m_blank = false;
+    }
+    if (c == '"' || c == '\'') {
+        m_mode = QUOTED;
+        m_quote = c;
+        m_escaped = false;
+        return m_preproc ? EDITOR_COLOR_PREPROC : EDITOR_COLOR_STRING;
+    }
+    if (first && c == '#') {
+        m_preproc = true;
+    }
+    if (m_preproc) {
+        return EDITOR_COLOR_PREPROC;
+    }
+    if (isDigitChar(c) || (c == '.' && isDigitChar(text[i + 1]))) {
+        m_mode = NUMBER;
+        return EDITOR_COLOR_NUMBER;
+    }
+    if (isWordChar(c)) {
+        m_mode = WORD;
+        m_word = keywordColor(&text[i]);
+        return m_word;
+    }
+    return COLOR_TEXT;
+}
+
+/**
+ * Lexes the line that starts at *index, in the state it starts in, and moves *index to the next line's start.
+ * @return the next line's state
+ */
+unsigned char Editor::lexLine(int* index, unsigned char state) const
+{
+    CLexer lex;
+    lex.begin(state);
+    int i = *index;
+    while (i < m_bufferHead) {
+        unsigned char c = m_textBuffer[i];
+        lex.step(m_textBuffer, i);
+        i++;
+        if (c == '\n') {
+            break;
+        }
+    }
+    *index = i;
+    return lex.lineState();
+}
+
+/**
+ * The lexer's state at the start of line, counting from 0, which starts at index (#143). It's lexed from the nearest
+ * point before it whose state is kept: the checkpoint at the start of its EDITOR_LEX_LINES lines, which are worked
+ * out first up to there if they aren't yet, or the anchor, the view's line when it was last drawn, if that's nearer.
+ * So a key costs the lines from the anchor, usually none, and a jump far away a pass over the distance. The anchor
+ * moves to index
+ */
+unsigned char Editor::lexStateAt(int line, int index)
+{
+    int k = clampInt(line / EDITOR_LEX_LINES, 0, EDITOR_LEX_POINTS - 1);
+    while (m_lexPoints <= k) {
+        int i = m_lexIndex[m_lexPoints - 1];
+        unsigned char state = m_lexState[m_lexPoints - 1];
+        for (int n = 0; n < EDITOR_LEX_LINES && i < m_bufferHead; n++) {
+            state = lexLine(&i, state);
+        }
+        m_lexIndex[m_lexPoints] = i;
+        m_lexState[m_lexPoints] = state;
+        m_lexPoints++;
+    }
+
+    int i = m_lexIndex[k];
+    unsigned char state = m_lexState[k];
+    if (m_lexAnchor >= i && m_lexAnchor <= index) {
+        i = m_lexAnchor;
+        state = m_lexAnchorState;
+    }
+    while (i < index) {
+        state = lexLine(&i, state);
+    }
+
+    m_lexAnchor = index;
+    m_lexAnchorState = state;
+    return state;
+}
+
+/**
+ * The text changed at index: the states kept for lines starting after it go, since the text before a line is all its
+ * state depends on. A line starting at index keeps its own
+ */
+void Editor::lexEdited(int index)
+{
+    while (m_lexPoints > 1 && m_lexIndex[m_lexPoints - 1] > index) {
+        m_lexPoints--;
+    }
+    if (m_lexAnchor > index) {
+        m_lexAnchor = -1;
+    }
+}
+
+/* A new text: nothing's kept but the first line's state, which starts nothing */
+void Editor::lexReset()
+{
+    m_lexIndex[0] = 0;
+    m_lexState[0] = 0;
+    m_lexPoints = 1;
+    m_lexAnchor = -1;
+    m_lexAnchorState = 0;
+}
+
 /* Whether path is a C file's, whose text is colored: one ending in .c or .h, in any case, as FAT names are (#143) */
 static bool isCPath(const char* path)
 {
@@ -2250,11 +2491,27 @@ void Editor::reDraw(int from, int to)
         row_lines[0] = line_no;
     }
 
-    setColor(COLOR_TEXT);
+    /* A C file's colors, lexed from the view's line's start, in the state the lines above leave (#143) */
+    CLexer lex;
+    if (m_colorC) {
+        int line_start = lineStart(view_start);
+        lex.begin(lexStateAt(line_no - 1, line_start));
+        for (int i = line_start; i < view_start; i++) {
+            lex.step(m_textBuffer, i);
+        }
+    }
+    color_t cursor_color = COLOR_TEXT;
 
     TextLayout at(cols);
     for (int i = view_start; i < m_bufferHead; i++) {
         unsigned char ch = m_textBuffer[i];
+        color_t color = COLOR_TEXT;
+        if (m_colorC) {
+            color = lex.step(m_textBuffer, i);
+        }
+        if (i == m_bufferEdit) {
+            cursor_color = color;
+        }
         at.place(ch);
         if (at.row >= draw_rows) {
             break;
@@ -2275,20 +2532,11 @@ void Editor::reDraw(int from, int to)
             continue;
         }
 
-        /* A word is letters, digits and _, so a keyword at the start of a longer name, like int32_t, isn't one (#142) */
-        if (isWordChar(ch)) {
-            if (i == view_start || !isWordChar(m_textBuffer[i - 1])) {
-                highlightWordAt(i);
-            }
-        } else {
-            setColor(COLOR_TEXT);
-        }
-
         if (ch < 32 || ch > 126) {
             ch = '?';
         }
 
-        gfx_draw_char(text_x + (at.col * 8), TEXT_TOP + (at.row * TEXT_ROW_HEIGHT) + TEXT_CHAR_Y, ch, m_textColor);
+        gfx_draw_char(text_x + (at.col * 8), TEXT_TOP + (at.row * TEXT_ROW_HEIGHT) + TEXT_CHAR_Y, ch, color);
     }
 
     drawLineNumbers(row_lines, draw_rows);
@@ -2313,12 +2561,7 @@ void Editor::reDraw(int from, int to)
             if (m_bufferEdit < m_bufferHead && m_textBuffer[m_bufferEdit] != '\n') {
                 unsigned char ch = m_textBuffer[m_bufferEdit];
                 if (ch >= 32 && ch <= 126) {
-                    if (isWordChar(ch)) {
-                        highlightWordAt(m_bufferEdit);
-                    } else {
-                        setColor(COLOR_TEXT);
-                    }
-                    gfx_draw_char(cx, cy + TEXT_CHAR_Y, ch, m_textColor);
+                    gfx_draw_char(cx, cy + TEXT_CHAR_Y, ch, cursor_color);
                 }
             }
         }
@@ -2371,49 +2614,6 @@ void Editor::drawStatus()
     drawStatusLine(COLOR_VGA_MEDIUM_DARK_GRAY, "%s%s%s  Ln:%d Col:%d", dots, file_label, dirty_tag, line, colnum);
 }
 
-void Editor::setColor(color_t color)
-{
-    m_textColor = color;
-}
-
-void Editor::highlightSyntax(unsigned char* start)
-{
-    if (start == nullptr) {
-        setColor(COLOR_TEXT);
-        return;
-    }
-
-    int tokenLen = 0;
-    while (isWordChar(start[tokenLen])) {
-        tokenLen++;
-    }
-
-    if (tokenLen == 0 || !m_colorC) {
-        setColor(COLOR_TEXT);
-        return;
-    }
-
-    for (int i = 0; i < (int)(sizeof(editor_keywords) / sizeof(editor_keywords[0])); i++) {
-        const char* word = editor_keywords[i].word;
-        if (word[0] == start[0] && (int)strlen(word) == tokenLen && memcmp(start, word, tokenLen) == 0) {
-            setColor(editor_keywords[i].color);
-            return;
-        }
-    }
-
-    setColor(COLOR_TEXT);
-}
-
-/* Sets the color of the word index is in, from the word's start */
-void Editor::highlightWordAt(int index)
-{
-    int start = index;
-    while (start > 0 && isWordChar(m_textBuffer[start - 1])) {
-        start--;
-    }
-    highlightSyntax(&m_textBuffer[start]);
-}
-
 /* The text's lines, one more than its newlines, as the buffer* functions keep it */
 int Editor::countLines() const
 {
@@ -2434,10 +2634,6 @@ void Editor::getCursorLineCol(int& line, int& col) const
 {
     line = lineNumberAtIndex(m_bufferEdit);
     col = lineColumn(m_bufferEdit) + 1;
-}
-
-void Editor::Lex()
-{
 }
 
 /* Forgets what's kept about the text's past: the } that typing { added, and the undo history. The text is the caller's */
@@ -2528,8 +2724,9 @@ void Editor::shrinkText()
 
 /**
  * The four functions that change the text, m_textBuffer's first m_bufferHead characters, with a 0 after them. Each
- * moves the } kept in m_autoBraces, and records the change for undo (#161). The text holds at most
- * EDITOR_BUFFER_SIZE - 1 characters, in a buffer that grows to fit them (reserveText).
+ * keeps the lines and rows counted, drops the lexer's states after the change (#143), moves the } kept in
+ * m_autoBraces, and records the change for undo (#161). The text holds at most EDITOR_BUFFER_SIZE - 1 characters, in
+ * a buffer that grows to fit them (reserveText).
  */
 
 /* Inserts c at index. @return false without the room */
@@ -2575,6 +2772,7 @@ bool Editor::bufferInsertText(int index, const unsigned char* data, int len)
             m_rowAnchorRows += rows;
         }
     }
+    lexEdited(index);
     autoBracesInserted(index, len);
     undoInserted(index, data, len);
     return true;
@@ -2635,6 +2833,7 @@ bool Editor::bufferDeleteRange(int index, int count)
             m_rowAnchorIndex = lineStart(index);
         }
     }
+    lexEdited(index);
     autoBracesDeleted(index, count);
     return true;
 }

@@ -87,8 +87,9 @@ run_trace() {
     return 1
 }
 
-# The benchmark counts characters laid out (TextLayout::place) and compared with a newline, with counters added to a
-# copy of the Editor, and EDITOR_BUFFER_SIZE raised there so it can open bigger texts
+# The benchmark counts characters laid out (TextLayout::place), compared with a newline and lexed for C's colors
+# (CLexer::step), with counters added to a copy of the Editor, and EDITOR_BUFFER_SIZE raised there so it can open
+# bigger texts
 run_bench() {
     local dir=apps/editor
     if [ $# -gt 0 ]; then
@@ -105,13 +106,16 @@ hpp = open(src + '/edit.hpp').read()
 hpp, n = re.subn(r'#define EDITOR_BUFFER_SIZE \(.*\)', '#define EDITOR_BUFFER_SIZE (2 * 1024 * 1024)', hpp)
 if n != 1:
     sys.exit('EDITOR_BUFFER_SIZE not found')
-cpp = cpp.replace('#include "edit.hpp"', '#include "edit.hpp"\nlong long g_placed = 0;\nlong long g_compared = 0;', 1)
+cpp = cpp.replace('#include "edit.hpp"', '#include "edit.hpp"\nlong long g_placed = 0;\nlong long g_compared = 0;\nlong long g_lexed = 0;', 1)
 cpp, n = re.subn(r'(void place\(unsigned char ch\)\s*\{)', r'\1\n        g_placed++;', cpp)
 if n != 1:
     print('warning: TextLayout::place not found, so nothing is counted as laid out', file=sys.stderr)
 cpp, n = re.subn(r"(m_textBuffer\[[^\]]+\] == '\\n')", r'(g_compared++, \1)', cpp)
 if n == 0:
     print('warning: no newline comparisons found to count', file=sys.stderr)
+cpp, n = re.subn(r'(color_t CLexer::step\([^)]*\)\s*\{)', r'\1\n    g_lexed++;', cpp)
+if n != 1:
+    print('warning: CLexer::step not found, so nothing is counted as lexed', file=sys.stderr)
 open(dst + '/edit.cpp', 'w').write(cpp)
 open(dst + '/edit.hpp', 'w').write(hpp)
 EOF

@@ -24,6 +24,10 @@
 #define EDITOR_COLOR_TYPE COLOR_VGA_LIGHT_BLUE /* blue: 0, 124, 252 */
 #define EDITOR_COLOR_STORAGE 107               /* dark violet: 84, 0, 112 */
 #define EDITOR_COLOR_CONTROL COLOR_VGA_RED     /* dark red: 168, 0, 0 */
+#define EDITOR_COLOR_COMMENT 120               /* dark green: 0, 112, 0 */
+#define EDITOR_COLOR_STRING 6                  /* brown: 168, 84, 0; character constants too */
+#define EDITOR_COLOR_NUMBER 124                /* dark teal: 0, 112, 112 */
+#define EDITOR_COLOR_PREPROC 5                 /* magenta: 168, 0, 168; a preprocessor line, but for its comments */
 
 /* The tree's width when the Editor opens. Dragging its right border changes it, down to EDITOR_TREE_MIN_WIDTH */
 #define TREE_VIEW_WIDTH 130
@@ -144,6 +148,19 @@ enum {
 #define EDITOR_PROMPT_MAX 64
 #define EDITOR_LINE_DIGITS 6
 
+/**
+ * Coloring C (#143): what the lexer carries from one line to the next, the state at a line's start. A line starts in a
+ * block comment, in a preprocessor line continued onto it, or both. Everything else is the line's own
+ */
+#define EDITOR_LEX_COMMENT (1 << 0)
+#define EDITOR_LEX_PREPROC (1 << 1)
+/**
+ * The state is kept at the start of every EDITOR_LEX_LINES lines, so drawing lexes from the nearest one before the
+ * view rather than from the text's start: one for each of the most lines the text can have, EDITOR_BUFFER_SIZE
+ */
+#define EDITOR_LEX_LINES 256
+#define EDITOR_LEX_POINTS (EDITOR_BUFFER_SIZE / EDITOR_LEX_LINES + 1)
+
 /* The header's buttons: New and Save from the left, and Help at the right */
 enum {
     EDITOR_BUTTON_NONE = -1,
@@ -164,14 +181,12 @@ public:
     void Help();
     bool Open(char* path);
     void putChar(unsigned char c, int modifiers = 0);
-    void Lex();
     bool Quit();
     bool SaveMsg();
     void setFd(int fd);
 
     void EditorLoop();
     void New();
-    void setColor(color_t color);
     void Reset();
     void reDrawHeader();
 
@@ -198,8 +213,10 @@ private:
     void handleKey(unsigned char c, int modifiers);
     void reDraw(int from, int to);
     void drawSelection(int view_start, int cols, int rows, int text_x);
-    void highlightSyntax(unsigned char* start);
-    void highlightWordAt(int index);
+    unsigned char lexLine(int* index, unsigned char state) const;
+    unsigned char lexStateAt(int line, int index);
+    void lexEdited(int index);
+    void lexReset();
 
     bool hasSelection() const;
     bool selectionRange(int& start, int& end) const;
@@ -442,9 +459,18 @@ private:
     int scrollY;
     int m_scrollWrap;
 
-    color_t m_textColor;
     /* The text is colored as C, being a .c or .h file's; set as reDraw starts */
     bool m_colorC;
+    /**
+     * The lexer's state at the start of line k * EDITOR_LEX_LINES, which is at m_lexIndex[k], for each k below
+     * m_lexPoints, at least 1 (#143). They're worked out as drawing needs them, and an edit drops those after it
+     */
+    int m_lexIndex[EDITOR_LEX_POINTS];
+    unsigned char m_lexState[EDITOR_LEX_POINTS];
+    int m_lexPoints;
+    /* The state at the start of the line at m_lexAnchor, the view's last drawn, or -1 for none, dropped as they are */
+    int m_lexAnchor;
+    unsigned char m_lexAnchorState;
 
     int c_width;
     int c_height;
