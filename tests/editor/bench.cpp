@@ -106,6 +106,8 @@ int main(int argc, char** argv)
         measure("Page Up", 3, middle, [&]() { key(e, KEY_PAGE_UP); });
         measure("Page Down", 3, middle, [&]() { key(e, KEY_PAGE_DOWN); });
         measure("Ctrl+G to the middle", 3, opened, [&]() { typeLine(e, lines / 2); });
+        /* The cursor to the text's end, which the view follows */
+        measure("Ctrl+A from the top", 1, opened, [&]() { key(e, CTRLA); });
         measure("Find, Enter", 3,
                 [&]() {
                     opened();
