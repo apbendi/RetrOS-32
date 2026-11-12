@@ -484,7 +484,7 @@ Editor::Editor()
     treeView = nullptr;
     m_fd = -1;
     m_textBuffer = nullptr;
-    m_bufferSize = EDITOR_BUFFER_SIZE;
+    m_bufferSize = EDITOR_BUFFER_MIN;
     m_fileSize = 0;
     m_bufferHead = 0;
     m_bufferEdit = 0;
@@ -593,8 +593,9 @@ int Editor::gutterWidth() const
     if (width < 18) {
         width = 18;
     }
-    if (width > 42) {
-        width = 42;
+    /* Room for the most lines the text can have */
+    if (width > (EDITOR_LINE_DIGITS * 8) + 6) {
+        width = (EDITOR_LINE_DIGITS * 8) + 6;
     }
 
     return width;
@@ -2200,7 +2201,7 @@ void Editor::drawStatus()
      */
     const char* dots = "";
     int tag_len = m_readOnly ? (int)strlen(dirty_tag) : 1;
-    int room = textClipWidth() / 8 - tag_len - (int)strlen(selected ? "  Ln:99999 Col:9999  65535 selected" : "  Ln:99999 Col:9999");
+    int room = textClipWidth() / 8 - tag_len - (int)strlen(selected ? "  Ln:262144 Col:9999  262143 selected" : "  Ln:262144 Col:9999");
     int label_len = strlen(file_label);
     if (room > 4 && label_len > room) {
         file_label += label_len - (room - 3);
@@ -2335,9 +2336,53 @@ int Editor::autoBraceAt(int index) const
 }
 
 /**
+ * Makes room in the buffer for a text of length characters and the 0 after it, doubling it up to EDITOR_BUFFER_SIZE
+ * (#213). A pointer into the text is no good after it.
+ * @return false, with the text as it was, over EDITOR_BUFFER_SIZE - 1 characters or without the memory
+ */
+bool Editor::reserveText(int length)
+{
+    if (length > EDITOR_BUFFER_SIZE - 1) {
+        return false;
+    }
+    if (length + 1 <= m_bufferSize) {
+        return true;
+    }
+
+    int size = m_bufferSize;
+    while (size < length + 1) {
+        size = minInt(size * 2, EDITOR_BUFFER_SIZE);
+    }
+    unsigned char* grown = (unsigned char*) malloc(size);
+    if (grown == nullptr) {
+        return false;
+    }
+    memcpy(grown, m_textBuffer, m_bufferHead + 1);
+    free(m_textBuffer);
+    m_textBuffer = grown;
+    m_bufferSize = size;
+    return true;
+}
+
+/* Back to EDITOR_BUFFER_MIN, for a new text, so a small one doesn't keep a big one's buffer. Without the memory, it stays */
+void Editor::shrinkText()
+{
+    if (m_bufferSize <= EDITOR_BUFFER_MIN) {
+        return;
+    }
+    unsigned char* small = (unsigned char*) malloc(EDITOR_BUFFER_MIN);
+    if (small == nullptr) {
+        return;
+    }
+    free(m_textBuffer);
+    m_textBuffer = small;
+    m_bufferSize = EDITOR_BUFFER_MIN;
+}
+
+/**
  * The four functions that change the text, m_textBuffer's first m_bufferHead characters, with a 0 after them. Each
- * moves the } kept in m_autoBraces, and records the change for undo (#161). The text holds at most m_bufferSize - 1
- * characters.
+ * moves the } kept in m_autoBraces, and records the change for undo (#161). The text holds at most
+ * EDITOR_BUFFER_SIZE - 1 characters, in a buffer that grows to fit them (reserveText).
  */
 
 /* Inserts c at index. @return false without the room */
@@ -2346,13 +2391,16 @@ bool Editor::bufferInsertChar(int index, unsigned char c)
     return bufferInsertText(index, &c, 1);
 }
 
-/* Inserts len characters at index, moving the rest along. @return false, having changed nothing, without the room */
+/**
+ * Inserts len characters at index, moving the rest along. data mustn't point into the text, which may move.
+ * @return false, having changed nothing, over the limit or without the memory to grow
+ */
 bool Editor::bufferInsertText(int index, const unsigned char* data, int len)
 {
     if (len <= 0) {
         return true;
     }
-    if (index < 0 || index > m_bufferHead || m_bufferHead + len > m_bufferSize - 1) {
+    if (index < 0 || index > m_bufferHead || !reserveText(m_bufferHead + len)) {
         return false;
     }
 
@@ -2539,10 +2587,10 @@ void Editor::paste()
     int start = m_bufferEdit;
     int end = m_bufferEdit;
     selectionRange(start, end);
-    int room = (m_bufferSize - 1) - (m_bufferHead - (end - start));
+    int room = (EDITOR_BUFFER_SIZE - 1) - (m_bufferHead - (end - start));
     int len = minInt(size, room);
     if (len <= 0) {
-        drawStatusLine(COLOR_VGA_RED, "Can't paste: the Editor holds %d characters.", m_bufferSize - 1);
+        drawStatusLine(COLOR_VGA_RED, "Can't paste: the Editor holds %d characters.", EDITOR_BUFFER_SIZE - 1);
         return;
     }
 
@@ -2558,6 +2606,13 @@ void Editor::paste()
         len = size > 0 ? size : 0;
     }
 
+    /* The room first, so that without it the selection stays */
+    if (!reserveText(m_bufferHead - (end - start) + len)) {
+        free(data);
+        drawStatusLine(COLOR_VGA_RED, "Can't paste: out of memory.");
+        return;
+    }
+
     /* An anchor with nothing selected yet, as after a click, would select the pasted text */
     deleteSelection();
     clearSelection();
@@ -2567,7 +2622,7 @@ void Editor::paste()
     if (!pasted) {
         drawStatusLine(COLOR_VGA_RED, "Can't paste: out of memory.");
     } else if (len < size) {
-        drawStatusLine(COLOR_VGA_RED, "Pasted %d of %d characters: the Editor holds %d.", len, size, m_bufferSize - 1);
+        drawStatusLine(COLOR_VGA_RED, "Pasted %d of %d characters: the Editor holds %d.", len, size, EDITOR_BUFFER_SIZE - 1);
     }
 }
 
@@ -2786,9 +2841,9 @@ void Editor::undoKeyEnd()
 
 /**
  * Changes the text as the step did, or back as it was: the text going out comes out, then the text coming in goes in.
- * The result is the text from before or after the step, which fitted then, but that's checked first, so a failure
- * changes nothing.
- * @return false if the result wouldn't fit
+ * The result is the text from before or after the step, which fitted then, but the room for it is made first, so
+ * running out of memory changes nothing.
+ * @return false without the room
  */
 bool Editor::undoApply(const struct undo_step* step, bool redo)
 {
@@ -2797,7 +2852,7 @@ bool Editor::undoApply(const struct undo_step* step, bool redo)
     int out = redo ? step->del : step->ins;
     const unsigned char* in = redo ? ins : del;
     int in_len = redo ? step->ins : step->del;
-    if (step->pos + out > m_bufferHead || m_bufferHead - out + in_len > m_bufferSize - 1) {
+    if (step->pos + out > m_bufferHead || !reserveText(m_bufferHead - out + in_len)) {
         return false;
     }
 
@@ -2895,6 +2950,7 @@ void Editor::Reset()
 {
     clearHistory();
 
+    shrinkText();
     memset(m_textBuffer, 0, m_bufferSize);
     m_bufferHead = 0;
     resetLines();
@@ -2995,12 +3051,24 @@ bool Editor::Open(char* path)
     strncpy(m_currentPath, absolute, (uint32_t)(sizeof(m_currentPath) - 1));
     m_currentPath[sizeof(m_currentPath) - 1] = 0;
 
+    shrinkText();
     memset(m_textBuffer, 0, m_bufferSize);
 
-    /* As much as fits. A failed read loads nothing, and leaves no path, so nothing can be saved over the file */
+    /**
+     * As much as fits, the buffer growing as it fills, up to EDITOR_BUFFER_SIZE (#213). A failed read loads nothing,
+     * and leaves no path, so nothing can be saved over the file
+     */
     int read_bytes = 0;
     int read_error = 0;
-    while (m_fd >= 0 && read_bytes < m_bufferSize - 1) {
+    bool full = false;
+    while (m_fd >= 0) {
+        if (read_bytes == m_bufferSize - 1) {
+            m_bufferHead = read_bytes;
+            if (!reserveText(read_bytes + 1)) {
+                full = true;
+                break;
+            }
+        }
         int ret = read(m_fd, m_textBuffer + read_bytes, m_bufferSize - 1 - read_bytes);
         if (ret < 0) {
             read_error = ret;
@@ -3011,9 +3079,12 @@ bool Editor::Open(char* path)
         read_bytes += ret;
     }
 
-    /* A file bigger than the buffer opens read-only, since saving what fits would cut it short (#133) */
+    /**
+     * A file bigger than the buffer can grow to opens read-only, since saving what fits would cut it short (#133).
+     * That's past the limit, or without the memory to hold it all
+     */
     m_readOnly = false;
-    if (read_error == 0 && m_fd >= 0 && read_bytes == m_bufferSize - 1) {
+    if (read_error == 0 && full) {
         unsigned char more;
         m_readOnly = read(m_fd, &more, 1) != 0;
     }
