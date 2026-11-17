@@ -45,7 +45,7 @@ This erases everything on the PC's internal drive.
    ```
    bash /run/archiso/bootmnt/install-retros.sh
    ```
-   It finds the internal drive, shows what's on it, and asks you to type its name, like `sda`. Then it erases the drive, writes the RetrOS image, and checks it. If it can't tell which drive is the internal one, it lists them and asks you to name it: `bash /run/archiso/bootmnt/install-retros.sh /run/archiso/bootmnt/RetrOS-32-debug.img sda`.
+   It finds the internal drive, shows what's on it, and asks you to type its name, like `sda`. Check the size and model it shows first. The name depends on which drive Linux found first: on the Dell it's `sdb`, since the install drive is `sda`. Then it erases the drive, writes the RetrOS image, and checks it. If it can't tell which drive is the internal one, it lists them and asks you to name it: `bash /run/archiso/bootmnt/install-retros.sh /run/archiso/bootmnt/RetrOS-32-debug.img sda`.
 4. **`poweroff`,** take out the install drive, and turn the PC on. RetrOS starts from the internal drive.
 
 ## A new RetrOS build
