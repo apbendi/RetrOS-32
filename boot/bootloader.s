@@ -208,6 +208,8 @@ memory_error_str:
     .asciz "Memory detection: ERROR          "
 mem_str:
     .asciz "Memory detection: OK             "
+unavailable_str:
+    .asciz "Not available. Choose another:   "
 new_line_str:
     .asciz "\n"
 
@@ -477,19 +479,20 @@ set_video_mode:
 
     jmp set_video_mode
 
+/* Each resolution's width in CX and height in DX, for set_resolution */
 set_640x480:
-    mov $0x4F02, %ax	
-    mov $0x4101, %bx /* 101 = 640x480 */
+    movw $640, %cx
+    movw $480, %dx
     jmp set_resolution
 
 set_800x600:
-    mov $0x4F02, %ax	
-    mov $0x4103, %bx /* 103 = 800x600 */
+    movw $800, %cx
+    movw $600, %dx
     jmp set_resolution
 
 set_1024x768:
-    mov $0x4F02, %ax	
-    mov $0x4105, %bx /* 105 = 1024x768 */
+    movw $1024, %cx
+    movw $768, %dx
     jmp set_resolution
 
 set_textmode:
@@ -497,14 +500,65 @@ set_textmode:
     mov %ax, 0x7E08 /* Set textmode flag */
     ret
 
+/**
+ * Sets the video BIOS's 8-bit mode of CX by DX pixels, from the modes list_vbe_modes recorded, rather than by a fixed
+ * mode number: each BIOS numbers its modes its own way beyond VESA's first few. Then gets the mode's description
+ * into vbe_info_structure, for the kernel. With no such mode, or if setting it fails, says so and shows the menu again.
+ */
 set_resolution:
-    int $0x10 
-    push %es
-    mov $0x4F01, %ax
-    mov %bx, %cx      /* Use same resolution code for information request */	
-    mov $vbe_info_structure, %di
+    call find_vbe_mode
+    jc mode_unavailable
+    pushw %bx
+    movw $0x4F02, %ax
+    orw $0x4000, %bx        /* with its linear framebuffer */
     int $0x10
-    pop %es
+    popw %cx
+    cmpw $0x004F, %ax
+    jne mode_unavailable
+    movw $0x4F01, %ax
+    movw $vbe_info_structure, %di
+    int $0x10
+    ret
+
+mode_unavailable:
+    call print_main_window
+    movw $straight_line, %si
+    call print
+    movw $unavailable_str, %si
+    call print
+    movw $straight_line_end, %si
+    call print
+    jmp set_video_mode
+
+/**
+ * Finds the 8-bit mode of CX by DX pixels in list_vbe_modes' table: one 4F01h described, with 8 bits per pixel, the
+ * packed memory model, and the supported, graphics and linear framebuffer attributes. The first in the BIOS's list
+ * wins. Returns its number in BX, or sets carry if there's none.
+ */
+find_vbe_mode:
+    movw VBE_MODE_TABLE+10, %di             /* modes left */
+    movw $VBE_MODE_TABLE+16, %si
+find_vbe_mode_next:
+    subw $1, %di
+    jc find_vbe_mode_done                   /* none left */
+    cmpw $0x004F, 14(%si)
+    jne find_vbe_mode_skip
+    cmpw %cx, 4(%si)
+    jne find_vbe_mode_skip
+    cmpw %dx, 6(%si)
+    jne find_vbe_mode_skip
+    cmpw $0x0408, 12(%si)                   /* 8 bits per pixel, then memory model 4, packed */
+    jne find_vbe_mode_skip
+    movw 2(%si), %ax
+    andw $0x0091, %ax
+    cmpw $0x0091, %ax                       /* supported, graphics and linear; clears carry when equal */
+    jne find_vbe_mode_skip
+    movw (%si), %bx
+    ret
+find_vbe_mode_skip:
+    addw $16, %si
+    jmp find_vbe_mode_next
+find_vbe_mode_done:
     ret
 
 detect_memory_size:
