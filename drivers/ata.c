@@ -114,51 +114,72 @@ __ata_read_sector_try_again:
     return 0;
 }
 
+/**
+ * Waits for the drive to finish a command, after giving it 400 ns to start. Returns -1 if it reports an error or a
+ * fault, or is still busy after ATA_WAIT_POLLS reads.
+ */
+static int ata_wait_done(int io)
+{
+    ata_io_wait(io);
+
+    int status = ata_status_wait(io);
+    if (status < 0 || (status & (ATA_SR_ERR | ATA_SR_DF))) return -1;
+    return 0;
+}
+
+/**
+ * Writes a sector, then flushes the drive's cache, so it's on the disk when this returns. Each step waits for the
+ * drive: it asks for the data with DRQ, is busy while it writes it, and ignores a command written while it's busy,
+ * as the flush would be if it were sent right after the data. Returns 0, or -1 if the drive reports an error or a
+ * fault, or stays busy.
+ */
 static int __ata_write_sector(uint16_t *buf, int lba)
 {
     uint16_t io = ATA_PRIMARY_IO;
 
-    uint8_t cmd = 0xE0;
-
     outportb(io + ATA_REG_CONTROL, 0x02);
+    if (ata_wait(io, 0)) return -1;
 
-    ata_wait(io, 0);
+    outportb(io + ATA_REG_HDDEVSEL, 0xE0 | (uint8_t)((lba >> 24) & 0x0F));
+    if (ata_wait(io, 0)) return -1;
 
-    outportb(io + ATA_REG_HDDEVSEL, (cmd | (uint8_t)((lba >> 24 & 0x0F))));
-    ata_wait(io, 0);
     outportb(io + ATA_REG_FEATURES, 0x00);
     outportb(io + ATA_REG_SECCOUNT0, 1);
     outportb(io + ATA_REG_LBA0, (uint8_t)(lba));
     outportb(io + ATA_REG_LBA1, (uint8_t)(lba >> 8));
     outportb(io + ATA_REG_LBA2, (uint8_t)(lba >> 16));
     outportb(io + ATA_REG_COMMAND, ATA_CMD_WRITE_PIO);
-    ata_wait(io, 0);
+
+    /* Ready for the data, without an error */
+    if (ata_wait(io, 1)) return -1;
 
     for (int i = 0; i < 256; i++) {
         outportw(io + ATA_REG_DATA, buf[i]);
-        asm volatile("nop; nop; nop");
     }
-    outportb(io + 0x07, ATA_CMD_CACHE_FLUSH);
 
-    ata_wait(io, 0);
+    if (ata_wait_done(io) < 0) return -1;
+
+    outportb(io + ATA_REG_COMMAND, ATA_CMD_CACHE_FLUSH);
+    if (ata_wait_done(io) < 0) return -1;
 
     return 0;
 }
 
+/* Writes count sectors from sector from. Returns count, or -1 at the first that fails, as FatFs's disk_write expects */
 int ata_write(char *buf, uint32_t from, uint32_t count)
 {
-    unsigned long pos = from;
-
     acquire(&ata_lock);
 
     for (uint32_t i = 0; i < count; i++)
     {
-        __ata_write_sector((uint16_t*) buf, pos + i);
+        if (__ata_write_sector((uint16_t*) buf, from + i) < 0) {
+            release(&ata_lock);
+            dbgprintf("[ATA]: Writing sector %d failed.\n", from + i);
+            return -1;
+        }
         buf += 512;
-        for (int j = 0; j < 1000; j ++)
-            ;
     }
-    
+
     release(&ata_lock);
     return count;
 }
