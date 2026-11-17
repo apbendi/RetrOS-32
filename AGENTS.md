@@ -110,6 +110,7 @@ HOSTFWD_PORT=8081 make qemu    # if port 8080 is taken (the default forward to t
 - **Starting apps:** from the shell, `exec -d /bin/<app>.o` starts an app without waiting for it; without `-d`, the shell waits until it exits. Kernel threads start by name, e.g. `exec kclock`. The Start menu entries are defined in `kernel/kthreads/taskbar.c`.
   - A program starts in the shell's current directory, so relative paths work: `cd "/my projects"`, then `exec -d /bin/edit.o main.c`, `exec /bin/tcc.o main.c -o main` and `exec main`, or `exec /bin/tcc.o -run main.c`.
 - **Resolution varies:** the screen has been both 640×480 and 1024×768. Don't hard-code a resolution; use `vbe_info->width`/`height`.
+  - **Rows can be longer than the screen is wide:** `vbe_info->pitch` is the bytes per row, and a BIOS may pad rows past the width. Intel's pads them to 64 bytes, so on a Dell Inspiron 11 3147, 800×600's rows are 832 bytes (#217). Stride screen-sized buffers by the pitch, and size them with `VBE_SIZE()`, which is `pitch × height`.
 
 ## 86Box
 
@@ -194,7 +195,7 @@ clang --target=i386-elf -m32 -ffreestanding -nostdinc -fno-builtin -fno-omit-fra
 
 **Window geometry** (`include/gfx/window.h`, `graphics/window.c`):
 - **Frame:** the title bar and borders are drawn `GFX_WINDOW_HEADER_OVERHANG` (4 px) above `window->y`.
-- **Content:** the content starts at `x+8, y+8`, and `inner_width`/`inner_height` are the outer size minus 16. A window's buffer is `inner`, with stride `pitch`, which equals `inner_width`.
+- **Content:** the content starts at `x+8, y+8`, and `inner_width`/`inner_height` are the outer size minus 16. A window's buffer is `inner`, with stride `pitch`, which equals `inner_width`, except in fullscreen, where it's the screen's pitch.
 - **Size limits:** no window is smaller than `GFX_WINDOW_MIN_WIDTH`×`GFX_WINDOW_MIN_HEIGHT` (128×48, frame included), so its frame fits inside it.
   - **Resizing:** `gfx_window_clamp_size` enforces the minimum and keeps the window on screen. The resize outline and `gfx_window_resize` both use it, so they agree. When there isn't enough memory, `gfx_window_resize` keeps the old size.
   - **Creating:** `gfx_new_window`, which is also apps' system call, refuses a size that isn't positive, and keeps the rest between the minimum and the screen. A window that didn't get the size it asked for gets a `GFX_EVENT_RESOLUTION` with the size it did get, and a warning goes to the log. The cap also keeps `width*height` from overflowing into a buffer smaller than the window.

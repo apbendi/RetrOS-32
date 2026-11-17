@@ -185,7 +185,8 @@ static struct window* __ws_enter_fullscreen(struct windowserver* ws, struct wind
     window->inner = ws->_wm->composition_buffer;
     window->inner_width = vbe_info->width;
     window->inner_height = vbe_info->height;
-    window->pitch = vbe_info->width;
+    /* The composition buffer's rows, which can be longer than the screen is wide */
+    window->pitch = vbe_info->pitch;
     window->x = 0;
     window->y = 0;
     window->is_fullscreen = 1;
@@ -462,7 +463,7 @@ static void __ws_copy_rect(struct windowserver* ws, struct gfx_rect rect, struct
     uint32_t* source = (uint32_t*)ws->_wm->composition_buffer;
     int pitch = vbe_info->pitch;
 
-    /* VBE_SIZE() is the screen and a byte more, so this is every pixel when the screen's size is a multiple of 4 */
+    /* VBE_SIZE() is the screen's rows and a byte more, so this is every pixel when the pitch is a multiple of 4 */
     int words = ws->_wm->composition_buffer_size / 4;
 
     rect.x0 = MAX(rect.x0, 0);

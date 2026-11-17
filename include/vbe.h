@@ -9,7 +9,11 @@
 
 extern uint8_t test_icon32[32][32];
 
-#define VBE_SIZE() (vbe_info->width*vbe_info->height*(vbe_info->bpp/8)+1)
+/**
+ * A screen-sized buffer's size, and a byte more: its rows, each pitch bytes. A BIOS may pad each row past the screen's
+ * width, as Intel's pads to 64 bytes (1366 pixels in 1408 bytes), and everything that draws strides by the pitch.
+ */
+#define VBE_SIZE() (vbe_info->pitch*vbe_info->height+1)
 
 extern struct vbe_mode_info_structure* vbe_info;
 struct vbe_mode_info_structure {
