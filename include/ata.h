@@ -22,7 +22,14 @@
 #define ATA_REG_HDDEVSEL   0x06
 #define ATA_REG_SECCOUNT0  0x02
 #define ATA_REG_STATUS     0x07
-#define ATA_REG_ALTSTATUS  0x0C
+
+/**
+ * The control block's one register, from the command block's base: written, it's the device control register (bit 1,
+ * nIEN, turns the drive's interrupts off), and read, the alternate status, which reads the status without the side
+ * effects of reading ATA_REG_STATUS. A legacy channel's control block is 0x206 above its command block: 0x3f6 and
+ * 0x376 (ATA_PRIMARY_DCR_AS, ATA_SECONDARY_DCR_AS).
+ */
+#define ATA_REG_ALTSTATUS  0x206
 
 #define ATA_REG_LBA0       0x03
 #define ATA_REG_LBA1       0x04
@@ -30,7 +37,7 @@
 
 #define ATA_REG_COMMAND    0x07
 #define ATA_REG_DATA       0x00
-#define ATA_REG_CONTROL    0x0C
+#define ATA_REG_CONTROL    0x206
 #define ATA_REG_FEATURES   0x01
 
 #define ATA_CMD_IDENTIFY          0xEC
