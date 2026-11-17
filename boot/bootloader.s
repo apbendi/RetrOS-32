@@ -189,27 +189,27 @@ separator:
     .asciz "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
 
 
-/* Adjusted strings with padding to match the length of the separator */
+/* The box's rows, which print_row pads to its right border */
 home_str:
     .asciz "                       Welcome to RetrOS-32 Bootloader  \n"
 kernel_str:
-    .asciz "Loaded kernel.                   "
+    .asciz "Loaded kernel."
 choice_str:
-    .asciz "Choose resolution:               "
+    .asciz "Choose resolution:"
 choice_1_str:
-    .asciz "   1. 640x480                    "
+    .asciz "   1. 640x480"
 choice_2_str:
-    .asciz "   2. 800x600                    "
+    .asciz "   2. 800x600"
 choice_3_str:
-    .asciz "   3. 1024x768                   "
+    .asciz "   3. 1024x768"
 choice_4_str:
-    .asciz "   ESC. Textmode                 "
+    .asciz "   ESC. Textmode"
 memory_error_str:
-    .asciz "Memory detection: ERROR          "
+    .asciz "Memory detection: ERROR"
 mem_str:
-    .asciz "Memory detection: OK             "
+    .asciz "Memory detection: OK"
 unavailable_str:
-    .asciz "Not available. Choose another:   "
+    .asciz "Not available. Choose another:"
 new_line_str:
     .asciz "\n"
 
@@ -258,6 +258,29 @@ gdt_end:
 
 /* Stage 2 code */
 
+/**
+ * Prints SI's string as a row of the menu's box: the left border, the string, then spaces up to the right border's
+ * column, and the border. pad_row does the last two, for a row printed in pieces.
+ */
+print_row:
+    pushw %si
+    movw $straight_line, %si
+    call print
+    popw %si
+    call print
+pad_row:
+    movb $0x03, %ah         /* the cursor's column, into DL */
+    xorb %bh, %bh
+    int $0x10
+    cmpb $55, %dl           /* the right border's: the left border's 21, then the 33 columns between */
+    jae pad_row_done
+    movw $0x0E20, %ax       /* a space */
+    int $0x10
+    jmp pad_row
+pad_row_done:
+    movw $straight_line_end, %si
+    jmp print
+
 draw_middle_separator:
     movw $left_cross, %si
     call print
@@ -297,12 +320,8 @@ print_main_window:
     call draw_top_separator
 
     /* Print kernel status */
-    movw $straight_line, %si
-    call print
     movw $kernel_str, %si
-    call print
-    movw $straight_line_end, %si
-    call print
+    call print_row
     /* Print the middle separator */
     call draw_middle_separator
 
@@ -425,40 +444,20 @@ set_video_mode:
     # je set_640x480
 
     /* Print resolution choice */
-    movw $straight_line, %si
-    call print
     movw $choice_str, %si
-    call print
-    movw $straight_line_end, %si
-    call print
+    call print_row
 
-    movw $straight_line, %si
-    call print
     movw $choice_1_str, %si
-    call print
-    movw $straight_line_end, %si
-    call print
+    call print_row
 
-    movw $straight_line, %si
-    call print
     movw $choice_2_str, %si
-    call print
-    movw $straight_line_end, %si
-    call print
+    call print_row
 
-    movw $straight_line, %si
-    call print
     movw $choice_3_str, %si
-    call print
-    movw $straight_line_end, %si
-    call print
+    call print_row
 
-    movw $straight_line, %si
-    call print
     movw $choice_4_str, %si
-    call print
-    movw $straight_line_end, %si
-    call print
+    call print_row
 
     call draw_bottom_separator
 
@@ -522,12 +521,8 @@ set_resolution:
 
 mode_unavailable:
     call print_main_window
-    movw $straight_line, %si
-    call print
     movw $unavailable_str, %si
-    call print
-    movw $straight_line_end, %si
-    call print
+    call print_row
     jmp set_video_mode
 
 /**
@@ -590,22 +585,14 @@ use_ax:
     mov %bx, 0x7E04
 
 print_memory_size:
-    movw $straight_line, %si
-    call print
     movw $mem_str, %si
-    call print
-    movw $straight_line_end, %si
-    call print
+    call print_row
     ret
     
 mem_error:
     /* Handle error */
-    movw $straight_line, %si
-    call print
     movw $memory_error_str, %si
-    call print
-    movw $straight_line_end, %si
-    call print
+    call print_row
     ret
 
 /**
