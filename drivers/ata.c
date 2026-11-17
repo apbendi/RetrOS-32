@@ -25,6 +25,18 @@
 static uint8_t* ata_driver_data;
 struct ide_device ata_ide_device;
 
+/* The channels, by ATA_PRIMARY and ATA_SECONDARY: their command blocks, at the legacy ports */
+static const struct {
+	uint16_t io;
+	const char* name;
+} ata_channels[] = {
+	[ATA_PRIMARY] = { ATA_PRIMARY_IO, "primary" },
+	[ATA_SECONDARY] = { ATA_SECONDARY_IO, "secondary" },
+};
+
+/* The command block of the channel the disk is on: its master. Set when ata_ide_init finds it. */
+static uint16_t ata_io = ATA_PRIMARY_IO;
+
 /* One transfer at a time. A lock, not interrupts off, so the rest of the system keeps running during one (#196).
  * acquire can block, so the driver can't be called with interrupts off or from an interrupt handler. */
 static mutex_t ata_lock;
@@ -79,7 +91,7 @@ static int ata_wait(int io, int adv)
 
 static int __ata_read_sector(char *buf, int lba)
 {
-    uint16_t io = ATA_PRIMARY_IO;
+    uint16_t io = ata_io;
 
     uint8_t cmd = 0xE0;
     int errors = 0;
@@ -135,7 +147,7 @@ static int ata_wait_done(int io)
  */
 static int __ata_write_sector(uint16_t *buf, int lba)
 {
-    uint16_t io = ATA_PRIMARY_IO;
+    uint16_t io = ata_io;
 
     outportb(io + ATA_REG_CONTROL, 0x02);
     if (ata_wait(io, 0)) return -1;
@@ -265,20 +277,31 @@ void ata_ide_init(struct pci_device* dev)
 		return;
 	}
 
-	int found = __ata_identify(ATA_PRIMARY_IO);
-	if(found < 0){
-		dbgprintf("[ATA]: No disk on the primary channel's master: %s.\n", ata_identify_errors[-found]);
-		return;
+	/**
+	 * The disk is the first ATA disk found, on the primary channel's master, then the secondary's: a SATA controller
+	 * in IDE mode puts a drive on each channel's master, and RetrOS has one disk device. Slaves aren't looked for.
+	 */
+	int channel = -1;
+	for(int c = ATA_PRIMARY; c <= ATA_SECONDARY && channel < 0; c++){
+		int found = __ata_identify(ata_channels[c].io);
+		if(found == 0){
+			channel = c;
+		} else {
+			dbgprintf("[ATA]: No disk on the %s channel's master: %s.\n", ata_channels[c].name, ata_identify_errors[-found]);
+		}
 	}
+	if(channel < 0) return;
 
-	dbgprintf("[ATA]: Driver ready.\n");
+	ata_io = ata_channels[channel].io;
+	dbgprintf("[ATA]: Driver ready, with the disk on the %s channel's master.\n", ata_channels[channel].name);
 
 	for(int i = 0; i < ATA_IDE_MODEL_LENGTH-1; i += 2){
 		ata_ide_device.model[i] = ata_driver_data[ATA_IDENT_MODEL + i + 1];
 		ata_ide_device.model[i + 1] = ata_driver_data[ATA_IDENT_MODEL + i];
 	}
 
-	ata_ide_device.drive = (ATA_PRIMARY << 1) | ATA_MASTER;
+	ata_ide_device.channel = channel;
+	ata_ide_device.drive = ATA_MASTER;
 	ata_ide_device.signature = *((unsigned short *)(ata_driver_data + ATA_IDENT_DEVICETYPE));
 	ata_ide_device.commandSets = *((unsigned int *)(ata_driver_data + ATA_IDENT_COMMANDSETS));
 
