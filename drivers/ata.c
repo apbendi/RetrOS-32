@@ -281,8 +281,18 @@ void ata_ide_init(struct pci_device* dev)
 	 * The disk is the first ATA disk found, on the primary channel's master, then the secondary's: a SATA controller
 	 * in IDE mode puts a drive on each channel's master, and RetrOS has one disk device. Slaves aren't looked for.
 	 */
+	/**
+	 * The programming interface says which channels are in native mode, at ports the BIOS assigned (bits 0 and 2, for
+	 * the primary and secondary) rather than the legacy ones the driver uses. Such a channel is passed over.
+	 */
+	uint8_t progif = (pci_read_word(dev->bus, dev->slot, dev->function, 0x08) >> 8) & 0xFF;
+
 	int channel = -1;
 	for(int c = ATA_PRIMARY; c <= ATA_SECONDARY && channel < 0; c++){
+		if(progif & (1 << (c*2))){
+			dbgprintf("[ATA]: The %s channel is in native mode, which the driver doesn't support.\n", ata_channels[c].name);
+			continue;
+		}
 		int found = __ata_identify(ata_channels[c].io);
 		if(found == 0){
 			channel = c;
