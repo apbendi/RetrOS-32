@@ -37,25 +37,20 @@ void __int_handler ata_secondary()
 {
 }
 
-static void __ide_set_drive(uint8_t bus, uint8_t i)
-{
-	if(bus == ATA_PRIMARY)
-		if(i == ATA_MASTER)
-			outportb(ATA_PRIMARY_IO + ATA_REG_HDDEVSEL, 0xA0);
+/**
+ * How many times a wait reads the drive's status before giving up. Drivers attach in init_pci, before the timer starts
+ * and with interrupts off, so waits count reads instead of time: a read of an I/O port takes about a microsecond on
+ * real hardware, so this is a few seconds. The BIOS has already spun the drive up by the time the kernel runs.
+ */
+#define ATA_WAIT_POLLS 5000000
 
-    /* ELSE UNSUPPORTED. */
-}
-
-static int ata_status_wait(int io_base, int timeout) {
-	int status;
-
-	if (timeout > 0) {
-		int i = 0;
-		while ((status = inportb(io_base + ATA_REG_STATUS)) & ATA_SR_BSY && (i < timeout)) i++;
-	} else {
-		while ((status = inportb(io_base + ATA_REG_STATUS)) & ATA_SR_BSY);
+/* Waits until the drive isn't busy. Returns its status then, or -1 if it's still busy after ATA_WAIT_POLLS reads. */
+static int ata_status_wait(int io_base) {
+	for(int i = 0; i < ATA_WAIT_POLLS; i++){
+		uint8_t status = inportb(io_base + ATA_REG_STATUS);
+		if(!(status & ATA_SR_BSY)) return status;
 	}
-	return status;
+	return -1;
 }
 
 static void ata_io_wait(int io_base) {
@@ -65,16 +60,15 @@ static void ata_io_wait(int io_base) {
 	inportb(io_base + ATA_REG_ALTSTATUS);
 }
 
+/* Waits until the drive isn't busy, and with adv, checks it has data ready without an error. Returns 1 if not. */
 static int ata_wait(int io, int adv)
 {
-    uint8_t status = 0;
-
     ata_io_wait(io);
 
-    status = ata_status_wait(io, -1);
+    int status = ata_status_wait(io);
+    if (status < 0) return 1;
 
     if (adv) {
-        status = inportb(io + ATA_REG_STATUS);
         if (status & ATA_SR_ERR) return 1;
         if (status & ATA_SR_DF)  return 1;
         if (!(status & ATA_SR_DRQ)) return 1;
@@ -190,69 +184,90 @@ int ata_read(char *buf, uint32_t from, uint32_t numsects)
     return rc;
 }
 
+/* Why __ata_identify found no drive, by the negative number it returns */
+static const char* ata_identify_errors[] = {
+	[1] = "nothing answers",
+	[2] = "it stays busy",
+	[3] = "it isn't an ATA disk",
+	[4] = "it reports an error",
+};
+
+/**
+ * Looks for an ATA disk at a channel's master with IDENTIFY, and reads its 256 words of identity into ata_driver_data.
+ * Returns 0 if there's one, or the negative index of ata_identify_errors: a status of 0, or 0xff from a channel with
+ * nothing on it, means nothing answers; an ATAPI or SATAPI signature in LBA1 and LBA2, as an optical drive's, isn't
+ * an ATA disk. Every wait has a limit, so an empty or broken channel can't hang the boot.
+ */
+static int __ata_identify(int io)
+{
+	outportb(io + ATA_REG_HDDEVSEL, 0xA0);
+	ata_io_wait(io);
+	outportb(io + ATA_REG_CONTROL, 0x02);	/* nIEN: the driver polls */
+
+	if(inportb(io + ATA_REG_STATUS) == 0xFF) return -1;
+
+	outportb(io + ATA_REG_SECCOUNT0, 0);
+	outportb(io + ATA_REG_LBA0, 0);
+	outportb(io + ATA_REG_LBA1, 0);
+	outportb(io + ATA_REG_LBA2, 0);
+	outportb(io + ATA_REG_COMMAND, ATA_CMD_IDENTIFY);
+	ata_io_wait(io);
+
+	uint8_t status = inportb(io + ATA_REG_STATUS);
+	if(status == 0 || status == 0xFF) return -1;
+
+	if(ata_status_wait(io) < 0) return -2;
+
+	if(inportb(io + ATA_REG_LBA1) != 0 || inportb(io + ATA_REG_LBA2) != 0) return -3;
+
+	for(int i = 0; ; i++){
+		if(i == ATA_WAIT_POLLS) return -2;
+		status = inportb(io + ATA_REG_STATUS);
+		if(status & ATA_SR_ERR) return -4;
+		if(status & ATA_SR_DRQ) break;
+	}
+
+	for(int i = 0; i < 256; i++){
+		*(uint16_t *)(ata_driver_data + i*2) = inportw(io + ATA_REG_DATA);
+	}
+	return 0;
+}
+
 void ata_ide_init(struct pci_device* dev)
 {
 	interrupt_install_handler(ATA_PRIMARY_IRQ, &ata_primary);
 	interrupt_install_handler(ATA_SECONDARY_IRQ, &ata_secondary);
 
 	ata_driver_data = kalloc(512);
-    if(ata_driver_data == NULL){
-        dbgprintf("[ATA]: Failed to allocate memory for driver data.\n");
-        return;
-    }
-
-	uint16_t io;
-	__ide_set_drive(ATA_PRIMARY, ATA_MASTER);
-	io = ATA_PRIMARY_IO;
-
-	outportb(io + ATA_REG_SECCOUNT0, 0);
-	outportb(io + ATA_REG_LBA0, 0);
-	outportb(io + ATA_REG_LBA1, 0);
-	outportb(io + ATA_REG_LBA2, 0);
-
-	/* Send IDENTIFY to ATA */
-	outportb(io + ATA_REG_COMMAND, ATA_CMD_IDENTIFY);
-
-	/* Read status port till BSY is clear*/
-	uint8_t status = inportb(io + ATA_REG_STATUS);
-	if(status){
-		while((inportb(io + ATA_REG_STATUS) & ATA_SR_BSY) != 0);
-		ata_status: status = inportb(io + ATA_REG_STATUS);
-
-		if(status & ATA_SR_ERR)
-		{
-			dbgprintf("[ATA]: Error while reading status\n");
-			return;
-		}
-		while(!(status & ATA_SR_DRQ)) goto ata_status;
-
-		dbgprintf("[ATA]: Driver ready.\n");
-
-		for(int i = 0; i < 256; i++)
-		{
-			*(uint16_t *)(ata_driver_data + i*2) = inportw(io + ATA_REG_DATA);
-		}
-
-		for(int i = 0; i < ATA_IDE_MODEL_LENGTH-1; i += 2)
-		{
-			ata_ide_device.model[i] = ata_driver_data[ATA_IDENT_MODEL + i + 1];
-			ata_ide_device.model[i + 1] = ata_driver_data[ATA_IDENT_MODEL + i];
-		}
-
-		ata_ide_device.drive = (ATA_PRIMARY << 1) | ATA_MASTER;
-		ata_ide_device.signature = *((unsigned short *)(ata_driver_data + ATA_IDENT_DEVICETYPE));
-		ata_ide_device.commandSets = *((unsigned int *)(ata_driver_data + ATA_IDENT_COMMANDSETS));
-
-		if (ata_ide_device.commandSets & (1 << 26))
-            // Device uses 48-Bit Addressing:
-            ata_ide_device.size   = *((unsigned int *)(ata_driver_data + ATA_IDENT_MAX_LBA_EXT));
-         else
-            // Device uses CHS or 28-bit Addressing:
-            ata_ide_device.size   = *((unsigned int *)(ata_driver_data + ATA_IDENT_MAX_LBA));
-        
-
-        mutex_init(&ata_lock);
-        attach_disk_dev(&ata_read, &ata_write, &ata_ide_device);
+	if(ata_driver_data == NULL){
+		dbgprintf("[ATA]: Failed to allocate memory for driver data.\n");
+		return;
 	}
 
+	int found = __ata_identify(ATA_PRIMARY_IO);
+	if(found < 0){
+		dbgprintf("[ATA]: No disk on the primary channel's master: %s.\n", ata_identify_errors[-found]);
+		return;
+	}
+
+	dbgprintf("[ATA]: Driver ready.\n");
+
+	for(int i = 0; i < ATA_IDE_MODEL_LENGTH-1; i += 2){
+		ata_ide_device.model[i] = ata_driver_data[ATA_IDENT_MODEL + i + 1];
+		ata_ide_device.model[i + 1] = ata_driver_data[ATA_IDENT_MODEL + i];
+	}
+
+	ata_ide_device.drive = (ATA_PRIMARY << 1) | ATA_MASTER;
+	ata_ide_device.signature = *((unsigned short *)(ata_driver_data + ATA_IDENT_DEVICETYPE));
+	ata_ide_device.commandSets = *((unsigned int *)(ata_driver_data + ATA_IDENT_COMMANDSETS));
+
+	if (ata_ide_device.commandSets & (1 << 26))
+		/* Device uses 48-Bit Addressing */
+		ata_ide_device.size = *((unsigned int *)(ata_driver_data + ATA_IDENT_MAX_LBA_EXT));
+	else
+		/* Device uses CHS or 28-bit Addressing */
+		ata_ide_device.size = *((unsigned int *)(ata_driver_data + ATA_IDENT_MAX_LBA));
+
+	mutex_init(&ata_lock);
+	attach_disk_dev(&ata_read, &ata_write, &ata_ide_device);
 }
