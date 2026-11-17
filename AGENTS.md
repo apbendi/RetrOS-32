@@ -48,6 +48,7 @@ This repo is a fork, `apbendi/RetrOS-32`, of `joexbayer/RetrOS-32`. Work happens
   - `kernel()` initializes each subsystem, starts `idled`, `workd`, `wind` and, if `default.cfg` enables it, `netd`, then starts the timer.
   - `wind` starts `login`, which runs `rootfs/sysutil/startup.sh`.
   - **The kernel image** is a flat binary loaded at `0x10000`, and `.bss` is the last part of it (`kernel/linker.ld`). The bootloader reads exactly the image's sectors, a count `tools/build.c` stores in the boot sector (#32), and `kcrt0` clears `.bss` before calling `kernel()`.
+  - **Video modes:** before its resolution menu, the bootloader lists the video BIOS's modes into a table at `0x9400`, below the kernel (`list_vbe_modes`; `struct vbe_mode_table` in `include/vbe.h`). The shell's `vbemodes` prints it: each mode's number, size, bits per pixel, memory model and bytes per row. `vbemodes 8` lists only 8-bit modes, the only ones RetrOS can use. The menu itself still asks for the fixed modes `0x101`, `0x103` and `0x105`.
 - **Files register themselves.** The macros below add a constructor to the `.kctor_table` section, and `init_kctors()` runs them all at boot. There's no central list; grep for a macro to find everything it registers.
   - `EXPORT_KTHREAD(fn)`: a kernel thread, launched by `start("fn", …)` or the shell's `exec fn`.
   - `EXPORT_SYSCALL(index, fn)`: a syscall. The core syscalls are added by hand in `kernel()`.

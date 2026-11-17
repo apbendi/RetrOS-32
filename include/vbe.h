@@ -50,6 +50,38 @@ struct vbe_mode_info_structure {
    uint8_t reserved1[206];
 } __attribute__ ((packed));
 
+/**
+ * The video BIOS's modes, which the bootloader lists before its resolution menu (list_vbe_modes in
+ * boot/bootloader.s), into free memory below the kernel, for the vbemodes command.
+ */
+#define VBE_MODE_TABLE_ADDRESS  0x9400
+#define VBE_MODE_TABLE_MAGIC    0x4d454256 /* "VBEM" */
+#define VBE_MODE_TABLE_MAX      128
+/* What a VBE function returns in AX when it worked */
+#define VBE_STATUS_OK           0x004F
+
+struct vbe_mode_entry {
+    uint16_t mode;
+    uint16_t attributes;
+    uint16_t width;
+    uint16_t height;
+    uint16_t pitch;          /* bytes per row */
+    uint16_t linear_pitch;   /* bytes per row in the linear framebuffer, from VBE 3.0; 0 before */
+    uint8_t bpp;
+    uint8_t memory_model;
+    uint16_t status;         /* what function 4F01h returned: VBE_STATUS_OK if the fields above are filled in */
+} __attribute__ ((packed));
+
+struct vbe_mode_table {
+    uint32_t magic;          /* VBE_MODE_TABLE_MAGIC once the bootloader has written the table */
+    uint16_t version;        /* the VBE version, as 0x0300 for 3.0 */
+    uint16_t memory;         /* video memory, in 64 KB blocks */
+    uint16_t status;         /* what function 4F00h returned: the rest is only filled in if VBE_STATUS_OK */
+    uint16_t count;
+    uint32_t reserved;
+    struct vbe_mode_entry modes[];
+} __attribute__ ((packed));
+
 void vesa_put_char(uint8_t* buffer, unsigned char c, int x, int y, int color);
 void vesa_put_box(uint8_t* buffer, unsigned char c, int x, int y, int color);
 void vesa_put_block(uint8_t* buffer, unsigned char c, int x, int y, int color);

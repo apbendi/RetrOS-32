@@ -18,6 +18,8 @@
 #include <arch/io.h>
 #include <palette.h>
 #include <images.h>
+#include <terminal.h>
+#include <ksyms.h>
 
 static struct vbe_mode_info_structure __vbe_info;
 struct vbe_mode_info_structure* vbe_info = &__vbe_info;
@@ -262,3 +264,59 @@ int vesa_printf(uint8_t* buffer, int32_t x, int32_t y, int color, char* fmt, ...
 	written += x_offset;
 	return written;
 }
+
+/* VBE's memory models, by number */
+static const char* vbe_memory_models[] = {
+    "text", "CGA", "Hercules", "planar", "packed", "non-chain 4", "direct", "YUV"
+};
+
+/* Mode attributes: the hardware supports it, it's a graphics mode, and it has a linear framebuffer */
+#define VBE_MODE_SUPPORTED  0x0001
+#define VBE_MODE_GRAPHICS   0x0010
+#define VBE_MODE_LINEAR     0x0080
+
+/**
+ * Lists the video BIOS's modes, as the bootloader recorded them before its menu: each mode's number, size, bits
+ * per pixel, memory model and bytes per row, and whether it has a linear framebuffer, which RetrOS draws into.
+ * RetrOS uses 8-bit packed modes. With a number, only modes with that many bits per pixel: vbemodes 8. The mode in
+ * use is marked with *.
+ */
+void vbemodes(int argc, char** argv)
+{
+    struct vbe_mode_table* table = (struct vbe_mode_table*) VBE_MODE_TABLE_ADDRESS;
+    if(table->magic != VBE_MODE_TABLE_MAGIC){
+        twritef("The bootloader didn't list the video modes.\n");
+        return;
+    }
+    if(table->status != VBE_STATUS_OK){
+        twritef("The video BIOS has no VBE: function 4F00h returned 0x%x.\n", table->status);
+        return;
+    }
+
+    int bpp = argc > 1 ? atoi(argv[1]) : 0;
+
+    twritef("VBE %d.%d, %d KB of video memory, %d modes\n",
+        table->version >> 8, table->version & 0xFF, table->memory * 64, table->count);
+
+    for(int i = 0; i < table->count && i < VBE_MODE_TABLE_MAX; i++){
+        struct vbe_mode_entry* mode = &table->modes[i];
+        if(mode->status != VBE_STATUS_OK){
+            if(bpp == 0) twritef("  0x%x: no information (0x%x)\n", mode->mode, mode->status);
+            continue;
+        }
+        if(bpp != 0 && mode->bpp != bpp) continue;
+
+        int in_use = mode->width == vbe_info->width && mode->height == vbe_info->height && mode->bpp == vbe_info->bpp;
+        int linear_pitch = mode->linear_pitch != 0 && mode->linear_pitch != mode->pitch;
+
+        twritef("%s0x%x %dx%d %d-bit %s, pitch %d", in_use ? "* " : "  ", mode->mode, mode->width, mode->height,
+            mode->bpp, mode->memory_model < 8 ? vbe_memory_models[mode->memory_model] : "other", mode->pitch);
+        if(linear_pitch) twritef(" (%d linear)", mode->linear_pitch);
+        twritef("%s%s%s\n",
+            mode->attributes & VBE_MODE_LINEAR ? ", linear" : "",
+            mode->attributes & VBE_MODE_GRAPHICS ? "" : ", text",
+            mode->attributes & VBE_MODE_SUPPORTED ? "" : ", not supported"
+        );
+    }
+}
+EXPORT_KSYMBOL(vbemodes);

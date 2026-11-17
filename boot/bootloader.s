@@ -360,6 +360,8 @@ read_done:
 
     call detect_memory_size
 
+    call list_vbe_modes
+
     call set_video_mode
 
     /* enable A20 line */
@@ -551,6 +553,89 @@ mem_error:
     movw $straight_line_end, %si
     call print
     ret
+
+/**
+ * Lists the video BIOS's modes for the kernel's vbemodes command. VBE function 4F00h gives the controller's
+ * information, with the list of its mode numbers, and 4F01h each mode's. The table goes in free memory below the
+ * kernel, laid out as struct vbe_mode_table in include/vbe.h: every mode in the list, up to VBE_MODE_TABLE_MAX,
+ * with what 4F01h returned for it. The mode list can point into 4F00h's block, so 4F01h gets a block of its own.
+ */
+.set VBE_CONTROLLER_INFO, 0x9000    /* 4F00h's 512 bytes */
+.set VBE_MODE_INFO, 0x9200          /* 4F01h's 256 bytes */
+.set VBE_MODE_TABLE, 0x9400         /* VBE_MODE_TABLE_ADDRESS in include/vbe.h */
+.set VBE_MODE_TABLE_MAX, 128
+
+list_vbe_modes:
+    xorw %ax, %ax
+    movw %ax, %es
+    movl $0x4d454256, VBE_MODE_TABLE        /* "VBEM", so the kernel knows the table is there */
+    movw %ax, VBE_MODE_TABLE+10             /* no modes yet */
+    movl $0x32454256, VBE_CONTROLLER_INFO   /* "VBE2" asks for VBE 2.0's fields */
+    movw $VBE_CONTROLLER_INFO, %di
+    movw $0x4F00, %ax
+    int $0x10
+    movw %ax, VBE_MODE_TABLE+8              /* 0x004F when it worked */
+    cmpw $0x004F, %ax
+    jne list_vbe_modes_done
+
+    movw VBE_CONTROLLER_INFO+4, %ax         /* the VBE version, as 0x0300 for 3.0 */
+    movw %ax, VBE_MODE_TABLE+4
+    movw VBE_CONTROLLER_INFO+18, %ax        /* video memory, in 64 KB blocks */
+    movw %ax, VBE_MODE_TABLE+6
+    movl VBE_CONTROLLER_INFO+14, %eax       /* where the mode list is: its offset, then its segment */
+    movl %eax, vbe_mode_list
+
+list_vbe_modes_next:
+    cmpw $VBE_MODE_TABLE_MAX, VBE_MODE_TABLE+10
+    jae list_vbe_modes_done
+    lfs vbe_mode_list, %si
+    cmpw $0xFFFF, %fs:(%si)                 /* the list's end */
+    je list_vbe_modes_done
+    addw $2, vbe_mode_list
+
+    /* Clear 4F01h's block, since a BIOS fills in only the fields its VBE version has */
+    xorw %ax, %ax
+    movw %ax, %es
+    movw $VBE_MODE_INFO, %di
+    movw $128, %cx
+    cld
+    rep stosw
+
+    movw %fs:(%si), %cx
+    movw $VBE_MODE_INFO, %di
+    movw $0x4F01, %ax
+    pushw %cx
+    int $0x10
+    popw %cx
+
+    /* The mode's entry, a struct vbe_mode_entry */
+    movw VBE_MODE_TABLE+10, %bx
+    shlw $4, %bx
+    addw $VBE_MODE_TABLE+16, %bx
+    movw %cx, (%bx)
+    movw %ax, 14(%bx)                       /* what 4F01h returned */
+    movw VBE_MODE_INFO, %ax                 /* attributes */
+    movw %ax, 2(%bx)
+    movl VBE_MODE_INFO+18, %eax             /* width, then height */
+    movl %eax, 4(%bx)
+    movw VBE_MODE_INFO+16, %ax              /* bytes per row */
+    movw %ax, 8(%bx)
+    movw VBE_MODE_INFO+50, %ax              /* bytes per row in the linear framebuffer, from VBE 3.0 */
+    movw %ax, 10(%bx)
+    movb VBE_MODE_INFO+25, %al              /* bits per pixel */
+    movb %al, 12(%bx)
+    movb VBE_MODE_INFO+27, %al              /* memory model */
+    movb %al, 13(%bx)
+    incw VBE_MODE_TABLE+10
+    jmp list_vbe_modes_next
+
+list_vbe_modes_done:
+    xorw %ax, %ax
+    movw %ax, %fs
+    ret
+
+vbe_mode_list:
+    .long 0
 
 .code32
 enter32:
