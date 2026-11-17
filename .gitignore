@@ -103,3 +103,7 @@ dkms.conf
 
 # QEMU runs started by .claude/skills/run-in-qemu/qctl.py
 .qemu/
+
+# The install drive's download cache and the drive image (tools/install-drive)
+tools/install-drive/cache/
+tools/install-drive/out/

@@ -8,3 +8,13 @@ services:
     entrypoint: make
     command: img
     privileged: true
+  install-drive:
+    # A USB drive image that installs RetrOS-32 on a PC's internal drive: tools/install-drive/README.md.
+    # The profile keeps "docker compose up" from running it; "docker compose run --rm install-drive" does.
+    profiles: ["install-drive"]
+    build: tools/install-drive
+    platform: linux/amd64
+    volumes:
+      - ./:/RetrOS-32
+    working_dir: /RetrOS-32
+    entrypoint: tools/install-drive/build.sh

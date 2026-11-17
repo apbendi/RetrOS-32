@@ -147,6 +147,7 @@ A 2015 laptop RetrOS runs on: a Celeron N2840 (Bay Trail-M), 4 GB of RAM, an 11.
 - **Booting from a USB card:** write the image to the card with `dd`, and pick it from F12's legacy entries. The BIOS loads the kernel from the card, but the kernel can't read it, having no USB driver.
   - **With nothing the driver finds,** RetrOS offers a virtual disk, as on any machine without one.
   - **With a drive it finds but can't mount,** like the internal drive while it holds Windows, RetrOS runs with no file system and offers no virtual disk. FatFs looks only for a FAT volume at sector 0 or in an MBR's partitions (`FF_LBA64` is 0), so it never finds Windows' EFI partition through the GPT, and it writes nothing to the drive.
+- **Installing on the internal drive,** which RetrOS boots from and reads its files from: `tools/install-drive/` builds a USB drive that boots SystemRescue, a Linux system, from a FAT32 partition, with a script that writes the RetrOS image onto the internal drive. A new build goes onto the drive as a file. Its `README.md` has the steps, and `test.py` there checks a drive in QEMU.
 - **The screen:** entry 4 in the boot menu, `4. 1366x768 (screen's own)`, from the panel's EDID (#217). Intel pads rows to 64 bytes: 1366×768's are 1408 bytes, and 800×600's 832.
 - **Input:** the keyboard and touchpad work with RetrOS's PS/2 drivers.
 - **No serial port:** `dbgprintf`'s output goes nowhere. To debug on it, photograph the screen: the boot messages at the top left, the panic screen, and the output of shell commands like `lspci -v` and `vbemodes 8`.

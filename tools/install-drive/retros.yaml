@@ -1,0 +1,8 @@
+# SystemRescue's settings for the install drive, which build.sh puts in /sysrescue.d/ next to SystemRescue's own
+# 100-defaults.yaml. It reads them at boot, in order of their names.
+---
+sysconfig:
+    bash_history:
+        # Up at the prompt brings this back. SystemRescue writes the history from the highest key to the lowest, so
+        # the lowest comes back first. Its own 100 is setkmap, and 1 comes before it, as a number and as text.
+        1: "bash /run/archiso/bootmnt/install-retros.sh"
