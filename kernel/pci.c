@@ -234,19 +234,94 @@ void init_pci()
     dbgprintf("[PCI] Peripheral Component Interconnect devices probed.\n");
 }
 
+/* A 32-bit register of a device's configuration space */
+static uint32_t __pci_read_dword(uint32_t bus, uint32_t slot, uint32_t function, uint16_t offset)
+{
+    return (uint32_t)pci_read_word(bus, slot, function, offset + 2) << 16 | pci_read_word(bus, slot, function, offset);
+}
+
+/* Writes value into out as exactly digits hex digits, with leading zeros. out holds digits + 1 bytes. */
+static char* __pci_hex(char* out, uint32_t value, int digits)
+{
+    static const char hex[] = "0123456789abcdef";
+    out[digits] = '\0';
+    for(int i = digits - 1; i >= 0; i--){
+        out[i] = hex[value & 0xF];
+        value >>= 4;
+    }
+    return out;
+}
+
+/**
+ * Prints a device for lspci -v, read from its configuration space now: where it is (bus:slot.function), its IDs,
+ * its class, subclass and programming interface, its interrupt line, and the address in each base address register.
+ * For a storage controller it also says what the programming interface means: for IDE, whether each channel is at
+ * the fixed legacy ports or ones the BIOS assigned, which decides where a driver finds it.
+ */
+static void __lspci_verbose(struct pci_device* dev)
+{
+    char bus[3], slot[3], vendor[5], device[5], class_hex[3], subclass_hex[3], progif_hex[3], upper[9], lower[9];
+
+    uint32_t class_reg = __pci_read_dword(dev->bus, dev->slot, dev->function, 0x08);
+    uint8_t class = class_reg >> 24;
+    uint8_t subclass = (class_reg >> 16) & 0xFF;
+    uint8_t progif = (class_reg >> 8) & 0xFF;
+
+    twritef("%s:%s.%d %s:%s %s (%s.%s.%s) irq %d\n",
+        __pci_hex(bus, dev->bus, 2), __pci_hex(slot, dev->slot, 2), dev->function,
+        __pci_hex(vendor, dev->vendor, 4), __pci_hex(device, dev->device, 4),
+        class <= 0x11 ? pci_classes[class] : pci_classes[0],
+        __pci_hex(class_hex, class, 2), __pci_hex(subclass_hex, subclass, 2), __pci_hex(progif_hex, progif, 2),
+        dev->irq
+    );
+
+    if(class == 0x01 && subclass == 0x01){
+        /* Bits 0 and 2: the primary and secondary channel are in native mode, at the ports in BAR0-1 and BAR2-3 */
+        twritef("  IDE: primary %s, secondary %s\n",
+            progif & 0x01 ? "native (BAR0, BAR1)" : "legacy (0x1f0, 0x3f6)",
+            progif & 0x04 ? "native (BAR2, BAR3)" : "legacy (0x170, 0x376)"
+        );
+    } else if(class == 0x01 && subclass == 0x06 && progif == 0x01){
+        twritef("  SATA: AHCI, registers at BAR5\n");
+    }
+
+    /* A bridge (header type 1) has two base address registers; the rest of its header is bus numbers and windows */
+    int header = pci_read_word(dev->bus, dev->slot, dev->function, 0x0E) & 0x7F;
+    int bars = header == 0 ? 6 : (header == 1 ? 2 : 0);
+
+    for(int i = 0; i < bars; i++){
+        uint32_t bar = __pci_read_dword(dev->bus, dev->slot, dev->function, 0x10 + i*4);
+        if(bar == 0) continue;
+
+        if(bar & 0x01){
+            twritef("  BAR%d: I/O 0x%x\n", i, bar & ~0x3);
+            continue;
+        }
+
+        /* A 64-bit memory address (type 2) takes this register and the next */
+        int index = i;
+        uint32_t high = 0;
+        if(((bar >> 1) & 0x3) == 2 && i + 1 < bars){
+            high = __pci_read_dword(dev->bus, dev->slot, dev->function, 0x10 + (i+1)*4);
+            i++;
+        }
+
+        const char* prefetchable = bar & 0x08 ? ", prefetchable" : "";
+        if(high){
+            twritef("  BAR%d: memory 0x%s%s%s\n", index, __pci_hex(upper, high, 8), __pci_hex(lower, bar & ~0xF, 8), prefetchable);
+        } else {
+            twritef("  BAR%d: memory 0x%x%s\n", index, bar & ~0xF, prefetchable);
+        }
+    }
+}
+
 void lspci(int argc, char** argv)
 {
     if(argc > 1){
         if(strcmp(argv[1], "-v") == 0){
             for (int i = 0; i < _pci_devices_size; i++){
-                twritef("Vendor: 0x%x Device:\n . 0x%x - %s - %s - %s\n",
-                    _pci_devices[i].vendor,
-                    _pci_devices[i].device,
-                    _pci_devices[i].class < 0x11 ? pci_classes[_pci_devices[i].class] : pci_classes[0],
-                    pci_get_vendor_name(&_pci_devices[i]),
-                    pci_get_device_name(&_pci_devices[i])
-                );
-            }   
+                __lspci_verbose(&_pci_devices[i]);
+            }
             return;
         }
     }
