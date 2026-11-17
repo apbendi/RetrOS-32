@@ -119,7 +119,7 @@ HOSTFWD_PORT=8081 make qemu    # if port 8080 is taken (the default forward to t
 86Box emulates real chipsets with their original BIOSes. QEMU's SeaBIOS covers for things those don't: three boot bugs that QEMU never showed were found this way (a722ed5). The README's "86Box" section has the VM's `86box.cfg` and how to install it.
 
 **Why the VM is set up as it is:**
-- **The board, an ASUS KN97 (440FX):** the disk driver attaches only to the PIIX3's IDE controller, `8086:7010` (`kernel/pci.c`). So the board needs a 430HX, 430VX or 440FX chipset, or RetrOS finds no disk.
+- **The board, an ASUS KN97 (440FX):** the disk driver attaches only to the IDE controllers in `registered_drivers` (`kernel/pci.c`): the PIIX3's, `8086:7010`, and Bay Trail's in IDE mode (see "Dell Inspiron 11 3147"). So the board needs a 430HX, 430VX or 440FX chipset, or RetrOS finds no disk.
 - **The CPU, a Pentium II:** the build targets i686, Debian's default for `gcc -m32`, so the kernel uses `cmov`. A Pentium or Pentium MMX faults at the first `memset`, during the first log line. Running on one would take `-march=i586` throughout, the C library and TinyCC included.
 - **The disk's geometry, 63 sectors × 16 heads × 66 cylinders:** with 32 sectors per track, the KN97's BIOS lost the cylinder number in int 13h AH=42h reads. Every read starting at sector 512 or later returned the data 512 sectors earlier, so the kernel's `.data` arrived wrong and it jumped to a garbage address. With 63 sectors, cylinder 0 holds 1,008 sectors, and the kernel loads entirely from it: sectors 4 to 835 at a722ed5. Whether the BIOS gets later cylinders right with 63 sectors is untested, so this may come back once the kernel passes sector 1,007, about 500 KB.
 - **The graphics card, a Matrox Millennium II:**
@@ -134,6 +134,23 @@ HOSTFWD_PORT=8081 make qemu    # if port 8080 is taken (the default forward to t
 - **A fresh CMOS:** some boards, the Gigabyte GA-686NX among them, stop at "Press F1 to continue" until their NVR is saved. Copying a VM's `nvr/` folder along with its config avoids it.
 - **The serial log:** the VM's COM1 runs a `cat` from a pseudoterminal into `serial.log` (`[Virtual Console (COM) #1]`). Its "File" device buffers its writes, and loses them when 86Box crashes.
 - **When 86Box itself crashes:** exit code 11, with a report in `~/Library/Logs/DiagnosticReports/86Box-*.ips`. A crash in `fastreadl_fetch` meant the guest had jumped to a wild address: look at the guest first.
+
+## Dell Inspiron 11 3147
+
+A 2015 laptop RetrOS runs on: a Celeron N2840 (Bay Trail-M), 4 GB of RAM, an 11.6" 1366×768 panel, and a 500 GB SATA hard drive. It found bugs that QEMU and 86Box never showed (#216, #217).
+
+**BIOS settings** (F2 at power-on for setup, F12 for the boot menu):
+- **Boot List Option: Legacy.** RetrOS boots through the BIOS. Windows, installed in UEFI mode, needs UEFI.
+- **SATA Operation: ATA.** This puts the SATA controller in IDE mode, `8086:0f21`, class `01.01.8a`: both channels at the legacy ports, which the IDE driver uses (#216). With the default, AHCI (`0f22` or `0f23`), RetrOS has no driver and finds no disk. Windows was installed in AHCI mode and won't boot in ATA mode, so switch both settings back for it.
+
+**How it behaves:**
+- **Booting from a USB card:** write the image to the card with `dd`, and pick it from F12's legacy entries. The BIOS loads the kernel from the card, but the kernel can't read it, having no USB driver.
+  - **With nothing the driver finds,** RetrOS offers a virtual disk, as on any machine without one.
+  - **With a drive it finds but can't mount,** like the internal drive while it holds Windows, RetrOS runs with no file system and offers no virtual disk. FatFs looks only for a FAT volume at sector 0 or in an MBR's partitions (`FF_LBA64` is 0), so it never finds Windows' EFI partition through the GPT, and it writes nothing to the drive.
+- **The screen:** entry 4 in the boot menu, `4. 1366x768 (screen's own)`, from the panel's EDID (#217). Intel pads rows to 64 bytes: 1366×768's are 1408 bytes, and 800×600's 832.
+- **Input:** the keyboard and touchpad work with RetrOS's PS/2 drivers.
+- **No serial port:** `dbgprintf`'s output goes nowhere. To debug on it, photograph the screen: the boot messages at the top left, the panic screen, and the output of shell commands like `lspci -v` and `vbemodes 8`.
+- **No network:** its Wi-Fi card has no driver, and it has no Ethernet port.
 
 ## Checking a change without a full build
 

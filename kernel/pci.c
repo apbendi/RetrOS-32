@@ -44,6 +44,9 @@ struct pci_driver registered_drivers[] = {
     {(uint16_t)E1000_VENDOR_ID, (uint16_t)E1000_DEVICE_ID, &e1000_attach},
     //{(uint16_t)E1000_VENDOR_ID, (uint16_t)0x155a, &e1000_attach},
     {0x8086, 0x7010, &ata_ide_init},
+    /* Bay Trail's SATA controller in IDE mode, as on a Dell Inspiron 11 3147 with SATA Operation set to ATA (#216) */
+    {0x8086, 0x0F20, &ata_ide_init},
+    {0x8086, 0x0F21, &ata_ide_init},
     //{0x8086, 0x7010, &atapi_init},
     {0, 0, 0}
 };
@@ -68,6 +71,9 @@ const char* pci_get_device_name(struct pci_device* dev)
             return "Gigabit Ethernet Controller";
         case 0x7010:
             return "PIIX3 IDE [Natoma/Triton II]";
+        case 0x0F20:
+        case 0x0F21:
+            return "Bay Trail SATA, in IDE mode";
         default:
             break;
         }
