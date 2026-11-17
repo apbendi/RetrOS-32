@@ -5,7 +5,7 @@ QEMU runs in the background with no window. Its serial log, a copy of the disk
 image and screenshots go in .qemu/ at the repo root. The script talks to QEMU's
 monitor over TCP to press keys, move the mouse and take screenshots.
 
-  start [--res 640|800|1024|text] [--gdb] [--rtc TIME] [--image IMG] [--qemu-args ARGS]
+  start [--res 640|800|1024|native|text] [--gdb] [--rtc TIME] [--image IMG] [--qemu-args ARGS]
                           boot a copy of RetrOS-32-debug.img (or IMG), pick the
                           resolution (default 1024) and wait for the desktop
   stop                    quit QEMU
@@ -49,7 +49,8 @@ MONITOR_PORT = int(os.environ.get("RETROS_QEMU_MONITOR_PORT", "45454"))
 GDB_PORT = int(os.environ.get("RETROS_QEMU_GDB_PORT", "1234"))
 HTTP_PORT = int(os.environ.get("RETROS_QEMU_HTTP_PORT", "18080"))
 
-RESOLUTION_KEYS = {"640": "1", "800": "2", "1024": "3", "text": "esc"}
+# "native" is the boot menu's entry 4: the screen's own resolution, from its EDID (#217)
+RESOLUTION_KEYS = {"640": "1", "800": "2", "1024": "3", "native": "4", "text": "esc"}
 
 # Characters that need a QEMU key name other than themselves
 KEYS = {" ": "spc", "\n": "ret", "\t": "tab", "-": "minus", "=": "equal", "[": "bracket_left",

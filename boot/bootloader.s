@@ -202,6 +202,14 @@ choice_2_str:
     .asciz "   2. 800x600"
 choice_3_str:
     .asciz "   3. 1024x768"
+choice_native_str:
+    .asciz "   4. "
+times_str:
+    .asciz "x"
+native_str:
+    .asciz " (screen's own)"
+native_unknown_str:
+    .asciz "   4. Screen's own: not found"
 choice_4_str:
     .asciz "   ESC. Textmode"
 memory_error_str:
@@ -383,6 +391,8 @@ read_done:
 
     call list_vbe_modes
 
+    call read_screen_size
+
     call set_video_mode
 
     /* enable A20 line */
@@ -456,6 +466,28 @@ set_video_mode:
     movw $choice_3_str, %si
     call print_row
 
+    /* Entry 4, with the screen's own resolution in it, if its EDID gave one */
+    movw $native_unknown_str, %si
+    cmpw $0, screen_width
+    je print_native_row
+    movw $straight_line, %si
+    call print
+    movw $choice_native_str, %si
+    call print
+    movw screen_width, %ax
+    call print_number
+    movw $times_str, %si
+    call print
+    movw screen_height, %ax
+    call print_number
+    movw $native_str, %si
+    call print
+    call pad_row
+    jmp print_native_done
+print_native_row:
+    call print_row
+print_native_done:
+
     movw $choice_4_str, %si
     call print_row
 
@@ -473,6 +505,8 @@ set_video_mode:
     je set_800x600
     cmp $'3', %al
     je set_1024x768
+    cmp $'4', %al
+    je set_native
     cmp $0x1B, %al
     je set_textmode
 
@@ -494,6 +528,17 @@ set_1024x768:
     movw $768, %dx
     jmp set_resolution
 
+/* The screen's own resolution: a mode of exactly that size, or else one up to 8 pixels narrower, as some BIOSes offer
+   1360x768 for a 1366-pixel panel */
+set_native:
+    movw screen_width, %cx
+    movw screen_height, %dx
+    xorw %bp, %bp
+    call find_vbe_mode
+    jnc set_mode
+    movw $8, %bp
+    jmp set_resolution_near
+
 set_textmode:
     mov $1, %AX
     mov %ax, 0x7E08 /* Set textmode flag */
@@ -505,8 +550,11 @@ set_textmode:
  * into vbe_info_structure, for the kernel. With no such mode, or if setting it fails, says so and shows the menu again.
  */
 set_resolution:
+    xorw %bp, %bp           /* exactly that wide */
+set_resolution_near:
     call find_vbe_mode
     jc mode_unavailable
+set_mode:
     pushw %bx
     movw $0x4F02, %ax
     orw $0x4000, %bx        /* with its linear framebuffer */
@@ -527,8 +575,8 @@ mode_unavailable:
 
 /**
  * Finds the 8-bit mode of CX by DX pixels in list_vbe_modes' table: one 4F01h described, with 8 bits per pixel, the
- * packed memory model, and the supported, graphics and linear framebuffer attributes. The first in the BIOS's list
- * wins. Returns its number in BX, or sets carry if there's none.
+ * packed memory model, and the supported, graphics and linear framebuffer attributes, up to BP pixels narrower than
+ * CX. The first in the BIOS's list wins. Returns its number in BX, or sets carry if there's none.
  */
 find_vbe_mode:
     movw VBE_MODE_TABLE+10, %di             /* modes left */
@@ -538,8 +586,10 @@ find_vbe_mode_next:
     jc find_vbe_mode_done                   /* none left */
     cmpw $0x004F, 14(%si)
     jne find_vbe_mode_skip
-    cmpw %cx, 4(%si)
-    jne find_vbe_mode_skip
+    movw %cx, %ax
+    subw 4(%si), %ax                        /* how much narrower it is; wider wraps around to a large number */
+    cmpw %bp, %ax
+    ja find_vbe_mode_skip
     cmpw %dx, 6(%si)
     jne find_vbe_mode_skip
     cmpw $0x0408, 12(%si)                   /* 8 bits per pixel, then memory model 4, packed */
@@ -677,6 +727,56 @@ list_vbe_modes_done:
 
 vbe_mode_list:
     .long 0
+
+/**
+ * Reads the screen's own resolution for the menu's entry 4: the preferred timing in its EDID, which VBE/DDC function
+ * 4F15h reads (BL=1, block 0) into 4F01h's block, free once the modes are listed. The first detailed timing
+ * descriptor, at byte 54, starts with a pixel clock that isn't 0, and has the active width in byte 56 and the top 4
+ * bits of byte 58, and the height in byte 59 and the top 4 bits of byte 61. Leaves 0 by 0 without them.
+ */
+read_screen_size:
+    xorw %ax, %ax
+    movw %ax, %es
+    movw $0x4F15, %ax
+    movw $0x0001, %bx
+    xorw %cx, %cx
+    xorw %dx, %dx
+    movw $VBE_MODE_INFO, %di
+    int $0x10
+    cmpw $0x004F, %ax
+    jne read_screen_size_done
+    cmpw $0, VBE_MODE_INFO+54
+    je read_screen_size_done
+    movb VBE_MODE_INFO+58, %ah
+    shrb $4, %ah
+    movb VBE_MODE_INFO+56, %al
+    movw %ax, screen_width
+    movb VBE_MODE_INFO+61, %ah
+    shrb $4, %ah
+    movb VBE_MODE_INFO+59, %al
+    movw %ax, screen_height
+read_screen_size_done:
+    ret
+
+screen_width:
+    .word 0
+screen_height:
+    .word 0
+
+/* Prints AX in decimal */
+print_number:
+    xorw %dx, %dx
+    movw $10, %bx           /* and BH, the page for teletype, is 0 */
+    divw %bx
+    pushw %dx
+    testw %ax, %ax
+    jz print_number_digit
+    call print_number
+print_number_digit:
+    popw %ax
+    addw $0x0E30, %ax       /* teletype '0' plus the digit */
+    int $0x10
+    ret
 
 .code32
 enter32:
