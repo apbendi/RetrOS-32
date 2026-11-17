@@ -291,10 +291,11 @@ static void __lspci_verbose(struct pci_device* dev)
 
     for(int i = 0; i < bars; i++){
         uint32_t bar = __pci_read_dword(dev->bus, dev->slot, dev->function, 0x10 + i*4);
-        if(bar == 0) continue;
 
+        /* A register with no address is unused, though its type bits can be set: an IDE channel at the legacy
+         * ports leaves its I/O register at 0x1 */
         if(bar & 0x01){
-            twritef("  BAR%d: I/O 0x%x\n", i, bar & ~0x3);
+            if((bar & ~0x3) != 0) twritef("  BAR%d: I/O 0x%x\n", i, bar & ~0x3);
             continue;
         }
 
@@ -305,6 +306,8 @@ static void __lspci_verbose(struct pci_device* dev)
             high = __pci_read_dword(dev->bus, dev->slot, dev->function, 0x10 + (i+1)*4);
             i++;
         }
+
+        if((bar & ~0xF) == 0 && high == 0) continue;
 
         const char* prefetchable = bar & 0x08 ? ", prefetchable" : "";
         if(high){
