@@ -1,0 +1,3 @@
+# The builder copies nothing from the repo, which it mounts instead. These are big, and only slow its build down.
+tools/install-drive/cache/
+tools/install-drive/out/
