@@ -44,10 +44,10 @@ int gfx_init_framebuffer(struct graphic_context* ctx, struct vbe_mode_info_struc
 	dbgprintf("[VBE] Width: %d\n", vbe_info->width);
 	dbgprintf("[VBE] Pitch: %d\n", vbe_info->pitch);
 	dbgprintf("[VBE] Bpp: %d\n", vbe_info->bpp);
-	dbgprintf("[VBE] Memory Size: %d (0x%x)\n", vbe_info->width*vbe_info->height*(vbe_info->bpp/8), vbe_info->width*vbe_info->height*(vbe_info->bpp/8));
+	dbgprintf("[VBE] Memory Size: %d (0x%x)\n", vbe_info->pitch*vbe_info->height, vbe_info->pitch*vbe_info->height);
 
-    /* memory map */
-    vmem_map_driver_region(vbe_info->framebuffer, (((vbe_info->width*vbe_info->height*(vbe_info->bpp/8))+1)/PAGE_SIZE)+1);
+    /* Every row of the screen's memory, padding included: the window server and the panic screen write pitch bytes a row */
+    vmem_map_driver_region(vbe_info->framebuffer, VBE_SIZE()/PAGE_SIZE + 1);
 
     vga_load_palette();
 
