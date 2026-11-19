@@ -20,7 +20,7 @@ docker compose run --rm --entrypoint tests/fs/run.sh builder -v           # with
 
 - **It rebuilds `fs/` and `fstool` first,** so it always tests the current source.
 - **Some cases use `RetrOS-32-debug.img`:** `read.real-image`, `read.dotdot` and `write.real-image`. They fail with `setup` if there's no image. Run `docker compose up` first.
-- **What it covers:** formatting; reading and writing whole files, in pieces, at an offset, appending and truncating; full directories and disks; delete, mkdir, rmdir, rename, moves and touch; long names with spaces; relative paths; and disks made other ways: partitioned, FAT12 (the virtual disk's size), and with a 16-entry root directory. `fsck.fat` also reports the two FAT copies differing, so every case checks they stay the same.
+- **What it covers:** formatting; reading and writing whole files, in pieces, at an offset, appending and truncating; full directories and disks; delete, mkdir, rmdir, rename, moves and touch; long names with spaces; relative paths; and disks made other ways: partitioned, FAT12 (the virtual disk's size), and with a 16-entry root directory. `fsck.fat` also reports the two FAT copies differing, so every case checks they stay the same. Every operation that works has to end with a flush of the disk, `write.flushes` checks a write flushes once, not once per sector, and `write.flush-fails` that a failed flush fails the operation (#219).
 
 ## Reading the results
 
@@ -35,11 +35,11 @@ Each line of output is a case's name, then `pass`, or `fail:` and the checks tha
 | `fsck` | `fsck.fat` finds problems in R that weren't there before RetrOS changed it |
 | `same` | mtools reads R and M differently: a path, a size or a file's content |
 | `reads` | RetrOS reads R differently from how mtools reads M |
-| `tool` | RetrOS's code read or wrote outside the disk, or wrote past the end of a kernel allocation |
+| `tool` | RetrOS's code read or wrote outside the disk, or wrote past the end of a kernel allocation, or an operation that worked left sectors written after the last flush, which a real drive could still hold in its cache (#219) |
 | `lock` | RetrOS released a lock it didn't hold. It's kept apart because the old FAT16 code did it for every new cluster (#38) |
 | `op` | a RetrOS operation failed, or succeeded when it should have failed |
 | `mount` | RetrOS didn't mount the image |
-| `path`, `names`, `entry`, `setup`, `ref` | case-specific checks. `ref` means mtools itself failed, which is a harness problem |
+| `path`, `names`, `entry`, `flush`, `setup`, `ref` | case-specific checks. `ref` means mtools itself failed, which is a harness problem |
 
 - **Changed results:** `<- was ...` marks a result that differs from `tests/fs/expected.txt`, and the run exits non-zero. `-v` isn't needed to see why: changed results always print their details.
 - **What a failing case leaves:** `tests/fs/out/CASE/` has:
@@ -116,6 +116,7 @@ fsck.fat -n /tmp/d.img
 - **Exit status:** 0 done, 1 the operation failed, 3 the image didn't mount, 4 the operation worked but a problem happened.
 - **Problems** are printed as `fstool: problem: ...` on stderr, whatever the exit status.
 - **The clock is fixed** at 2 January 2026, 03:04:06, so the same steps write the same bytes.
+- **Flushes:** the disk's flush, which FatFs asks for at the end of every sync, only counts here. `FSTOOL_FLUSHES=1` prints the count on stderr, as `fstool: flushes: N`, and `FSTOOL_FAIL_FLUSH=1` makes every flush fail, as a drive reporting an error does.
 
 ## Things that have tripped this up
 

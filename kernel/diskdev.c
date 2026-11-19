@@ -20,10 +20,12 @@ static struct diskdev disk_device;
 void attach_disk_dev(
     int (*read)(char* buffer, uint32_t from, uint32_t size), 
     int (*write)(char* buffer, uint32_t from, uint32_t size),
+    int (*flush)(void),
     struct ide_device* dev
 ){
     disk_device.read = read;
     disk_device.write = write;
+    disk_device.flush = flush;
     disk_device.attached = 1;
     disk_device.dev = dev;
 }
@@ -61,6 +63,17 @@ int write_block(void* _buf, int block)
     }
 
     return disk_device.write(buf, block, 1);
+}
+
+/**
+ * Waits until everything written so far is on the disk itself, not just in its write cache. FatFs asks for this at
+ * the end of every sync (disk_ioctl's CTRL_SYNC), so a write is on the disk when fs_write returns (#219).
+ * Returns 0, or -1 if the disk reports an error. A disk with no flush, like the virtual disk, has nothing to do.
+ */
+int disk_flush(void)
+{
+    if(disk_device.flush == NULL) return 0;
+    return disk_device.flush() < 0 ? -1 : 0;
 }
 
 int write_block_offset(void* _usr_buf, int size, int offset, int block)

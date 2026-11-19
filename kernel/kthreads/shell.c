@@ -636,6 +636,7 @@ void fdisk(int argc, char* argv[])
 	twritef("Attached: %d\n", dev->attached);
 	twritef("Read:     %x\n", dev->read);
 	twritef("Write:    %x\n", dev->write);
+	twritef("Flush:    %x\n", dev->flush);
 }
 EXPORT_KSYMBOL(fdisk);
 

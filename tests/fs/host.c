@@ -23,6 +23,10 @@ long fstool_disk_blocks = 0;
 /* Mistakes seen so far */
 int fstool_problems = 0;
 
+/* Flushes, which FatFs asks for at the end of every sync, and sectors written since the last one (#219) */
+int fstool_flushes = 0;
+int fstool_unflushed = 0;
+
 static void problem(const char* fmt, ...)
 {
     va_list args;
@@ -73,7 +77,29 @@ int write_block(char* buf, int block)
         problem("short write of block %d", block);
         return -1;
     }
+    fstool_unflushed++;
     return 1;
+}
+
+/**
+ * The ATA driver's flush puts the drive's write cache on the disk. Here it's counted, for fstool to check. With
+ * FSTOOL_FAIL_FLUSH set, it fails, as the driver's does when the drive reports an error.
+ */
+int disk_flush(void)
+{
+    if(getenv("FSTOOL_FAIL_FLUSH") != NULL) return -1;
+    fstool_flushes++;
+    fstool_unflushed = 0;
+    return 0;
+}
+
+/**
+ * Checks that nothing written is waiting for a flush, which on a real drive could still be in its cache. fstool
+ * calls it when an operation worked, since what that wrote must be on the disk when it returns.
+ */
+void fstool_check_flushed(void)
+{
+    if(fstool_unflushed > 0) problem("%d sectors written after the last flush", fstool_unflushed);
 }
 
 int write_block_offset(char* usr_buf, int size, int offset, int block)

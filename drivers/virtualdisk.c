@@ -68,6 +68,7 @@ int virtual_disk_attach()
         memset(virtual_disk_memory, 0, VIRTUAL_DISK_SIZE);
     }
 
-    attach_disk_dev(&virtual_read, &virtual_write, &virtual_disk);
+    /* Its memory is the disk, so there's no cache to flush */
+    attach_disk_dev(&virtual_read, &virtual_write, NULL, &virtual_disk);
     return ERROR_OK;
 }
