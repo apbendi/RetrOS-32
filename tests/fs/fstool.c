@@ -32,8 +32,11 @@
  * A failed operation prints the error code it returned, from include/errors.h.
  *
  * Exit status: 0 done, 1 the operation failed, 2 usage, 3 the image didn't mount, 4 the operation worked but the
- * code read or wrote outside the disk, wrote past a kernel allocation or misused a lock. Those are reported on
- * stderr as "fstool: problem: ..." whatever the status. Set FSTOOL_DEBUG=1 to see the file system's own log.
+ * code read or wrote outside the disk, wrote past a kernel allocation or misused a lock, or left sectors written
+ * after the last flush, which a real drive could still hold in its cache (#219). Those are reported on stderr as
+ * "fstool: problem: ..." whatever the status. Set FSTOOL_DEBUG=1 to see the file system's own log,
+ * FSTOOL_FLUSHES=1 to have the flushes counted on stderr, as "fstool: flushes: N", and FSTOOL_FAIL_FLUSH=1 to make
+ * every flush fail, as a drive that reports an error does.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,12 +69,16 @@ int fs_getcwd(char* buf, int size);
 extern FILE* fstool_disk;
 extern long fstool_disk_blocks;
 extern int fstool_problems;
+extern int fstool_flushes;
 void fstool_check_heap(void);
+void fstool_check_flushed(void);
 
 /* An operation's own failure (1, 2 or 3) wins over problems, which stderr reports either way */
 static int finish(int status)
 {
     fstool_check_heap();
+    if(status == 0) fstool_check_flushed();
+    if(getenv("FSTOOL_FLUSHES") != NULL) fprintf(stderr, "fstool: flushes: %d\n", fstool_flushes);
     fflush(stdout);
     if(fstool_disk != NULL) fclose(fstool_disk);
     return status == 0 && fstool_problems > 0 ? 4 : status;

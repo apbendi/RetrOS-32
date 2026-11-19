@@ -140,10 +140,10 @@ static int ata_wait_done(int io)
 }
 
 /**
- * Writes a sector, then flushes the drive's cache, so it's on the disk when this returns. Each step waits for the
- * drive: it asks for the data with DRQ, is busy while it writes it, and ignores a command written while it's busy,
- * as the flush would be if it were sent right after the data. Returns 0, or -1 if the drive reports an error or a
- * fault, or stays busy.
+ * Writes a sector. With the drive's write cache on, it's in the cache when this returns, not yet on the disk:
+ * ata_flush puts it there, when FatFs syncs (#219). Each step waits for the drive: it asks for the data with DRQ,
+ * then is busy while it stores it, and it ignores a command written while it's busy, as the next one would be if it
+ * came right after the data. Returns 0, or -1 if the drive reports an error or a fault, or stays busy.
  */
 static int __ata_write_sector(uint16_t *buf, int lba)
 {
@@ -171,10 +171,35 @@ static int __ata_write_sector(uint16_t *buf, int lba)
 
     if (ata_wait_done(io) < 0) return -1;
 
-    outportb(io + ATA_REG_COMMAND, ATA_CMD_CACHE_FLUSH);
-    if (ata_wait_done(io) < 0) return -1;
-
     return 0;
+}
+
+/**
+ * Flushes the drive's write cache, so every sector written before it is on the disk when this returns. FatFs asks
+ * for it at the end of every sync, through disk_flush, so that's once per fs_write rather than once per sector, as
+ * it used to be (#219). The drive is busy until the cache is written, which is all of one fs_write: a few MB at most
+ * is well inside ATA_WAIT_POLLS. Returns 0, or -1 if the drive reports an error or a fault, or stays busy.
+ */
+int ata_flush(void)
+{
+    uint16_t io = ata_io;
+    int ret = -1;
+
+    acquire(&ata_lock);
+
+    outportb(io + ATA_REG_CONTROL, 0x02);
+    if (!ata_wait(io, 0)) {
+        outportb(io + ATA_REG_HDDEVSEL, 0xE0);
+        if (!ata_wait(io, 0)) {
+            outportb(io + ATA_REG_COMMAND, ATA_CMD_CACHE_FLUSH);
+            ret = ata_wait_done(io);
+        }
+    }
+
+    release(&ata_lock);
+
+    if (ret < 0) dbgprintf("[ATA]: Flushing the drive's cache failed.\n");
+    return ret;
 }
 
 /* Writes count sectors from sector from. Returns count, or -1 at the first that fails, as FatFs's disk_write expects */
@@ -323,5 +348,5 @@ void ata_ide_init(struct pci_device* dev)
 		ata_ide_device.size = *((unsigned int *)(ata_driver_data + ATA_IDENT_MAX_LBA));
 
 	mutex_init(&ata_lock);
-	attach_disk_dev(&ata_read, &ata_write, &ata_ide_device);
+	attach_disk_dev(&ata_read, &ata_write, &ata_flush, &ata_ide_device);
 }

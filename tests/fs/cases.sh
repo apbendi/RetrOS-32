@@ -254,6 +254,35 @@ write_pieces() {
 }
 add write.in-pieces "RetrOS writes a file as 15 writes of 100 bytes on one open file" write_pieces
 
+# Every case checks that an operation that worked left nothing unflushed (fstool's tool problem). This checks there
+# aren't more flushes than that takes: one per sync, not one per sector, as the ATA driver did before #219.
+write_flushes() {
+    begin fresh || return
+    FSTOOL_FLUSHES=1 put_chunks /A.TXT 16384 4096
+    local flushes
+    flushes=$(sed -n 's/^fstool: flushes: //p' "$CDIR/err")
+    # The 4 writes, and the sync after the file is created
+    [ "$flushes" = 5 ] || fail flush "4 writes of 4,096 bytes flushed ${flushes:-no} times, not 5"
+    check
+}
+add write.flushes "RetrOS flushes the disk once for each write, not once for each sector (#219)" write_flushes
+
+# A flush that fails is a write that failed. Creating an empty file used to be synced only when it was closed,
+# and a close reports no errors, so touch said nothing.
+write_flush_fails() {
+    begin fresh || return
+    seed mcopy "$(data 100 a)" ::/A.TXT
+    ready
+    FSTOOL_FAIL_FLUSH=1 refused new /NEW.TXT
+    FSTOOL_FAIL_FLUSH=1 refused write /B.TXT < "$(data 100 b)"
+    FSTOOL_FAIL_FLUSH=1 refused append /A.TXT < "$(data 100 c)"
+    FSTOOL_FAIL_FLUSH=1 refused touch /A.TXT
+    FSTOOL_FAIL_FLUSH=1 refused mkdir /SUB
+    FSTOOL_FAIL_FLUSH=1 refused mv /A.TXT /C.TXT
+    FSTOOL_FAIL_FLUSH=1 refused rm /A.TXT
+}
+add write.flush-fails "Each operation that writes fails when the disk can't flush, creating an empty file too (#219)" write_flush_fails
+
 write_at_offset() {
     begin fresh || return
     put /A.TXT 1500

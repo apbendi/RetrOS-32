@@ -118,9 +118,14 @@ static struct file* fatfs_open(struct filesystem* fs, const char* path, int flag
         if(writes) mode |= FA_WRITE;
         mode |= (flags & FS_FILE_FLAG_CREATE) ? FA_OPEN_ALWAYS : FA_OPEN_EXISTING;
 
+        /**
+         * A new file, or a truncated one, is put on the disk now, as each write is, not when it's closed. A failure
+         * is reported here, where callers check, since a close's isn't: e.g. touch making an empty file (#219).
+         */
         FRESULT res = f_open(&open->fil, path, mode);
-        if(res == FR_OK && (flags & FS_FILE_FLAG_TRUNCATE)){
-            res = f_truncate(&open->fil);
+        int truncate = flags & FS_FILE_FLAG_TRUNCATE;
+        if(res == FR_OK && (truncate || !exists)){
+            if(truncate) res = f_truncate(&open->fil);
             if(res == FR_OK) res = f_sync(&open->fil);
             if(res != FR_OK) f_close(&open->fil);
         }

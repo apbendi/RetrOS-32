@@ -31,6 +31,8 @@ write.grow pass
 write.shrink pass
 write.zero-bytes pass
 write.in-pieces pass
+write.flushes pass
+write.flush-fails pass
 write.at-offset pass
 write.append pass
 write.past-end pass

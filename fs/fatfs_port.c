@@ -54,8 +54,11 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff)
 
     switch(cmd){
     case CTRL_SYNC:
-        /* Writes go straight to the disk */
-        return RES_OK;
+        /**
+         * The end of every sync. The disk driver writes into the drive's cache, so this is what puts a sync's
+         * writes on the disk itself (#219). A failure makes the sync fail with FR_DISK_ERR.
+         */
+        return disk_flush() < 0 ? RES_ERROR : RES_OK;
     case GET_SECTOR_COUNT:
         *(LBA_t*)buff = disk_size() / SECTOR_SIZE;
         return RES_OK;

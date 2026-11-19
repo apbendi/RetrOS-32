@@ -12,7 +12,8 @@
 #   fsck   fsck.fat finds no problems in R that weren't there before RetrOS touched it
 #   same   mtools reads R and M the same: every path, size and file content
 #   reads  RetrOS reads R the same as mtools reads M
-#   tool   fstool saw no read or write outside the disk and no write past a kernel allocation
+#   tool   fstool saw no read or write outside the disk and no write past a kernel allocation, and an operation
+#          that worked left no sectors written after the last flush (#219)
 #   lock   fstool saw no lock released that wasn't held (#38), kept apart since every new cluster does it today
 #   op     RetrOS's operations succeeded, or failed when they should have
 #   mount  RetrOS mounted the image
