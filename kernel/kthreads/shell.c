@@ -54,15 +54,15 @@
 void __kthread_entry shell(int argc, char* argv[]);
 
 static const char newline = '\n';
-static const char backspace = '\b';
 
 /**
  * A GUI shell's state. Each Terminal window runs its own shell thread with its own, which the thread's PCB points to,
  * so commands that run on the thread, like reset, can find it (#42).
  */
 struct shell {
+	/* The command line, edited as line: line.buffer is buffer */
 	char buffer[SHELL_LINE_MAX];
-	int length;
+	struct terminal_line line;
 
 	/* The commands run, oldest first, each kalloc'd at its own length. Up and Down go back and forth through them */
 	char* history[SHELL_HISTORY_MAX];
@@ -125,10 +125,10 @@ static void __shell_echo(const char* line)
 	twritef("kernel:%s> %s\n", cwd, line);
 }
 
-/* Shows the prompt and the command typed so far on the terminal's input line, after the output */
+/* Shows the prompt and the command typed so far on the terminal's input line, after the output, with the cursor */
 static void __shell_show_line(struct shell* sh)
 {
-	terminal_set_input($process->current->term, sh->prompt, sh->buffer);
+	terminal_set_input($process->current->term, sh->prompt, sh->buffer, sh->line.cursor);
 }
 
 /* Starts a new command line: a prompt after the output, with nothing typed */
@@ -149,20 +149,15 @@ static void reset_shell(struct shell* sh)
 	memcpy(sh->prompt + 7 + cwd_len, "> ", 3);
 
 	memset(sh->buffer, 0, SHELL_LINE_MAX);
-	sh->length = 0;
+	terminal_line_init(&sh->line, sh->buffer, SHELL_LINE_MAX);
 	sh->history_position = -1;
 	__shell_show_line(sh);
 }
 
-/* Replaces the line being typed with text */
+/* Replaces the line being typed with text, with the cursor at its end */
 static void __shell_set_line(struct shell* sh, const char* text)
 {
-	int length = strlen(text);
-	if(length > SHELL_LINE_MAX - 1) length = SHELL_LINE_MAX - 1;
-
-	memcpy(sh->buffer, text, length);
-	sh->buffer[length] = 0;
-	sh->length = length;
+	terminal_line_set(&sh->line, text);
 	__shell_show_line(sh);
 }
 
@@ -194,7 +189,7 @@ static void __shell_history_up(struct shell* sh)
 	if(sh->history_count == 0) return;
 
 	if(sh->history_position == -1){
-		memcpy(sh->draft, sh->buffer, sh->length + 1);
+		memcpy(sh->draft, sh->buffer, sh->line.length + 1);
 		sh->history_position = sh->history_count - 1;
 	} else if(sh->history_position > 0){
 		sh->history_position--;
@@ -741,10 +736,8 @@ EXPORT_KSYMBOL(reset);
 
 
 /**
- * @brief Puts a character c into the shell line 
- * at correct position. Also detects enter.
- * 
- * @param c character to put to screen.
+ * Handles a key typed at the shell: Up and Down go through the history, Enter runs the whole line, wherever the cursor
+ * is, and the rest edit the line (terminal_line_key).
  */
 static void shell_put(struct shell* sh, unsigned char c)
 {
@@ -776,34 +769,16 @@ static void shell_put(struct shell* sh, unsigned char c)
 		return;
 	}
 
-	if(uc == backspace)
-	{
-		if(sh->length < 1)
-			return;
-		/* Clear the deleted character, the last one, not the 0 after it (#66) */
-		sh->length--;
-		sh->buffer[sh->length] = 0;
+	/* Keys that do nothing here, like a Left at the line's start, leave it as it's drawn */
+	if(terminal_line_key(&sh->line, uc)){
 		__shell_show_line(sh);
-		return;
 	}
-
-	/* Only printable ASCII goes in the command. Arrows, F keys and Ctrl+key are 128 and up (#83) */
-	if(uc < 32 || uc > 126)
-		return;
-
-	/* Room for the terminating 0 */
-	if(sh->length == SHELL_LINE_MAX - 1)
-		return;
-
-	sh->buffer[sh->length] = uc;
-	sh->length++;
-	__shell_show_line(sh);
 }
 
 /**
  * Types what was pasted into the terminal, as if it was typed: each newline runs the line so far, as Enter does. A
  * command that starts a program reading lines leaves the rest for the program, which takes it first. Characters
- * between newlines go into the line together, and the line is shown once for them.
+ * between newlines go into the line together at the cursor, and the line is shown once for them.
  */
 static void __shell_type_pending(struct shell* sh)
 {
@@ -817,10 +792,8 @@ static void __shell_type_pending(struct shell* sh)
 			continue;
 		}
 
-		/* Room for the terminating 0 */
-		if(sh->length < SHELL_LINE_MAX - 1){
-			sh->buffer[sh->length++] = c;
-			sh->buffer[sh->length] = 0;
+		/* What doesn't fit is left out */
+		if(terminal_line_insert(&sh->line, c)){
 			shown = false;
 		}
 	}

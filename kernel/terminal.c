@@ -486,6 +486,92 @@ static int __terminal_scan_textmode(struct terminal* term, ubyte_t* data, int si
 	}
 }
 
+/* Starts line empty, in buffer, which holds size bytes: up to size-1 characters and a 0 */
+void terminal_line_init(struct terminal_line* line, char* buffer, int size)
+{
+	line->buffer = buffer;
+	line->size = size;
+	line->length = 0;
+	line->cursor = 0;
+	if(size > 0) buffer[0] = 0;
+}
+
+/* Replaces line's text with as much of text as fits, with the cursor at its end */
+void terminal_line_set(struct terminal_line* line, const char* text)
+{
+	int length = strlen(text);
+	if(length > line->size - 1) length = line->size - 1;
+
+	memmove(line->buffer, text, length);
+	line->buffer[length] = 0;
+	line->length = length;
+	line->cursor = length;
+}
+
+/**
+ * Inserts c at line's cursor, and moves the cursor past it. Only printable ASCII goes in: arrows, F keys and Ctrl+key
+ * are 128 and up (#83).
+ * @return false, changing nothing, for any other character, or when the line is full
+ */
+bool_t terminal_line_insert(struct terminal_line* line, char c)
+{
+	if(c < 32 || c > 126 || line->length >= line->size - 1) return false;
+
+	/* The 0 after the text moves along with it */
+	memmove(line->buffer + line->cursor + 1, line->buffer + line->cursor, line->length - line->cursor + 1);
+	line->buffer[line->cursor++] = c;
+	line->length++;
+	return true;
+}
+
+/* Deletes the character after line's cursor, which has to have one */
+static void __terminal_line_delete(struct terminal_line* line)
+{
+	/* The 0 after the text moves along with it */
+	memmove(line->buffer + line->cursor, line->buffer + line->cursor + 1, line->length - line->cursor);
+	line->length--;
+}
+
+/**
+ * Edits line for a key typed, as the shell's command line and a program's read both do (#148): Left and Right move the
+ * cursor a character, Home and End to the line's start and end, Backspace deletes the character before the cursor and
+ * Delete the one after it, and a printable character goes in at the cursor. Other keys, like Enter, Up and Down, are
+ * the caller's.
+ * @return whether the line or its cursor changed
+ */
+bool_t terminal_line_key(struct terminal_line* line, unsigned char key)
+{
+	switch (key){
+	case ARROW_LEFT:
+		if(line->cursor == 0) return false;
+		line->cursor--;
+		return true;
+	case ARROW_RIGHT:
+		if(line->cursor == line->length) return false;
+		line->cursor++;
+		return true;
+	case KEY_HOME:
+		if(line->cursor == 0) return false;
+		line->cursor = 0;
+		return true;
+	case KEY_END:
+		if(line->cursor == line->length) return false;
+		line->cursor = line->length;
+		return true;
+	case '\b':
+		if(line->cursor == 0) return false;
+		line->cursor--;
+		__terminal_line_delete(line);
+		return true;
+	case KEY_DELETE:
+		if(line->cursor == line->length) return false;
+		__terminal_line_delete(line);
+		return true;
+	default:
+		return terminal_line_insert(line, key);
+	}
+}
+
 /* Ends a graphics terminal's read: the line being typed goes, and the window shows the text without it */
 static void __terminal_end_read(struct terminal* term)
 {
@@ -495,7 +581,8 @@ static void __terminal_end_read(struct terminal* term)
 
 /**
  * Reads a line typed at a graphics terminal, as __terminal_scan_textmode does. What's typed is edited on the input line,
- * after what the reader has written, and the keys come from the terminal's window: the reader's own, or for a program,
+ * after what the reader has written, with the keys the shell's line takes (terminal_line_key), and the keys come from
+ * the terminal's window: the reader's own, or for a program,
  * which has none, its shell's. The shell is waiting for the program meanwhile, so it doesn't take them. Ctrl+D or
  * closing the window is end of input; a window that's closing gets its event back, for its owner.
  */
@@ -503,9 +590,10 @@ static int __terminal_scan_graphics(struct terminal* term, ubyte_t* data, int si
 {
 	if(term == NULL || data == NULL || size < 1) return -1;
 
-	int length = 0;
-	data[0] = 0;
-	terminal_set_input(term, NULL, (char*)data);
+	/* What's typed is kept in data as it's edited, with room left for the newline Enter adds in place of its 0 */
+	struct terminal_line line;
+	terminal_line_init(&line, (char*)data, size);
+	terminal_set_input(term, NULL, line.buffer, line.cursor);
 
 	while (1){
 		struct window* screen = term->screen;
@@ -546,12 +634,14 @@ static int __terminal_scan_graphics(struct terminal* term, ubyte_t* data, int si
 					return -1;
 				}
 				if(c == CTRLD){
-					if(length > 0) break;
+					if(line.length > 0) break;
 					__terminal_end_read(term);
 					return 0;
 				}
 
+				/* Enter takes the whole line, wherever the cursor is */
 				if(c == '\n'){
+					int length = line.length;
 					data[length++] = '\n';
 					if(length < size) data[length] = 0;
 
@@ -561,18 +651,9 @@ static int __terminal_scan_graphics(struct terminal* term, ubyte_t* data, int si
 					return length;
 				}
 
-				if(c == '\b'){
-					if(length == 0) break;
-					data[--length] = 0;
-					terminal_set_input(term, NULL, (char*)data);
-					break;
+				if(terminal_line_key(&line, c)){
+					terminal_set_input(term, NULL, line.buffer, line.cursor);
 				}
-
-				/* Only printable ASCII, with room left for the newline */
-				if(c < 32 || c > 126 || length >= size - 1) break;
-				data[length++] = c;
-				data[length] = 0;
-				terminal_set_input(term, NULL, (char*)data);
 			}
 			break;
 		case GFX_EVENT_RESOLUTION:
@@ -725,18 +806,25 @@ static int __terminal_last_line(struct terminal* term)
 }
 
 /**
+ * The cells the input line takes: its characters, and one past its end, where the cursor is drawn when it's at the end.
+ * That cell is kept wherever the cursor is, so moving the cursor never changes the layout.
+ */
+static int __terminal_input_cells(struct terminal* term)
+{
+	return term->input_length + 1;
+}
+
+/**
  * The rows the text's last line takes, with the input line, which continues it. With an input line it takes at least
  * a row, where typing appears; without, only rows for its characters.
  */
 static int __terminal_last_rows(struct terminal* term, int columns)
 {
 	int length = term->head - __terminal_last_line(term);
-	if(!term->input_shown){
-		return __terminal_wrapped_rows(length, columns);
+	if(term->input_shown){
+		length += __terminal_input_cells(term);
 	}
-
-	int rows = __terminal_wrapped_rows(length + term->input_length, columns);
-	return rows > 0 ? rows : 1;
+	return __terminal_wrapped_rows(length, columns);
 }
 
 /**
@@ -821,9 +909,10 @@ static void __terminal_scroll_window(struct terminal* term, struct window* scree
  * Draws length characters of text from column *x of row *y, wrapping at columns, and moves *x and *y past them. Rows
  * above the window aren't drawn. A row below the window's last, with a character on it or ended by a newline, even an
  * empty one, scrolls the window up first. index is where text starts in the text buffer, so selected characters are
- * drawn with the colors swapped, or -1 for the input line, which isn't selected.
+ * drawn with the colors swapped, or -1 for the input line, which isn't selected. cursor is the input line's cursor, the
+ * index in text of a character also drawn with its colors swapped, or -1 for none.
  */
-static void __terminal_draw_text(struct terminal* term, struct window* screen, const char* text, int index, int length, int columns, int rows, int* x, int* y)
+static void __terminal_draw_text(struct terminal* term, struct window* screen, const char* text, int index, int length, int cursor, int columns, int rows, int* x, int* y)
 {
 	int sel_start = 0, sel_end = 0;
 	bool_t selected = index >= 0 && __terminal_selection(term, &sel_start, &sel_end);
@@ -840,7 +929,7 @@ static void __terminal_draw_text(struct terminal* term, struct window* screen, c
 		}
 
 		/* A selected newline is a cell at its line's end, if the row has room for one */
-		bool_t inverse = selected && index + i >= sel_start && index + i < sel_end;
+		bool_t inverse = (selected && index + i >= sel_start && index + i < sel_end) || i == cursor;
 		if(inverse && *y >= 0 && *x < columns){
 			kernel_gfx_draw_rectangle(screen, __terminal_column_x(*x), __terminal_row_y(*y), 8, TERMINAL_ROW_HEIGHT, term->text_color);
 		}
@@ -866,17 +955,18 @@ static int __terminal_last_used_row(struct terminal* term, int x, int y)
 	return x == 0 && !term->input_shown ? y - 1 : y;
 }
 
-/* Draws the input line where the text ends, and notes the last row used */
+/**
+ * Draws the input line where the text ends, and notes the last row used. The cursor is a block: the character under it
+ * with its colors swapped, or at the end, the cell kept past the end (__terminal_input_cells).
+ */
 static void __terminal_draw_input(struct terminal* term, struct window* screen, int columns, int rows)
 {
 	int x = term->drawn_x;
 	int y = term->drawn_y;
 	if(term->input_shown){
-		if(y >= rows){
-			__terminal_scroll_window(term, screen, rows, y - rows + 1);
-			y = rows - 1;
-		}
-		__terminal_draw_text(term, screen, term->input, -1, term->input_length, columns, rows, &x, &y);
+		__terminal_draw_text(term, screen, term->input, -1, term->input_length, term->input_cursor, columns, rows, &x, &y);
+		/* The cell past the end, drawn blank but for the cursor, so it scrolls the window as a character would */
+		__terminal_draw_text(term, screen, " ", -1, 1, term->input_cursor == term->input_length ? 0 : -1, columns, rows, &x, &y);
 	}
 	term->drawn_input_end = __terminal_last_used_row(term, x, y);
 }
@@ -894,7 +984,7 @@ static void __terminal_draw_all(struct terminal* term, struct window* screen)
 
 	/* Rows above the window, the first line's first skip rows, aren't drawn. The input line continues the text */
 	int x = 0, y = -skip;
-	__terminal_draw_text(term, screen, term->textbuffer + start, start, term->head - start, columns, rows, &x, &y);
+	__terminal_draw_text(term, screen, term->textbuffer + start, start, term->head - start, -1, columns, rows, &x, &y);
 	term->drawn_end = term->head;
 	term->drawn_x = x;
 	term->drawn_y = y;
@@ -935,6 +1025,8 @@ static int __terminal_draw_changes(struct terminal* term, struct window* screen)
 		__terminal_advance(term->textbuffer + term->drawn_end, term->head - term->drawn_end, columns, &x, &y);
 		if(term->input_shown){
 			__terminal_advance(term->input, term->input_length, columns, &x, &y);
+			/* And the cell kept past its end */
+			__terminal_advance(" ", 1, columns, &x, &y);
 		}
 		if(__terminal_last_used_row(term, x, y) < term->drawn_input_end){
 			return -1;
@@ -945,7 +1037,7 @@ static int __terminal_draw_changes(struct terminal* term, struct window* screen)
 	__terminal_clear_rows(term, screen, term->drawn_x, term->drawn_y, term->drawn_input_end - term->drawn_y + 1, rows);
 
 	int x = term->drawn_x, y = term->drawn_y;
-	__terminal_draw_text(term, screen, term->textbuffer + term->drawn_end, term->drawn_end, term->head - term->drawn_end, columns, rows, &x, &y);
+	__terminal_draw_text(term, screen, term->textbuffer + term->drawn_end, term->drawn_end, term->head - term->drawn_end, -1, columns, rows, &x, &y);
 	term->drawn_end = term->head;
 	term->drawn_x = x;
 	term->drawn_y = y;
@@ -1482,18 +1574,21 @@ static int __terminal_commit_graphics(struct terminal* term)
 }
 
 /**
- * Shows prompt and text, either of which may be NULL, on the terminal's input line, and redraws it. The input line is
- * what a shell, or a program reading a line, is editing. It's drawn after the text and wrapped like it, continuing
- * the text's last line, but it isn't part of the text: it's never copied to the log, and text written meanwhile goes
- * before it, as readline does. Text mode doesn't show it.
+ * Shows prompt and text, either of which may be NULL, on the terminal's input line, with the cursor before text's
+ * character at cursor, or at text's end, and redraws it. The input line is what a shell, or a program reading a line,
+ * is editing. It's drawn after the text and wrapped like it, continuing the text's last line, but it isn't part of the
+ * text: it's never copied to the log, and text written meanwhile goes before it, as readline does. Text mode doesn't
+ * show it.
  */
-void terminal_set_input(struct terminal* term, const char* prompt, const char* text)
+void terminal_set_input(struct terminal* term, const char* prompt, const char* text, int cursor)
 {
 	if(term == NULL) return;
 
 	int prompt_length = prompt != NULL ? strlen(prompt) : 0;
 	int text_length = text != NULL ? strlen(text) : 0;
 	int length = prompt_length + text_length;
+	if(cursor < 0) cursor = 0;
+	if(cursor > text_length) cursor = text_length;
 
 	terminal_lock(term);
 	if(length > term->input_size){
@@ -1515,6 +1610,7 @@ void terminal_set_input(struct terminal* term, const char* prompt, const char* t
 	memcpy(term->input, prompt, prompt_length);
 	memcpy(term->input + prompt_length, text, text_length);
 	term->input_length = length;
+	term->input_cursor = prompt_length + cursor;
 	term->input_shown = true;
 
 	if(term->ops->commit == __terminal_commit_graphics){
@@ -1541,6 +1637,7 @@ void terminal_hide_input(struct terminal* term)
 	terminal_lock(term);
 	term->input_shown = false;
 	term->input_length = 0;
+	term->input_cursor = 0;
 	terminal_unlock(term);
 }
 

@@ -80,10 +80,14 @@ struct terminal {
     /* The program that may read lines typed at the terminal: see terminal_read */
     int reader;
 
-    /* The line being typed, drawn after the text: see terminal_set_input. input_shown is false when there's none */
+    /**
+     * The line being typed, drawn after the text: see terminal_set_input. input_shown is false when there's none.
+     * input_cursor is where typing goes, as an index into input, from 0 to input_length.
+     */
     char* input;
     int input_size;
     int input_length;
+    int input_cursor;
     bool_t input_shown;
 
     /**
@@ -121,13 +125,29 @@ struct terminal {
     color_t bg_color;
 };
 
+/**
+ * A line being typed: the shell's command line, or a line a program reads. buffer holds size bytes: up to size-1
+ * characters, then a 0. cursor is where typing goes, from 0 to length. See terminal_line_key.
+ */
+struct terminal_line {
+    char* buffer;
+    int size;
+    int length;
+    int cursor;
+};
+
+void terminal_line_init(struct terminal_line* line, char* buffer, int size);
+void terminal_line_set(struct terminal_line* line, const char* text);
+bool_t terminal_line_insert(struct terminal_line* line, char c);
+bool_t terminal_line_key(struct terminal_line* line, unsigned char key);
+
 struct terminal* terminal_create(terminal_flags_t flags);
 void terminal_get(struct terminal* term);
 void terminal_put(struct terminal* term);
 void terminal_lock(struct terminal* term);
 void terminal_unlock(struct terminal* term);
 void terminal_release_window(struct terminal* term, struct pcb* pcb);
-void terminal_set_input(struct terminal* term, const char* prompt, const char* text);
+void terminal_set_input(struct terminal* term, const char* prompt, const char* text, int cursor);
 void terminal_hide_input(struct terminal* term);
 void terminal_end_line(struct terminal* term);
 void terminal_invalidate(struct terminal* term);

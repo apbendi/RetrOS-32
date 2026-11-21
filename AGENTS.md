@@ -366,13 +366,18 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - **Writing:** kernel code writes with `twritef`, and programs with `SYSCALL_TERM_WRITE` (`terminal_write`).
   - **The log:** each line written is also copied to the serial log, as `term[<writer>]: <text>`.
 - **The input line** is the line being edited after the text: the shell's prompt and command, or what a program reading a line has typed.
-  - **Showing it:** `terminal_set_input` shows it, continuing the text's last line, and `terminal_hide_input` takes it away.
+  - **Showing it:** `terminal_set_input` shows it, with the cursor's position, continuing the text's last line, and `terminal_hide_input` takes it away.
   - **Not part of the text:** it's never logged, and text written meanwhile goes before it.
+  - **Editing it** (#148): the shell's line and a program's read are each a `struct terminal_line`, a buffer with its length and a cursor, edited by `terminal_line_key`.
+    - **Keys:** Left and Right move the cursor a character, and Home and End to the start and end. Backspace deletes the character before the cursor, and Delete the one after it. Typing inserts at the cursor.
+    - **The caller's keys:** Enter, Up, Down, Ctrl+C and Ctrl+D. Enter takes the whole line, wherever the cursor is.
+  - **The cursor** is a block that doesn't blink: the character under it with its colors swapped, or at the end of the line, a cell past it.
+    - **That cell is kept wherever the cursor is** (`__terminal_input_cells`), so moving the cursor never changes the layout. A line that fills its last row exactly takes another row for it.
 - **The GUI shell** is a kernel thread per Terminal window, `shell()`.
   - **Its state:** a kalloc'd `struct shell`. Its PCB's `local` points to it, so commands running on its thread, like `reset` and `exit`, find it. `local_free` frees it however the thread exits.
   - **A command line:** the prompt, `kernel:<directory>> `, and what's typed are the input line. Enter hides it, writes the same text into the output, runs the command with `exec_cmd`, and shows a new prompt after the output.
   - **An unfinished last line,** a program's or `cat`'s, gets a newline before the prompt (`terminal_end_line`).
-  - **Keys:** backspace, Up and Down through the last 32 commands (`SHELL_HISTORY_MAX`), and Ctrl+C, which leaves the line in the output with `^C` after it, unless text is selected, which it copies instead (see "Selection and the clipboard"). A line holds `SHELL_LINE_MAX`, 1,088 bytes.
+  - **Keys:** the editing keys above; Up and Down through the last 32 commands (`SHELL_HISTORY_MAX`), each brought back with the cursor at its end; and Ctrl+C, which leaves the line in the output with `^C` after it, unless text is selected, which it copies instead (see "Selection and the clipboard"). A line holds `SHELL_LINE_MAX`, 1,088 bytes.
 - **Text mode** (`textshell`) uses a terminal with the `terminal_ops_textmode` ops. It edits its line on its frame's bottom row, and shows no input line. It also ends an unfinished last line before a command's echo.
 
 **Layout:** a graphics terminal lays out its text and input line at the window's size when it draws. It wraps lines at the window's width, and shows as much of the end as fits.
@@ -381,7 +386,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - So a window made bigger shows earlier lines again. There's no scrollback beyond that.
 
 **Drawing only what changed** (#118): the terminal remembers what's on screen, in its `drawn_*` fields.
-- **A commit** clears the input line, draws the text added since, scrolling the window's pixels up when it reaches the bottom, and draws the input line after it.
+- **A commit** clears the input line, draws the text added since, scrolling the window's pixels up when it reaches the bottom, and draws the input line after it. So a key typed, or the cursor moved, redraws only the input line's rows.
 - **Full redraws:**
   - the first draw, a resize and a color change;
   - text taken away: `clear`, `reset`, or an overlong line cut short;
@@ -401,7 +406,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
 
 **Reading** (#113): `SYSCALL_TERM_READ` (`terminal_read`) reads a line typed at the caller's terminal. The C library's `stdin` uses it.
 - **Who may read:** only the program its shell is waiting for. `exec` without `-d` makes it the terminal's `reader` before it can run. Any other caller gets end of input at once, since the shell is taking the keys.
-- **Editing:** the line is edited on the input line, after what the program printed, with the keys typed in the shell's window. Enter adds it to the text, so it's shown and logged as the program's.
+- **Editing:** the line is edited on the input line, after what the program printed, with the shell's editing keys (`terminal_line_key`), typed in the shell's window. Enter adds the whole line to the text, so it's shown and logged as the program's.
 - **End of input:** Ctrl+D on an empty line; Ctrl+C, which throws the line away, since RetrOS has no signals; or the window closing.
 - **The kernel's own `scan`,** which `tcp` and the text shell's login use, reads the same way.
 
@@ -474,7 +479,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - **The keyboard:** `terminal_key` takes the selection's keys before the shell or a reader sees them. Shift with an arrow moves the selection's end a character, or a row on screen, starting a selection at the end of the output if there's none. Ctrl+Shift+A selects all the text kept, and Esc clears. Up and Down without Shift still go through the shell's history.
 - **Copying:** Ctrl+Shift+C copies the selection, and so does Ctrl+C when something is selected, which also clears it. With nothing selected, Ctrl+C cancels the line, or ends a program's read, as before.
 - **Pasting:** Ctrl+V and Ctrl+Shift+V add the clipboard's text to the terminal's pending input (`pending`), with tabs made spaces and other control characters but newlines left out.
-  - **Taking it:** the shell types it into its line, running the line at each newline, as Enter would (`__shell_type_pending`). `__terminal_scan_graphics` takes it before new keys, so a program reading lines gets the pasted lines in turn, and the shell types what's left after it exits.
+  - **Taking it:** the shell types it into its line at the cursor, running the line at each newline, as Enter would (`__shell_type_pending`). `__terminal_scan_graphics` takes it before new keys, so a program reading lines gets the pasted lines in turn, and the shell types what's left after it exits.
   - **Ctrl+C** in a program's read throws away what's pending. Closing the window frees it with the terminal.
 - **Who calls them:** whoever is reading the window's events: the shell's loop, or `__terminal_scan_graphics` while a program reads a line. While a program runs without reading, the events wait in the window's queue (#131).
 - **Drawing:** selected characters are drawn with the text and background colors swapped, and a selected newline as a cell. A change to the selection redraws the window in full. New output is never selected, so the drawing that adds only new text is unchanged, and scrolling the window's pixels moves the highlight with its text.
