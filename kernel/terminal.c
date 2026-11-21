@@ -614,13 +614,22 @@ static int __terminal_reset(struct terminal* term)
 }
 
 /**
+ * A graphics terminal lays out its text as the Editor does (TEXT_PADDING, TEXT_ROW_HEIGHT and TEXT_CHAR_Y in
+ * apps/editor/edit.hpp): TERMINAL_PADDING between the text and the window's edges, and rows TERMINAL_ROW_HEIGHT apart,
+ * each character's 8 pixels TERMINAL_CHAR_Y down its row. A selection fills its rows' whole height.
+ */
+#define TERMINAL_PADDING 5
+#define TERMINAL_ROW_HEIGHT 10
+#define TERMINAL_CHAR_Y ((TERMINAL_ROW_HEIGHT - 8) / 2)
+
+/**
  * The most lines a graphics terminal keeps: what a window the size of the screen shows, so a window that's made
  * bigger shows as much as fits, and drawing never takes more than a screenful. At least 25, for a screen whose size
  * isn't known.
  */
 static int __terminal_max_lines(void)
 {
-	int lines = vbe_info->height / 8;
+	int lines = vbe_info->height / TERMINAL_ROW_HEIGHT;
 	return lines > 25 ? lines : 25;
 }
 
@@ -677,16 +686,27 @@ static int __terminal_store_graphics(struct terminal* term, char c)
 	return 0;
 }
 
-/* The columns and rows of text a window shows. A character is drawn at (1 + 8*column, 2 + 8*row) */
+/* Where column x starts in the window, and where row y's top is. A character is drawn TERMINAL_CHAR_Y below its row's top */
+static int __terminal_column_x(int x)
+{
+	return TERMINAL_PADDING + x*8;
+}
+
+static int __terminal_row_y(int y)
+{
+	return TERMINAL_PADDING + y*TERMINAL_ROW_HEIGHT;
+}
+
+/* The columns and rows of text a window shows, with TERMINAL_PADDING left around them */
 static int __terminal_columns(struct window* screen)
 {
-	int columns = (screen->inner_width - 1) / 8;
+	int columns = (screen->inner_width - 2*TERMINAL_PADDING) / 8;
 	return columns > 0 ? columns : 1;
 }
 
 static int __terminal_rows(struct window* screen)
 {
-	int rows = (screen->inner_height - 2) / 8;
+	int rows = (screen->inner_height - 2*TERMINAL_PADDING) / TERMINAL_ROW_HEIGHT;
 	return rows > 0 ? rows : 1;
 }
 
@@ -769,9 +789,9 @@ static void __terminal_clear_rows(struct terminal* term, struct window* screen, 
 	for (int r = row; r < row + count; r++){
 		if(r < 0 || r >= rows) continue;
 
-		int left = r == row && x > 0 ? 1 + x*8 : 0;
+		int left = r == row && x > 0 ? __terminal_column_x(x) : 0;
 		if(left < screen->inner_width){
-			kernel_gfx_draw_rectangle(screen, left, 2 + r*8, screen->inner_width - left, 8, term->bg_color);
+			kernel_gfx_draw_rectangle(screen, left, __terminal_row_y(r), screen->inner_width - left, TERMINAL_ROW_HEIGHT, term->bg_color);
 		}
 	}
 }
@@ -786,10 +806,10 @@ static void __terminal_scroll_window(struct terminal* term, struct window* scree
 	spin_lock(&screen->buffer_lock);
 	/* Only if the window still has the size the rows were counted at: the window server may have just resized it,
 	 * and then it sends an event that redraws it all */
-	if(2 + rows*8 <= screen->inner_height){
+	if(__terminal_row_y(rows) <= screen->inner_height){
 		int bytes = screen->inner_width * (vbe_info->bpp/8);
-		for (int y = 2; y < 2 + (rows - count)*8; y++){
-			memcpy(screen->inner + y*screen->pitch, screen->inner + (y + count*8)*screen->pitch, bytes);
+		for (int y = __terminal_row_y(0); y < __terminal_row_y(rows - count); y++){
+			memcpy(screen->inner + y*screen->pitch, screen->inner + (y + count*TERMINAL_ROW_HEIGHT)*screen->pitch, bytes);
 		}
 	}
 	spin_unlock(&screen->buffer_lock);
@@ -822,7 +842,7 @@ static void __terminal_draw_text(struct terminal* term, struct window* screen, c
 		/* A selected newline is a cell at its line's end, if the row has room for one */
 		bool_t inverse = selected && index + i >= sel_start && index + i < sel_end;
 		if(inverse && *y >= 0 && *x < columns){
-			kernel_gfx_draw_rectangle(screen, 1 + *x*8, 2 + *y*8, 8, 8, term->text_color);
+			kernel_gfx_draw_rectangle(screen, __terminal_column_x(*x), __terminal_row_y(*y), 8, TERMINAL_ROW_HEIGHT, term->text_color);
 		}
 
 		if(c == '\n'){
@@ -831,7 +851,7 @@ static void __terminal_draw_text(struct terminal* term, struct window* screen, c
 			continue;
 		}
 		if(*y >= 0){
-			kernel_gfx_draw_char(screen, 1 + *x*8, 2 + *y*8, c, inverse ? term->bg_color : term->text_color);
+			kernel_gfx_draw_char(screen, __terminal_column_x(*x), __terminal_row_y(*y) + TERMINAL_CHAR_Y, c, inverse ? term->bg_color : term->text_color);
 		}
 		(*x)++;
 	}
@@ -974,8 +994,8 @@ static int __terminal_index_at_cell(struct terminal* term, struct window* screen
 /* As __terminal_index_at_cell, for the point px, py in the window, nearest the edge of the character under it. Above the window is its first row */
 static int __terminal_index_at(struct terminal* term, struct window* screen, int px, int py)
 {
-	int row = py < 2 ? 0 : (py - 2) / 8;
-	int col = px < 1 ? 0 : (px - 1 + 4) / 8;
+	int row = py < TERMINAL_PADDING ? 0 : (py - TERMINAL_PADDING) / TERMINAL_ROW_HEIGHT;
+	int col = px < TERMINAL_PADDING ? 0 : (px - TERMINAL_PADDING + 4) / 8;
 	return __terminal_index_at_cell(term, screen, col, row);
 }
 

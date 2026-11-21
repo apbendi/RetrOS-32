@@ -376,6 +376,7 @@ Syscalls run with interrupts enabled, so they can be preempted.
 - **Text mode** (`textshell`) uses a terminal with the `terminal_ops_textmode` ops. It edits its line on its frame's bottom row, and shows no input line. It also ends an unfinished last line before a command's echo.
 
 **Layout:** a graphics terminal lays out its text and input line at the window's size when it draws. It wraps lines at the window's width, and shows as much of the end as fits.
+- **Spacing:** the same as the Editor's text: 5 pixels between the text and the window's edges (`TERMINAL_PADDING`), and rows 10 pixels apart, each character 1 pixel down its row (`TERMINAL_ROW_HEIGHT`, `TERMINAL_CHAR_Y`). A change to one should go to the other, which has `TEXT_PADDING`, `TEXT_ROW_HEIGHT` and `TEXT_CHAR_Y` in `apps/editor/edit.hpp`.
 - **What's kept:** as many lines as a screen-sized window shows (`__terminal_max_lines`), and at most twice the characters it holds (`__terminal_max_chars`).
 - So a window made bigger shows earlier lines again. There's no scrollback beyond that.
 
