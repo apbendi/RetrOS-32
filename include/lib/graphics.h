@@ -20,6 +20,7 @@ extern "C" {
 #include <gfx/events.h>
 #include <image.h>
 #include <colors.h>
+#include <lib/bevel.h>
 
 enum gfx_lib_api_options {
     GFX_DRAW_CHAR_OPT,
@@ -108,16 +109,9 @@ int gfx_load_icon(const char* name, struct image* image);
 void gfx_free_icon(struct image* image);
 
 /**
- * Raised and sunken parts, as Windows 95 drew them, in Graphics.hpp's drawHeaderTable colors: a face, a light edge and
- * a shadow, with black. The Editor's header bar and buttons, and scroll bars (lib/scrollbar.h), use them.
- */
-#define COLOR_BAR_FACE 30
-#define COLOR_BAR_LIGHT COLOR_VGA_LIGHTEST_GRAY
-#define COLOR_BAR_SHADOW (COLOR_VGA_MEDIUM_DARK_GRAY + 5)
-
-/**
- * Draws a raised part, like a button, or with pressed set, a sunken one: the face, light top and left edges and black
- * bottom and right ones, the other way around when sunken, and a shadow inside the black.
+ * Draws a raised part, like a button, or with pressed set, a sunken one, in the COLOR_BAR_* colors: the face, light top
+ * and left edges and black bottom and right ones, the other way around when sunken, and a shadow inside the black. See
+ * lib/bevel.h, which the kernel shares.
  */
 void gfx_draw_bevel(int x, int y, int width, int height, int pressed);
 

@@ -858,7 +858,17 @@ void __kthread_entry shell(int argc, char* argv[])
 	while(1)
 	{
 		struct gfx_event event;
-		gfx_event_loop(&event, GFX_EVENT_BLOCKING);
+
+		/* A selection dragged above or below the rows shown scrolls a row each tick, so wait for events only that long */
+		if(terminal_drag_scrolling(term)){
+			if(gfx_event_loop(&event, GFX_EVENT_NONBLOCKING) < 0){
+				kernel_sleep(TERMINAL_DRAG_SCROLL_MS);
+				terminal_drag_tick(term);
+				continue;
+			}
+		} else {
+			gfx_event_loop(&event, GFX_EVENT_BLOCKING);
+		}
 
 		switch (event.event){
 		case GFX_EVENT_KEYBOARD:

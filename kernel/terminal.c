@@ -76,9 +76,49 @@ static void __terminal_selection_dropped(struct terminal* term, int count)
 	}
 }
 
+/* The rows a finished line of length characters takes, wrapped at columns: at least one, where an empty line shows */
+static int __terminal_line_rows(int length, int columns)
+{
+	int rows = (length + columns - 1) / columns;
+	return rows > 0 ? rows : 1;
+}
+
+/**
+ * Moves the view and the rows counted with the text when count characters go from the text buffer's start: a finished
+ * line, its newline included, or with line false, a cut through a line, after which the rows are counted again from
+ * the start (__terminal_count_rows), which places the view again too. A view whose top row went starts at the text's
+ * new start.
+ */
+static void __terminal_view_dropped(struct terminal* term, int count, bool_t line)
+{
+	int rows = 0;
+	if(line && term->rows_columns > 0 && count <= term->rows_done){
+		rows = __terminal_line_rows(count - 1, term->rows_columns);
+		term->rows_lines -= rows;
+		term->rows_done -= count;
+	} else {
+		term->rows_columns = 0;
+	}
+
+	/* What's on screen moves with the text, unless its top row went */
+	if(term->drawn_view_top >= 0){
+		term->drawn_view_top -= count;
+		if(term->drawn_view_top < 0) term->drawn_valid = false;
+	}
+
+	if(term->view_top < 0) return;
+	term->view_top -= count;
+	term->view_row -= rows;
+	if(term->view_top < 0){
+		term->view_top = 0;
+		term->view_row = 0;
+	}
+}
+
 static void __terminal_remove_line(struct terminal* term)
 {
 	int skip = __next_newline(term->textbuffer);
+	__terminal_view_dropped(term, skip, true);
 	memmove(term->textbuffer, &term->textbuffer[skip], term->head-skip);
 	term->head -= skip;
 	/* What's drawn and what's selected move with the text */
@@ -265,6 +305,9 @@ struct terminal* terminal_create(terminal_flags_t flags)
 	term->screen = NULL;
 	term->reader = TERMINAL_NO_READER;
 	term->sel_anchor = -1;
+	term->view_top = -1;
+	term->drawn_view_top = -1;
+	scrollbar_init(&term->bar);
 
 	char* bg_color = kernel_config_get_value("terminal", "background");
 	if(bg_color != NULL){
@@ -619,7 +662,13 @@ static int __terminal_scan_graphics(struct terminal* term, ubyte_t* data, int si
 			event.flags = 0;
 			event.data = pasted;
 		} else if(gfx_window_get_event(screen, &event) < 0){
-			kernel_sleep(10);
+			/* A selection dragged above or below the rows shown scrolls while no event comes */
+			if(terminal_drag_scrolling(term)){
+				kernel_sleep(TERMINAL_DRAG_SCROLL_MS);
+				terminal_drag_tick(term);
+			} else {
+				kernel_sleep(10);
+			}
 			continue;
 		}
 
@@ -687,6 +736,10 @@ static int __terminal_reset(struct terminal* term)
 	term->drawn_valid = false;
 	term->sel_anchor = -1;
 	term->selecting = false;
+	term->drag_scroll = 0;
+	/* Nothing's left to scroll back to, so the scroll bar goes too */
+	term->view_top = -1;
+	term->rows_columns = 0;
 
 	memset(term->textbuffer, 0, term->textbuffer_size);
 	terminal_unlock(term);
@@ -704,42 +757,30 @@ static int __terminal_reset(struct terminal* term)
 #define TERMINAL_CHAR_Y ((TERMINAL_ROW_HEIGHT - 8) / 2)
 
 /**
- * The most lines a graphics terminal keeps: what a window the size of the screen shows, so a window that's made
- * bigger shows as much as fits, and drawing never takes more than a screenful. At least 25, for a screen whose size
- * isn't known.
+ * The most a graphics terminal keeps, to scroll back through (#147): TERMINAL_MAX_LINES lines, and for long lines,
+ * TERMINAL_MAX_CHARS characters, newlines included. The text buffer grows as it needs to, to 64 KB at most.
  */
-static int __terminal_max_lines(void)
-{
-	int lines = vbe_info->height / TERMINAL_ROW_HEIGHT;
-	return lines > 25 ? lines : 25;
-}
+#define TERMINAL_MAX_LINES 1000
+#define TERMINAL_MAX_CHARS (64*1024 - 1)
 
-/* And the most characters, for long lines: twice what a window the size of the screen shows, newlines included */
-static int __terminal_max_chars(void)
-{
-	int columns = vbe_info->width / 8;
-	return 2 * __terminal_max_lines() * ((columns > 80 ? columns : 80) + 1);
-}
-
-/* Drops text from the start of a graphics terminal's that no window could show, after c was added */
+/* Drops the oldest text from a graphics terminal's when it keeps more than it may, after c was added */
 static void __terminal_trim(struct terminal* term, char c)
 {
 	if(c == '\n'){
 		term->lines++;
-		while(term->lines > __terminal_max_lines()){
+		while(term->lines > TERMINAL_MAX_LINES){
 			__terminal_remove_line(term);
 			term->lines--;
 		}
 	}
 
-	int max = __terminal_max_chars();
-	if(term->head > max){
+	if(term->head > TERMINAL_MAX_CHARS){
 		/**
-		 * The first line goes if what's left still fills a window the size of the screen, so it's above any window.
-		 * Otherwise, as when a line is longer than that, the first half of the text goes, cutting a line.
+		 * The first line goes if what's left is still half of what may be kept. Otherwise, as when a line is longer than
+		 * that, the first half of the text goes, cutting a line.
 		 */
 		int first = term->lines > 0 ? __next_newline(term->textbuffer) : term->head;
-		if(term->head - first >= max / 2){
+		if(term->head - first >= TERMINAL_MAX_CHARS / 2){
 			__terminal_remove_line(term);
 			term->lines--;
 		} else {
@@ -747,6 +788,7 @@ static void __terminal_trim(struct terminal* term, char c)
 			for (int i = 0; i < drop; i++){
 				if(term->textbuffer[i] == '\n') term->lines--;
 			}
+			__terminal_view_dropped(term, drop, false);
 			memmove(term->textbuffer, term->textbuffer + drop, term->head - drop);
 			term->head -= drop;
 			__terminal_selection_dropped(term, drop);
@@ -778,10 +820,13 @@ static int __terminal_row_y(int y)
 	return TERMINAL_PADDING + y*TERMINAL_ROW_HEIGHT;
 }
 
-/* The columns and rows of text a window shows, with TERMINAL_PADDING left around them */
+/**
+ * The columns and rows of text a window shows, with TERMINAL_PADDING left around them. The scroll bar's width is kept
+ * at the right whether it's shown or not, as the Editor keeps it, so the text doesn't move as it comes and goes.
+ */
 static int __terminal_columns(struct window* screen)
 {
-	int columns = (screen->inner_width - 2*TERMINAL_PADDING) / 8;
+	int columns = (screen->inner_width - 2*TERMINAL_PADDING - SCROLLBAR_WIDTH) / 8;
 	return columns > 0 ? columns : 1;
 }
 
@@ -850,6 +895,158 @@ static int __terminal_first_shown(struct terminal* term, int columns, int rows, 
 	}
 
 	*skip = total > rows ? total - rows : 0;
+	return start;
+}
+
+/* The rows the finished lines before index take, at columns. index is a line's start */
+static int __terminal_rows_before(struct terminal* term, int index, int columns)
+{
+	int rows = 0;
+	int start = 0;
+	for (int i = 0; i < index; i++){
+		if(term->textbuffer[i] != '\n') continue;
+		rows += __terminal_line_rows(i - start, columns);
+		start = i + 1;
+	}
+	return rows;
+}
+
+/**
+ * Counts the rows the text's finished lines take at columns, from where the last count stopped to the last newline, so
+ * printing costs only what's printed. A new width counts from the start again, and places a view scrolled back again,
+ * on the row that holds the character it started with, so a resize keeps it near the same text.
+ */
+static void __terminal_count_rows(struct terminal* term, int columns)
+{
+	char* text = term->textbuffer;
+	if(term->rows_columns != columns){
+		term->rows_columns = columns;
+		term->rows_done = 0;
+		term->rows_lines = 0;
+
+		if(term->view_top >= 0){
+			if(term->view_top > term->head) term->view_top = term->head;
+			int start = term->view_top;
+			while(start > 0 && text[start-1] != '\n') start--;
+			/* A newline at the end of a full row, or the text's end, is on the row of the character before it */
+			int offset = term->view_top - start;
+			if(offset > 0 && (term->view_top == term->head || text[term->view_top] == '\n')) offset--;
+			term->view_top = start + offset / columns * columns;
+			term->view_row = __terminal_rows_before(term, start, columns) + offset / columns;
+		}
+	}
+
+	int start = term->rows_done;
+	for (int i = term->rows_done; i < term->head; i++){
+		if(text[i] != '\n') continue;
+		term->rows_lines += __terminal_line_rows(i - start, columns);
+		start = i + 1;
+	}
+	term->rows_done = start;
+}
+
+/* The rows the text and input line take at columns, laid out as __terminal_first_shown lays them out */
+static int __terminal_total_rows(struct terminal* term, int columns)
+{
+	__terminal_count_rows(term, columns);
+	return term->rows_lines + __terminal_last_rows(term, columns);
+}
+
+/**
+ * Where row row starts in the text buffer, counting the text's rows at columns from its start, or -1 if it starts on
+ * the input line, past the text. The last line's rows go on into the input line, which continues it. A row that starts
+ * with the input line, after a full row of text, is the input line's: text written next would start it, or a newline
+ * end the line before it, so it's no place for a view to start.
+ */
+static int __terminal_row_index(struct terminal* term, int row, int columns)
+{
+	char* text = term->textbuffer;
+	if(row < 0) row = 0;
+
+	int start = 0;
+	int before = 0;
+	for (int i = 0; i <= term->head; i++){
+		if(i < term->head && text[i] != '\n') continue;
+
+		int length = i - start;
+		if(i == term->head){
+			int offset = (row - before) * columns;
+			return offset < length || offset == 0 ? start + offset : -1;
+		}
+
+		int rows = __terminal_line_rows(length, columns);
+		if(row < before + rows) return start + (row - before) * columns;
+		before += rows;
+		start = i + 1;
+	}
+	return -1;
+}
+
+/**
+ * Where the row count rows below the row that starts at index starts, at columns, or -1 if that's past the text: a
+ * view's rows end there. It costs the rows passed, not the text before them.
+ */
+static int __terminal_rows_down(struct terminal* term, int index, int count, int columns)
+{
+	char* text = term->textbuffer;
+	int x = 0;
+	for (int i = index; i < term->head; i++){
+		if(text[i] == '\n'){
+			if(--count == 0) return i + 1;
+			x = 0;
+			continue;
+		}
+		if(x == columns){
+			if(--count == 0) return i;
+			x = 0;
+		}
+		x++;
+	}
+	return -1;
+}
+
+/**
+ * Brings the rows counted and the view up to date for the window's size, and places the scroll bar and sets its
+ * numbers: before the window's drawn, or a point in it is mapped, or the view moves. A view scrolled back as far as the
+ * last view follows the end again.
+ */
+static void __terminal_update_view(struct terminal* term, struct window* screen)
+{
+	int columns = __terminal_columns(screen);
+	int rows = __terminal_rows(screen);
+	int total = __terminal_total_rows(term, columns);
+	int last = total > rows ? total - rows : 0;
+	if(term->view_top >= 0 && term->view_row >= last){
+		term->view_top = -1;
+	}
+
+	scrollbar_place(&term->bar, screen->inner_width - SCROLLBAR_WIDTH, 0, screen->inner_height);
+	scrollbar_set(&term->bar, total, rows, term->view_top >= 0 ? term->view_row : last);
+}
+
+/* Scrolls the view to start at row, counting the text's rows from its start. The last view, or past it, follows the end */
+static void __terminal_scroll_to(struct terminal* term, struct window* screen, int row)
+{
+	__terminal_update_view(term, screen);
+	int index = row < scrollbar_max_first(&term->bar) ? __terminal_row_index(term, row, __terminal_columns(screen)) : -1;
+	term->view_top = index;
+	term->view_row = index >= 0 ? (row > 0 ? row : 0) : 0;
+	__terminal_update_view(term, screen);
+}
+
+/**
+ * Where in the text buffer to start drawing, with *skip set to the rows of that line above the window: the view's line
+ * when it's scrolled back, or as much of the end as fills the window. __terminal_update_view has placed the view.
+ */
+static int __terminal_view_start(struct terminal* term, int columns, int rows, int* skip)
+{
+	if(term->view_top < 0){
+		return __terminal_first_shown(term, columns, rows, skip);
+	}
+
+	int start = term->view_top;
+	while(start > 0 && term->textbuffer[start-1] != '\n') start--;
+	*skip = (term->view_top - start) / columns;
 	return start;
 }
 
@@ -924,6 +1121,8 @@ static void __terminal_draw_text(struct terminal* term, struct window* screen, c
 			(*y)++;
 		}
 		if(*y >= rows){
+			/* A view scrolled back shows what fits in the window, and nothing scrolls it */
+			if(term->view_top >= 0) return;
 			__terminal_scroll_window(term, screen, rows, *y - rows + 1);
 			*y = rows - 1;
 		}
@@ -971,16 +1170,20 @@ static void __terminal_draw_input(struct terminal* term, struct window* screen, 
 	term->drawn_input_end = __terminal_last_used_row(term, x, y);
 }
 
-/* Draws the whole window: as much of the end of the text as fits, and the input line after it */
+/**
+ * Draws the whole window: the view's rows when it's scrolled back, or else as much of the end of the text as fits, and
+ * the input line after the text. The scroll bar is drawn after (__terminal_draw_bar).
+ */
 static void __terminal_draw_all(struct terminal* term, struct window* screen)
 {
 	/* Lay out the text and input line at the window's size now, so they fit however the window has changed */
 	int columns = __terminal_columns(screen);
 	int rows = __terminal_rows(screen);
 	int skip;
-	int start = __terminal_first_shown(term, columns, rows, &skip);
+	int start = __terminal_view_start(term, columns, rows, &skip);
 
 	kernel_gfx_draw_rectangle(screen, 0, 0, screen->inner_width, screen->inner_height, term->bg_color);
+	term->drawn_bar = false;
 
 	/* Rows above the window, the first line's first skip rows, aren't drawn. The input line continues the text */
 	int x = 0, y = -skip;
@@ -991,12 +1194,37 @@ static void __terminal_draw_all(struct terminal* term, struct window* screen)
 	term->drawn_scrolled = start > 0 || skip > 0;
 	__terminal_draw_input(term, screen, columns, rows);
 
-	/* When the input line is longer than the window, the text's end is above it, and only a full draw will do */
-	term->drawn_valid = term->drawn_y >= 0;
+	/**
+	 * When the input line is longer than the window, the text's end is above it, and only a full draw will do. A view
+	 * scrolled back stops drawing at the window's bottom, and is drawn again only when what it shows changes.
+	 */
+	term->drawn_valid = term->view_top >= 0 || term->drawn_y >= 0;
+	term->drawn_view_top = term->view_top;
 	term->drawn_width = screen->inner_width;
 	term->drawn_height = screen->inner_height;
 	term->drawn_text_color = term->text_color;
 	term->drawn_bg_color = term->bg_color;
+}
+
+/* Fills a rectangle in the window context: how the scroll bar is drawn (scrollbar_paint) */
+static void __terminal_fill(void* context, int x, int y, int width, int height, unsigned char color)
+{
+	kernel_gfx_draw_rectangle((struct window*) context, x, y, width, height, color);
+}
+
+/**
+ * Draws the scroll bar while the text doesn't all fit, and takes it away once it does: after clear, or a resize that
+ * fits the text. Drawn after every commit while it's shown, since scrolling the window's pixels moves it too.
+ */
+static void __terminal_draw_bar(struct terminal* term, struct window* screen)
+{
+	if(scrollbar_shown(&term->bar)){
+		scrollbar_paint(&term->bar, __terminal_fill, screen);
+		term->drawn_bar = true;
+	} else if(term->drawn_bar){
+		kernel_gfx_draw_rectangle(screen, term->bar.x, 0, SCROLLBAR_WIDTH, screen->inner_height, term->bg_color);
+		term->drawn_bar = false;
+	}
 }
 
 /**
@@ -1004,8 +1232,8 @@ static void __terminal_draw_all(struct terminal* term, struct window* screen)
  * goes where the input line was, scrolling the window when it reaches the bottom, and the input line follows it. So a
  * line written costs about the line, where a full draw costs the window (#118), and a key typed costs its row.
  * @return -1, having drawn nothing, when only a full draw will do: nothing's drawn yet, the window's size or the
- * colors changed, text was taken away rather than added, or the input line ends higher than it did once the text has
- * scrolled, which moves everything down
+ * colors changed, text was taken away rather than added, the input line ends higher than it did once the text has
+ * scrolled, which moves everything down, the view moved, or a view scrolled back shows text added since
  */
 static int __terminal_draw_changes(struct terminal* term, struct window* screen)
 {
@@ -1013,12 +1241,25 @@ static int __terminal_draw_changes(struct terminal* term, struct window* screen)
 		|| term->drawn_text_color != term->text_color || term->drawn_bg_color != term->bg_color){
 		return -1;
 	}
-	if(term->drawn_end < 0 || term->drawn_end > term->head){
+	if(term->drawn_end < 0 || term->drawn_end > term->head || term->drawn_view_top != term->view_top){
 		return -1;
 	}
 
 	int columns = __terminal_columns(screen);
 	int rows = __terminal_rows(screen);
+
+	/**
+	 * A view scrolled back shows the same rows of text as when it was drawn, so new text doesn't move it, and it changes
+	 * only if its rows reach text added since: the end of a line it shows, or the input line after the text.
+	 */
+	if(term->view_top >= 0){
+		int below = __terminal_rows_down(term, term->view_top, rows, columns);
+		if(below < 0 || below > term->drawn_end){
+			return -1;
+		}
+		term->drawn_end = term->head;
+		return 0;
+	}
 
 	if(term->drawn_scrolled){
 		int x = term->drawn_x, y = term->drawn_y;
@@ -1056,7 +1297,7 @@ static int __terminal_index_at_cell(struct terminal* term, struct window* screen
 	int columns = __terminal_columns(screen);
 	int rows = __terminal_rows(screen);
 	int skip;
-	int start = __terminal_first_shown(term, columns, rows, &skip);
+	int start = __terminal_view_start(term, columns, rows, &skip);
 
 	if(col < 0) col = 0;
 	if(col > columns) col = columns;
@@ -1083,10 +1324,15 @@ static int __terminal_index_at_cell(struct terminal* term, struct window* screen
 	return term->head;
 }
 
-/* As __terminal_index_at_cell, for the point px, py in the window, nearest the edge of the character under it. Above the window is its first row */
+/**
+ * As __terminal_index_at_cell, for the point px, py in the window, nearest the edge of the character under it. Above
+ * the window's rows is its first row, and below them its last, so a point never maps to text that isn't shown.
+ */
 static int __terminal_index_at(struct terminal* term, struct window* screen, int px, int py)
 {
+	int rows = __terminal_rows(screen);
 	int row = py < TERMINAL_PADDING ? 0 : (py - TERMINAL_PADDING) / TERMINAL_ROW_HEIGHT;
+	if(row > rows - 1) row = rows - 1;
 	int col = px < TERMINAL_PADDING ? 0 : (px - TERMINAL_PADDING + 4) / 8;
 	return __terminal_index_at_cell(term, screen, col, row);
 }
@@ -1097,7 +1343,7 @@ static void __terminal_cell_of(struct terminal* term, struct window* screen, int
 	int columns = __terminal_columns(screen);
 	int rows = __terminal_rows(screen);
 	int skip;
-	int start = __terminal_first_shown(term, columns, rows, &skip);
+	int start = __terminal_view_start(term, columns, rows, &skip);
 
 	int x = 0, y = -skip;
 	for (int i = start; i < index && i < term->head; i++){
@@ -1191,6 +1437,17 @@ void terminal_drop_pending(struct terminal* term)
 	terminal_unlock(term);
 }
 
+/* Brings a view scrolled back to the end, and redraws it there: for a key that goes to the line typed */
+static void __terminal_follow(struct terminal* term)
+{
+	terminal_lock(term);
+	if(term->view_top >= 0){
+		term->view_top = -1;
+		term->ops->commit(term);
+	}
+	terminal_unlock(term);
+}
+
 /**
  * Handles the keys that select, copy and paste a graphics terminal's text, before its shell or a program reading a line
  * sees them:
@@ -1199,6 +1456,10 @@ void terminal_drop_pending(struct terminal* term)
  * - Ctrl+Shift+C copies the selection to the clipboard. So does Ctrl+C when something is selected, which also clears
  *   it; with nothing selected, Ctrl+C is left to cancel the line.
  * - Ctrl+V and Ctrl+Shift+V paste: the clipboard's text is added to what's pending (terminal_take_pending).
+ * - Shift+Page Up and Shift+Page Down scroll back and forth a window's rows, less one, as the scroll bar's track does.
+ *   Page Up and Page Down without Shift are left to the caller.
+ * A key left to the caller, which goes to the line typed, brings a view scrolled back to the end, as pasting does, so
+ * typing shows where it goes.
  * @return 1 if it handled key, 0 to leave it to the caller, as Esc or Ctrl+C with nothing selected
  */
 int terminal_key(struct terminal* term, unsigned char key, unsigned char modifiers)
@@ -1207,19 +1468,37 @@ int terminal_key(struct terminal* term, unsigned char key, unsigned char modifie
 
 	bool_t shift = (modifiers & KEY_MOD_SHIFT) != 0;
 	bool_t arrow = key == ARROW_LEFT || key == ARROW_RIGHT || key == ARROW_UP || key == ARROW_DOWN;
-	if(!(shift && (arrow || key == CTRLA)) && key != 27 && key != CTRLC && key != CTRLV) return 0;
+	bool_t page = key == KEY_PAGE_UP || key == KEY_PAGE_DOWN;
+	if(!(shift && (arrow || page || key == CTRLA)) && key != 27 && key != CTRLC && key != CTRLV){
+		__terminal_follow(term);
+		return 0;
+	}
 
 	terminal_lock(term);
 	struct window* screen = term->screen;
 	int start, end;
 	bool_t selected = __terminal_selection(term, &start, &end);
 	if(screen == NULL || (key == 27 && term->sel_anchor < 0) || (key == CTRLC && !shift && !selected)){
+		__terminal_follow(term);
 		terminal_unlock(term);
 		return 0;
 	}
 
 	if(key == CTRLV){
 		__terminal_paste(term);
+		__terminal_follow(term);
+		terminal_unlock(term);
+		return 1;
+	}
+
+	/* The view's placed at the window's size, so the keys below move it, and map the selection, as it's drawn */
+	__terminal_update_view(term, screen);
+
+	if(page){
+		int rows = __terminal_rows(screen);
+		int step = rows > 1 ? rows - 1 : 1;
+		__terminal_scroll_to(term, screen, term->bar.first + (key == KEY_PAGE_UP ? -step : step));
+		term->ops->commit(term);
 		terminal_unlock(term);
 		return 1;
 	}
@@ -1309,11 +1588,14 @@ static void __terminal_select_around(struct terminal* term, int index, bool_t li
 }
 
 /**
- * Selects a graphics terminal's text with the mouse: a press starts a selection where it is, a drag moves its end, and
- * a release without a drag clears it. A press with Shift moves the end of the selection there is. A double click
- * selects a word, and a triple click a line, without a drag. It's called by
- * whoever is reading the terminal's window's events: its shell, or a program reading a line. The input line isn't
- * selected, so a drag over it selects to the text's end.
+ * Handles the mouse in a graphics terminal's window: its scroll bar, and selecting its text. It's called by whoever is
+ * reading the window's events: its shell, or a program reading a line.
+ * - The scroll bar takes a press on it, and the moves and release after it, and scrolls the view as it says.
+ * - A press elsewhere starts a selection where it is, a drag moves its end, and a release without a drag clears it. A
+ *   press with Shift moves the end of the selection there is. A double click selects a word, and a triple click a
+ *   line, without a drag. The input line isn't selected, so a drag over it selects to the text's end.
+ * - A drag held above or below the rows shown scrolls a row every TERMINAL_DRAG_SCROLL_MS, as the Editor's does, so
+ *   whoever reads the events calls terminal_drag_tick while terminal_drag_scrolling says so.
  * @return 1 if event was a press, drag or release, which it handled, 0 if not
  */
 int terminal_mouse(struct terminal* term, struct gfx_event* event)
@@ -1330,22 +1612,46 @@ int terminal_mouse(struct terminal* term, struct gfx_event* event)
 		return 1;
 	}
 
+	/* The bar's placed, and the view laid out, at the window's size, before a point is mapped */
+	__terminal_update_view(term, screen);
+
+	/* Before the clicks are counted: a quick second press on an arrow scrolls again, rather than selecting a word */
+	int bar = scrollbar_mouse(&term->bar, event);
+	if(bar & SCROLLBAR_TAKEN){
+		if(bar & SCROLLBAR_SCROLLED){
+			__terminal_scroll_to(term, screen, term->bar.first);
+		}
+		if(bar & (SCROLLBAR_SCROLLED | SCROLLBAR_REDRAW)){
+			term->ops->commit(term);
+		}
+		terminal_unlock(term);
+		return 1;
+	}
+
 	int px = (int16_t)event->data, py = (int16_t)event->data2;
 	int index = __terminal_index_at(term, screen, px, py);
 	if(event->event == GFX_EVENT_MOUSE_DOWN && GFX_EVENT_CLICKS(event->flags) >= 2){
 		/* The character under the mouse, rather than the nearer edge of one */
 		__terminal_select_around(term, __terminal_index_at(term, screen, px - 4, py), GFX_EVENT_CLICKS(event->flags) == 3);
 		term->selecting = false;
+		term->drag_scroll = 0;
 	} else if(event->event == GFX_EVENT_MOUSE_DOWN){
 		if(!(event->flags & KEY_MOD_SHIFT) || term->sel_anchor < 0){
 			term->sel_anchor = index;
 		}
 		term->sel_end = index;
 		term->selecting = true;
+		term->drag_scroll = 0;
+		term->drag_x = px;
 	} else if(term->selecting){
+		/* Above the first row shown, or below the last, the view scrolls that way while the mouse stays there */
+		int rows = __terminal_rows(screen);
 		term->sel_end = index;
+		term->drag_x = px;
+		term->drag_scroll = py < __terminal_row_y(0) ? -1 : (py >= __terminal_row_y(rows) ? 1 : 0);
 		if(event->event == GFX_EVENT_MOUSE_UP){
 			term->selecting = false;
+			term->drag_scroll = 0;
 			if(term->sel_end == term->sel_anchor) term->sel_anchor = -1;
 		}
 	} else {
@@ -1358,6 +1664,40 @@ int terminal_mouse(struct terminal* term, struct gfx_event* event)
 	term->ops->commit(term);
 	terminal_unlock(term);
 	return 1;
+}
+
+/* Whether a selection is being dragged above or below the rows shown, so terminal_drag_tick should be called */
+bool_t terminal_drag_scrolling(struct terminal* term)
+{
+	return term != NULL && term->selecting && term->drag_scroll != 0;
+}
+
+/**
+ * While a selection is dragged above or below the rows shown: scrolls a row that way, if there's text there, and moves
+ * the selection's end to the row at the window's top or bottom, under the mouse, as the Editor does. Called every
+ * TERMINAL_DRAG_SCROLL_MS by whoever reads the window's events, while no event comes.
+ */
+void terminal_drag_tick(struct terminal* term)
+{
+	if(term == NULL) return;
+
+	terminal_lock(term);
+	struct window* screen = term->screen;
+	if(screen == NULL || !terminal_drag_scrolling(term)){
+		terminal_unlock(term);
+		return;
+	}
+
+	__terminal_update_view(term, screen);
+	__terminal_scroll_to(term, screen, term->bar.first + term->drag_scroll);
+
+	int rows = __terminal_rows(screen);
+	int py = __terminal_row_y(term->drag_scroll < 0 ? 0 : rows - 1);
+	term->sel_end = __terminal_index_at(term, screen, term->drag_x, py);
+
+	term->drawn_valid = false;
+	term->ops->commit(term);
+	terminal_unlock(term);
 }
 
 static int __terminal_putchar_graphics(struct terminal* term, char c)
@@ -1564,9 +1904,11 @@ static int __terminal_commit_graphics(struct terminal* term)
 	screen->changed = 0;
 	gfx_frame_begin(screen);
 
+	__terminal_update_view(term, screen);
 	if(__terminal_draw_changes(term, screen) < 0){
 		__terminal_draw_all(term, screen);
 	}
+	__terminal_draw_bar(term, screen);
 	gfx_frame_end(screen);
 	terminal_unlock(term);
 

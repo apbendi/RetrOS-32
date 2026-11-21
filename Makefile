@@ -44,11 +44,11 @@ KERNELOBJ := $(addprefix $(BUILD_DIR)/,kernel.o terminal.o helpers.o pci.o virtu
 	libc.o interrupts.o irs_entry.o timer.o gdt.o smp.o keyboard.o pcb.o pcb_queue.o memory.o vmem.o kmem.o e1000.o display.o env.o conf.o \
 	sync.o kthreads.o ata.o atapi.o bitmap.o rtc.o tss.o kutils.o login.o cmds.o diskdev.o scheduler.o work.o rbuffer.o errors.o kclock.o tar.o loopback.o \
 	serial.o io.o syscalls.o list.o hashmap.o vbe.o ksyms.o windowserver.o mouse.o ipc.o sysinf.o font8.o net.o fs.o fatfs.o partition.o \
-	admin.o usermanager.o user.o group.o snake.o msgbox.o kevents.o textmode.o lz.o timefmt.o clipboard.o palette.o bmp.o)
+	admin.o usermanager.o user.o group.o snake.o msgbox.o kevents.o textmode.o lz.o timefmt.o clipboard.o palette.o bmp.o bevel.o scrollbar.o)
 KERNELOBJ += $(PROGRAMOBJ) $(GFXOBJ)
 
 BOOTOBJ := $(BUILD_DIR)/bootloader.o
-LIBOBJ := $(addprefix $(BUILD_DIR)/,printf.o syscall.o graphics.o scrollbar.o netlib.o http.o)
+LIBOBJ := $(addprefix $(BUILD_DIR)/,printf.o syscall.o graphics.o netlib.o http.o)
 KERNEL_SUPPORT := $(addprefix $(BUILD_DIR)/,kcrt0.o multiboot.o)
 
 ALL_OBJS := $(BOOTOBJ) $(KERNELOBJ) $(LIBOBJ) $(KERNEL_SUPPORT)

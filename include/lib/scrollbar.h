@@ -13,6 +13,9 @@
  * - dragging the thumb keeps the point pressed under the mouse.
  * The bar is only shown, drawn and pressed, while there are more rows than fit, and only when it's tall enough for its
  * two arrows and the shortest thumb: 3 * SCROLLBAR_WIDTH.
+ *
+ * The kernel uses it too, for the Terminal (kernel/terminal.c): everything but scrollbar_draw, which makes system
+ * calls, is built into the kernel, which draws the bar with scrollbar_paint.
  */
 
 #ifdef __cplusplus
@@ -20,6 +23,7 @@ extern "C" {
 #endif
 
 #include <gfx/events.h>
+#include <lib/bevel.h>
 
 /* The bar's width, which is also the side of its square arrow buttons and the thumb's shortest */
 #define SCROLLBAR_WIDTH 12
@@ -67,8 +71,10 @@ int scrollbar_shown(const struct scrollbar* bar);
 int scrollbar_max_first(const struct scrollbar* bar);
 /* The part at x, y in the window's content, or SCROLLBAR_NONE, as it is when the bar isn't shown */
 enum scrollbar_part scrollbar_part_at(const struct scrollbar* bar, int x, int y);
-/* Draws the bar, if it's shown */
+/* Draws the bar into the app's window, if it's shown. In libgraphic, not the kernel */
 void scrollbar_draw(const struct scrollbar* bar);
+/* Draws the bar, if it's shown, with fill, for the kernel, which draws into a window of its own */
+void scrollbar_paint(const struct scrollbar* bar, paint_fill_t fill, void* context);
 /**
  * Takes a GFX_EVENT_MOUSE_DOWN on the bar, and the moves and release after it.
  * @return 0 for an event that isn't the bar's, or SCROLLBAR_TAKEN with SCROLLBAR_SCROLLED or SCROLLBAR_REDRAW

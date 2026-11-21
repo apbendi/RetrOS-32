@@ -382,15 +382,31 @@ Syscalls run with interrupts enabled, so they can be preempted.
 
 **Layout:** a graphics terminal lays out its text and input line at the window's size when it draws. It wraps lines at the window's width, and shows as much of the end as fits.
 - **Spacing:** the same as the Editor's text: 5 pixels between the text and the window's edges (`TERMINAL_PADDING`), and rows 10 pixels apart, each character 1 pixel down its row (`TERMINAL_ROW_HEIGHT`, `TERMINAL_CHAR_Y`). A change to one should go to the other, which has `TEXT_PADDING`, `TEXT_ROW_HEIGHT` and `TEXT_CHAR_Y` in `apps/editor/edit.hpp`.
-- **What's kept:** as many lines as a screen-sized window shows (`__terminal_max_lines`), and at most twice the characters it holds (`__terminal_max_chars`).
-- So a window made bigger shows earlier lines again. There's no scrollback beyond that.
+- **The scroll bar's width** is kept at the right whether the bar is shown or not, as the Editor keeps it, so the text doesn't move as the bar comes and goes (`__terminal_columns`).
+- **What's kept:** the last 1,000 lines (`TERMINAL_MAX_LINES`), and at most 64 KB of text, newlines included (`TERMINAL_MAX_CHARS`), so the text buffer grows to 64 KB at most. A line too long to keep whole is cut in half (`__terminal_trim`).
+
+**Scrolling back** (#147):
+- **The view:** `view_top` is where in the text buffer the top row shown starts, or -1 while the view follows the end; `view_row` is that row's number.
+  - **Moving it:** Shift+Page Up and Shift+Page Down (`terminal_key`) and the scroll bar move it a window's rows less one at a time, as the bar's track does. Page Up and Page Down without Shift go to the line.
+  - **Following again:** a view moved as far as the last view follows the end again (`__terminal_update_view`). So does any key that goes to the line, Enter included, and a paste (`__terminal_follow`).
+  - **New output** doesn't move a view scrolled back, which shows the same text until something moves it.
+  - **A resize** keeps the view on the row that holds the character it started with.
+  - **Dropping old text** moves the view with its text (`__terminal_view_dropped`), or to the text's new start when its top row goes.
+  - **Where a view can't start:** on a row the input line starts, after a full row of text. Text written next would start that row, or a newline end the line before it, so `__terminal_row_index` gives -1 there, and the view follows instead.
+- **The rows** are counted ahead, so printing costs only what's printed. `rows_lines` is the rows the finished lines before `rows_done` take, at `rows_columns` columns. `__terminal_count_rows` counts the lines finished since, or everything again at a new width.
+- **The scroll bar** is libgraphic's (`lib/scrollbar.c`), drawn at the window's right edge, the window's height, while the text doesn't all fit and the window is tall enough for it.
+  - **Built into the kernel too:** the kernel draws it with `scrollbar_paint`, filling the window itself (`__terminal_fill`).
+  - **Drawn every commit while it's shown,** since scrolling the window's pixels moves it too, and cleared once it isn't: after `clear`, or once a resize or a shorter input line lets the text fit (`__terminal_draw_bar`).
+  - **The mouse:** `terminal_mouse` gives it presses, and the moves and release after one, before anything counts clicks, so a quick second press on an arrow scrolls again.
 
 **Drawing only what changed** (#118): the terminal remembers what's on screen, in its `drawn_*` fields.
 - **A commit** clears the input line, draws the text added since, scrolling the window's pixels up when it reaches the bottom, and draws the input line after it. So a key typed, or the cursor moved, redraws only the input line's rows.
+- **A view scrolled back** never scrolls the window's pixels. A full draw stops at the window's bottom. After that, a commit draws only the scroll bar, unless the view's rows reach text added since it was drawn (`__terminal_rows_down`).
 - **Full redraws:**
   - the first draw, a resize and a color change;
   - text taken away: `clear`, `reset`, or an overlong line cut short;
-  - an input line that ends higher than it did, once the text has scrolled.
+  - an input line that ends higher than it did, once the text has scrolled;
+  - the view moving, and a view scrolled back whose rows reach new text.
   - **After each command,** the shell asks for one with `terminal_invalidate`, since a command may draw into the window itself.
 - **Who draws:** whichever thread commits.
   - **Other threads:** a thread writing to a terminal whose window isn't its own, like a program, draws at each newline it writes, or after each `terminal_write`.
@@ -475,7 +491,8 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - **Where it lands** (`revealRange`): a line or match already in view doesn't scroll. Otherwise the view puts its start in the middle, or lower when that would show rows past the text's end.
 
 **In a Terminal** (`kernel/terminal.c`), the selection is the text between `sel_anchor`, -1 for none, and `sel_end`, as indexes into the text buffer. The input line, the prompt and what's being typed, isn't selectable.
-- **The mouse:** `terminal_mouse` handles presses, drags and releases. A press starts a selection, a drag moves its end, and a release without a drag clears it. Shift+press moves the end of the selection there is. A double click selects a word and a triple click a line, as in the Editor (`__terminal_select_around`). `__terminal_index_at` maps a point to a character with the layout `__terminal_draw_all` uses.
+- **The mouse:** `terminal_mouse` handles presses, drags and releases. A press starts a selection, a drag moves its end, and a release without a drag clears it. Shift+press moves the end of the selection there is. A double click selects a word and a triple click a line, as in the Editor (`__terminal_select_around`). `__terminal_index_at` maps a point to a character with the layout `__terminal_draw_all` uses, a point above or below the rows shown to the first or last of them.
+  - **Dragging past the rows shown:** held above or below them, a drag scrolls a row every `TERMINAL_DRAG_SCROLL_MS`, 50 ms, selecting to the row that comes into view, as the Editor's does (`terminal_drag_tick`). The shell's loop waits for events only that long while `terminal_drag_scrolling` says so, and a program's read ticks between its polls.
 - **The keyboard:** `terminal_key` takes the selection's keys before the shell or a reader sees them. Shift with an arrow moves the selection's end a character, or a row on screen, starting a selection at the end of the output if there's none. Ctrl+Shift+A selects all the text kept, and Esc clears. Up and Down without Shift still go through the shell's history.
 - **Copying:** Ctrl+Shift+C copies the selection, and so does Ctrl+C when something is selected, which also clears it. With nothing selected, Ctrl+C cancels the line, or ends a program's read, as before.
 - **Pasting:** Ctrl+V and Ctrl+Shift+V add the clipboard's text to the terminal's pending input (`pending`), with tabs made spaces and other control characters but newlines left out.
@@ -636,7 +653,8 @@ A program in standard C is built on RetrOS's C library (`libc/`), with TinyCC on
 4. **Files:** the file syscalls are in `lib/syscall.c` and `include/lib/syscall.h`; see "File system" for how they behave. They return negative codes from `include/errors.h`, and `error_get_string` (in `libcore`) gives a code's message.
 5. **Icons and pictures:** draw one in any image editor, export a 24- or 32-bit BMP, convert it with `bin/bmptool import` into `rootfs/sysutil/icons/` ("Colors", under "Graphics system", has the format), load it with `gfx_load_icon`, and draw it with `drawImage`. Build `bmptool` on the Mac somewhere other than `bin/`, as `tests/images/run.sh` does. Don't compile image data into an app.
 6. **Input beyond clicks:** for dragging, handle `GFX_EVENT_MOUSE_DOWN`, `GFX_EVENT_MOUSE_MOVE` and `GFX_EVENT_MOUSE_UP`, and read the modifier keys and click counts from `flags` (see "Mouse" and "Key codes" under "Graphics system"). For copy and paste, `clipboard_set` and `clipboard_get` are in `lib/syscall.c` (see "Selection and the clipboard"). The Editor uses all of them.
-   - **Scroll bars:** `libgraphic` has a vertical one, in C (`include/lib/scrollbar.h`), wrapped for C++ in `apps/utils/ScrollBar.hpp`. The app owns its struct, passes it presses, moves and releases, and redraws its view when it scrolls; the header says how. The Editor's tree (`TreeView::setScrollable`) and text (`m_textBar`) use it. Raised parts are drawn with `gfx_draw_bevel` and the `COLOR_BAR_*` colors in `lib/graphics.h`, which the Editor's toolbar shares.
+   - **Scroll bars:** `libgraphic` has a vertical one, in C (`include/lib/scrollbar.h`), wrapped for C++ in `apps/utils/ScrollBar.hpp`. The app owns its struct, passes it presses, moves and releases, and redraws its view when it scrolls; the header says how. The Editor's tree (`TreeView::setScrollable`) and text (`m_textBar`) use it, and so does the kernel's Terminal (#147). Raised parts are drawn with `gfx_draw_bevel` and the `COLOR_BAR_*` colors, which the Editor's toolbar shares.
+     - **Shared with the kernel:** `lib/scrollbar.c` and `lib/bevel.c` (`include/lib/bevel.h`) draw only through a fill function they're given (`scrollbar_paint`, `bevel_paint`), and are built into the kernel as well as `libgraphic`. The kernel fills a window itself. The versions that make system calls, `scrollbar_draw` and `gfx_draw_bevel`, are in `lib/graphics.c`, which only apps link.
 7. **Build and launch:** `docker compose up` installs the app into `rootfs/bin`. Launch it with `exec -d /bin/<name>.o`.
 
 These apps use RetrOS's own libraries, `libcore` and `libgraphic`, which aren't standard C. A program in standard C uses the C library instead: see "C programs".

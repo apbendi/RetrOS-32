@@ -1,10 +1,11 @@
 /**
  * @file scrollbar.c
- * @brief A vertical scroll bar that apps draw into their windows (lib/scrollbar.h), part of libgraphic.
+ * @brief A vertical scroll bar (lib/scrollbar.h), built into libgraphic and the kernel. It draws only through the fill
+ * function it's given, so it makes no system calls: apps draw it with scrollbar_draw, in lib/graphics.c.
  */
 
 #include <lib/scrollbar.h>
-#include <lib/graphics.h>
+#include <lib/bevel.h>
 #include <colors.h>
 
 /* Behind the thumb: a step darker than the face, since the only gray lighter than it is the white of most views */
@@ -137,26 +138,26 @@ enum scrollbar_part scrollbar_part_at(const struct scrollbar* bar, int x, int y)
 }
 
 /**
- * An arrow or the thumb: libgraphic's bevel, but raised with a face-colored outer edge at the top and left and the
- * light one inside it, as Windows 95 drew scroll bars, so that edge shows against a white view.
+ * An arrow or the thumb: the bevel, but raised with a face-colored outer edge at the top and left and the light one
+ * inside it, as Windows 95 drew scroll bars, so that edge shows against a white view.
  */
-static void scrollbar_draw_part(int x, int y, int height, int pressed)
+static void scrollbar_paint_part(paint_fill_t fill, void* context, int x, int y, int height, int pressed)
 {
-    gfx_draw_bevel(x, y, SCROLLBAR_WIDTH, height, pressed);
+    bevel_paint(fill, context, x, y, SCROLLBAR_WIDTH, height, pressed);
     if (pressed) {
         return;
     }
 
-    gfx_draw_rectangle(x, y, SCROLLBAR_WIDTH - 1, 1, COLOR_BAR_FACE);
-    gfx_draw_rectangle(x, y, 1, height - 1, COLOR_BAR_FACE);
-    gfx_draw_rectangle(x + 1, y + 1, SCROLLBAR_WIDTH - 3, 1, COLOR_BAR_LIGHT);
-    gfx_draw_rectangle(x + 1, y + 1, 1, height - 3, COLOR_BAR_LIGHT);
+    fill(context, x, y, SCROLLBAR_WIDTH - 1, 1, COLOR_BAR_FACE);
+    fill(context, x, y, 1, height - 1, COLOR_BAR_FACE);
+    fill(context, x + 1, y + 1, SCROLLBAR_WIDTH - 3, 1, COLOR_BAR_LIGHT);
+    fill(context, x + 1, y + 1, 1, height - 3, COLOR_BAR_LIGHT);
 }
 
 /* An arrow button at y, with its triangle pointing up or down, a pixel down and right when pressed */
-static void scrollbar_draw_arrow(const struct scrollbar* bar, int y, int up, int pressed)
+static void scrollbar_paint_arrow(const struct scrollbar* bar, paint_fill_t fill, void* context, int y, int up, int pressed)
 {
-    scrollbar_draw_part(bar->x, y, SCROLLBAR_WIDTH, pressed);
+    scrollbar_paint_part(fill, context, bar->x, y, SCROLLBAR_WIDTH, pressed);
 
     /* On the face between the two-pixel edges, a pixel left of its middle, since a 7-pixel row can't be in it */
     int shift = pressed ? 1 : 0;
@@ -164,31 +165,31 @@ static void scrollbar_draw_arrow(const struct scrollbar* bar, int y, int up, int
     int top = y + ((SCROLLBAR_WIDTH - SCROLLBAR_ARROW_ROWS) / 2) + shift;
     for (int row = 0; row < SCROLLBAR_ARROW_ROWS; row++) {
         int half = up ? row : SCROLLBAR_ARROW_ROWS - 1 - row;
-        gfx_draw_rectangle(center - half, top + row, (half * 2) + 1, 1, COLOR_BLACK);
+        fill(context, center - half, top + row, (half * 2) + 1, 1, COLOR_BLACK);
     }
 }
 
-void scrollbar_draw(const struct scrollbar* bar)
+void scrollbar_paint(const struct scrollbar* bar, paint_fill_t fill, void* context)
 {
     if (!scrollbar_shown(bar)) {
         return;
     }
 
-    scrollbar_draw_arrow(bar, bar->y, 1, bar->over && bar->pressed == SCROLLBAR_UP);
-    scrollbar_draw_arrow(bar, bar->y + bar->height - SCROLLBAR_WIDTH, 0, bar->over && bar->pressed == SCROLLBAR_DOWN);
+    scrollbar_paint_arrow(bar, fill, context, bar->y, 1, bar->over && bar->pressed == SCROLLBAR_UP);
+    scrollbar_paint_arrow(bar, fill, context, bar->y + bar->height - SCROLLBAR_WIDTH, 0, bar->over && bar->pressed == SCROLLBAR_DOWN);
 
     int track_top = scrollbar_track_top(bar);
-    gfx_draw_rectangle(bar->x, track_top, SCROLLBAR_WIDTH, scrollbar_track_length(bar), SCROLLBAR_TRACK_COLOR);
+    fill(context, bar->x, track_top, SCROLLBAR_WIDTH, scrollbar_track_length(bar), SCROLLBAR_TRACK_COLOR);
 
     int thumb_top = track_top + scrollbar_thumb_offset(bar);
     int thumb = scrollbar_thumb_length(bar);
-    scrollbar_draw_part(bar->x, thumb_top, thumb, 0);
+    scrollbar_paint_part(fill, context, bar->x, thumb_top, thumb, 0);
 
     /* The grip, in the middle of the face. The thumb is at least SCROLLBAR_WIDTH tall, so its 5 rows fit */
     int left = bar->x + ((SCROLLBAR_WIDTH - 2 - SCROLLBAR_GRIP_LENGTH) / 2) + 1;
     int middle = thumb_top + ((thumb - 2) / 2);
     for (int line = -1; line <= 1; line++) {
-        gfx_draw_rectangle(left, middle + (line * 2), SCROLLBAR_GRIP_LENGTH, 1, COLOR_BAR_SHADOW);
+        fill(context, left, middle + (line * 2), SCROLLBAR_GRIP_LENGTH, 1, COLOR_BAR_SHADOW);
     }
 }
 

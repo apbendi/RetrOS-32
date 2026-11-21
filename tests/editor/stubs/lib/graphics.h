@@ -1,6 +1,7 @@
 /**
  * Host stand-in for include/lib/graphics.h, whose extern "C" block would give the stub exit() C linkage, clashing with
- * the host's. The declarations and COLOR_BAR_* are copied from it; keep them in step.
+ * the host's. The declarations are copied from it, and COLOR_BAR_* from lib/bevel.h, which it includes; keep them in
+ * step.
  */
 #ifndef EDITOR_TEST_LIB_GRAPHICS_H
 #define EDITOR_TEST_LIB_GRAPHICS_H

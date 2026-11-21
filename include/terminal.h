@@ -6,6 +6,7 @@
 #include <colors.h>
 #include <gfx/window.h>
 #include <libc.h>
+#include <lib/scrollbar.h>
 
 #define TERM_CONTEXT(codeblock) do { \
     struct terminal* term = $process->current->term; \
@@ -57,6 +58,9 @@ struct terminal_ops {
 /* Longest line copied to the serial log in one piece; longer lines are split */
 #define TERMINAL_SERIAL_LINE_SIZE 128
 
+/* How often a selection dragged above or below a Terminal's rows scrolls it a row, as the Editor's does */
+#define TERMINAL_DRAG_SCROLL_MS 50
+
 struct terminal {
     char* textbuffer;
     int textbuffer_size;
@@ -105,6 +109,36 @@ struct terminal {
     int drawn_height;
     color_t drawn_text_color;
     color_t drawn_bg_color;
+    /* The view drawn, as view_top, and whether the scroll bar is on screen */
+    int drawn_view_top;
+    bool_t drawn_bar;
+
+    /**
+     * Scrolling back (#147): view_top is where in the text buffer the top row shown starts, or -1 while the view follows
+     * the text's end. view_row is that row's number, counting the text's rows from its start. A view that reaches the
+     * last row follows the end instead, so new text doesn't move a view scrolled back, and does move one that isn't.
+     */
+    int view_top;
+    int view_row;
+
+    /**
+     * The text's rows, counted ahead so printing costs only what's printed: rows_lines rows for the finished lines before
+     * rows_done, which is just past the last newline counted, laid out at rows_columns columns, or 0 for none counted.
+     * See __terminal_count_rows.
+     */
+    int rows_columns;
+    int rows_done;
+    int rows_lines;
+
+    /* The scroll bar at the window's right edge, drawn while the text doesn't all fit */
+    struct scrollbar bar;
+
+    /**
+     * While the mouse is selecting above (-1) or below (1) the rows shown, the view scrolls a row every
+     * TERMINAL_DRAG_SCROLL_MS (terminal_drag_tick), selecting to the row at drag_x that comes into view. 0 otherwise.
+     */
+    int drag_scroll;
+    int drag_x;
 
     /**
      * The selection: the text between sel_anchor, where it started, and sel_end, the end that moves, as indexes into the
@@ -153,6 +187,8 @@ void terminal_end_line(struct terminal* term);
 void terminal_invalidate(struct terminal* term);
 int terminal_mouse(struct terminal* term, struct gfx_event* event);
 int terminal_key(struct terminal* term, unsigned char key, unsigned char modifiers);
+bool_t terminal_drag_scrolling(struct terminal* term);
+void terminal_drag_tick(struct terminal* term);
 int terminal_take_pending(struct terminal* term);
 void terminal_drop_pending(struct terminal* term);
 
