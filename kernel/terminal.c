@@ -37,24 +37,6 @@ int scan(ubyte_t* data, int size)
 	return $process->current->term->ops->scan($process->current->term, data, size);
 }
 
-/* The color a graphics terminal draws a character in: some characters are highlighted. It depends only on the
- * terminal and the character, so text drawn in pieces looks the same as text drawn all at once */
-static color_t __terminal_syntax_color(struct terminal* term, unsigned char c)
-{
-	switch (c) {
-		case '>':
-		case '/':
-		case '\\':
-			return COLOR_VGA_MISC;
-		case '"':
-		case ':':
-		case '-':
-			return COLOR_VGA_GREEN;
-		default:
-			return term->text_color;
-	}
-}
-
 static int __next_newline(void* _data)
 {
 	char* data = (char*) _data;
@@ -849,7 +831,7 @@ static void __terminal_draw_text(struct terminal* term, struct window* screen, c
 			continue;
 		}
 		if(*y >= 0){
-			kernel_gfx_draw_char(screen, 1 + *x*8, 2 + *y*8, c, inverse ? term->bg_color : __terminal_syntax_color(term, c));
+			kernel_gfx_draw_char(screen, 1 + *x*8, 2 + *y*8, c, inverse ? term->bg_color : term->text_color);
 		}
 		(*x)++;
 	}
