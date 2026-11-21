@@ -57,7 +57,7 @@ $Q stop
 - **A shell command is done** when the log says `exec_cmd(): Finished <command>`. For `exec` without `-d`, that's when the program has exited.
 - **Keys typed while a command runs wait** in the shell window's event queue, which holds 10 and drops the oldest. So wait for `Finished` before typing more than a few keys ahead.
 - **A program that reads `stdin`,** started with `exec` without `-d`, takes what you `type`, a line at a time. `key ctrl-d` on an empty line ends its input.
-- **Terminal output is in the serial log,** one line at a time, as `term[<writer>]: <text>`. That includes the shell's echo of each command after its prompt (`term[shell]: kernel:/> exec ...`, with the shell's current directory), kernel commands' output, and apps' `printf`. So `$Q wait "term\[shell\]: .*File too large"` checks a command's result without a screenshot.
+- **Terminal output is in the serial log,** one line at a time, as `term[<writer>]: <text>`. That includes the shell's echo of each command after its prompt (`term[shell]: :/> exec ...`, with the shell's current directory), kernel commands' output, and apps' `printf`. So `$Q wait "term\[shell\]: .*File too large"` checks a command's result without a screenshot.
   - A line is logged when it ends with a newline, so a program's question without one waits for the next newline.
   - The shell's own prompt and what's typed after it aren't logged until Enter. Ctrl+C at the prompt logs the line with `^C` after it.
   - Lines over 127 characters are split across log lines.

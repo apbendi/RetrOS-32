@@ -72,7 +72,7 @@ struct shell {
 	/* The new line being typed when Up was first pressed, which Down brings back past the newest command */
 	char draft[SHELL_LINE_MAX];
 
-	/* "kernel:<current directory>> " */
+	/* ":<current directory>> " */
 	char prompt[FS_PATH_MAX + 16];
 	/* Set by the exit command: the shell exits once the line has run */
 	bool_t exiting;
@@ -122,7 +122,7 @@ static void __shell_echo(const char* line)
 {
 	char cwd[FS_PATH_MAX];
 	if(fs_getcwd(cwd, sizeof(cwd)) < 0) memcpy(cwd, "/", 2);
-	twritef("kernel:%s> %s\n", cwd, line);
+	twritef(":%s> %s\n", cwd, line);
 }
 
 /* Shows the prompt and the command typed so far on the terminal's input line, after the output, with the cursor */
@@ -144,9 +144,9 @@ static void reset_shell(struct shell* sh)
 	char cwd[FS_PATH_MAX];
 	if(fs_getcwd(cwd, sizeof(cwd)) < 0) memcpy(cwd, "/", 2);
 	int cwd_len = strlen(cwd);
-	memcpy(sh->prompt, "kernel:", 7);
-	memcpy(sh->prompt + 7, cwd, cwd_len);
-	memcpy(sh->prompt + 7 + cwd_len, "> ", 3);
+	sh->prompt[0] = ':';
+	memcpy(sh->prompt + 1, cwd, cwd_len);
+	memcpy(sh->prompt + 1 + cwd_len, "> ", 3);
 
 	memset(sh->buffer, 0, SHELL_LINE_MAX);
 	terminal_line_init(&sh->line, sh->buffer, SHELL_LINE_MAX);
