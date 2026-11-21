@@ -377,7 +377,13 @@ Syscalls run with interrupts enabled, so they can be preempted.
   - **Its state:** a kalloc'd `struct shell`. Its PCB's `local` points to it, so commands running on its thread, like `reset` and `exit`, find it. `local_free` frees it however the thread exits.
   - **A command line:** the prompt, `:<directory>> `, and what's typed are the input line. Enter hides it, writes the same text into the output, runs the command with `exec_cmd`, and shows a new prompt after the output.
   - **An unfinished last line,** a program's or `cat`'s, gets a newline before the prompt (`terminal_end_line`).
-  - **Keys:** the editing keys above; Up and Down through the last 32 commands (`SHELL_HISTORY_MAX`), each brought back with the cursor at its end; and Ctrl+C, which leaves the line in the output with `^C` after it, unless text is selected, which it copies instead (see "Selection and the clipboard"). A line holds `SHELL_LINE_MAX`, 1,088 bytes.
+  - **Keys:** the editing keys above; Up and Down through the last 32 commands (`SHELL_HISTORY_MAX`), each brought back with the cursor at its end; Tab, below; and Ctrl+C, which leaves the line in the output with `^C` after it, unless text is selected, which it copies instead (see "Selection and the clipboard"). A line holds `SHELL_LINE_MAX`, 1,088 bytes.
+  - **Tab completion** (#149, `__shell_complete`) completes the word that ends at the cursor, split as `exec_cmd` splits it. Text after the cursor stays as it is, and an empty line completes nothing.
+    - **The first word** completes from the commands `EXPORT_KSYMBOL` exported (`ksyms_command`), case and all, as `exec_cmd` matches them. Not every kernel function `exec_cmd` would also run.
+    - **Any other word** is a path. It completes from the directory named before its last `/`, or the current one, in any case, as the file system matches names.
+    - **One match** completes the word, with a space after it, or after a directory's `/`, nothing, so Tab goes on into it.
+    - **Several** complete as far as they agree, and a second Tab in a row lists them below the line: the prompt and line as they were, the names sorted in columns as wide as the window (`terminal_columns`), down each column first, then the prompt and line again.
+    - **Quotes:** a word with a space, or typed with a quote, gets a `"` before it, and one after once it's complete, as `cd "my projects/"`.
 - **Text mode** (`textshell`) uses a terminal with the `terminal_ops_textmode` ops. It edits its line on its frame's bottom row, and shows no input line. It also ends an unfinished last line before a command's echo.
 
 **Layout:** a graphics terminal lays out its text and input line at the window's size when it draws. It wraps lines at the window's width, and shows as much of the end as fits.

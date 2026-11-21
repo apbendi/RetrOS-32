@@ -7,6 +7,7 @@
 void ksyms_add_symbol(const char* name, uintptr_t addr);
 uintptr_t ksyms_resolve_symbol(const char* name);
 void ksyms_list(void);
+const char* ksyms_command(int index);
 int ksyms_init(void);
 
 void __backtrace_from(uintptr_t* ebp);

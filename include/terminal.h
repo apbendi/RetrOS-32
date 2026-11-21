@@ -174,6 +174,8 @@ void terminal_line_init(struct terminal_line* line, char* buffer, int size);
 void terminal_line_set(struct terminal_line* line, const char* text);
 bool_t terminal_line_insert(struct terminal_line* line, char c);
 bool_t terminal_line_key(struct terminal_line* line, unsigned char key);
+bool_t terminal_line_replace(struct terminal_line* line, int start, int end, const char* text, int length);
+int terminal_columns(struct terminal* term);
 
 struct terminal* terminal_create(terminal_flags_t flags);
 void terminal_get(struct terminal* term);

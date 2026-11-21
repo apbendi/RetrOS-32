@@ -152,6 +152,16 @@ void ksyms_list(void)
 }
 
 /**
+ * The name of the index'th command exported with EXPORT_KSYMBOL, or NULL past the last: for the shell's Tab completion,
+ * which offers only these, not every kernel function exec_cmd would also run (#149).
+ */
+const char* ksyms_command(int index)
+{
+    if (index < 0 || index >= __ksyms.num_symbols) return NULL;
+    return __ksyms.symtable[index].name;
+}
+
+/**
  * @brief Checks if there exists a kernel symbol with the given name.
  * 
  * @param name name to resolve

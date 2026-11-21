@@ -74,6 +74,8 @@ struct shell {
 
 	/* ":<current directory>> " */
 	char prompt[FS_PATH_MAX + 16];
+	/* Whether the last key was Tab, so a second one lists what it could complete (__shell_complete) */
+	bool_t tabbed;
 	/* Set by the exit command: the shell exits once the line has run */
 	bool_t exiting;
 };
@@ -151,6 +153,7 @@ static void reset_shell(struct shell* sh)
 	memset(sh->buffer, 0, SHELL_LINE_MAX);
 	terminal_line_init(&sh->line, sh->buffer, SHELL_LINE_MAX);
 	sh->history_position = -1;
+	sh->tabbed = false;
 	__shell_show_line(sh);
 }
 
@@ -736,12 +739,362 @@ EXPORT_KSYMBOL(reset);
 
 
 /**
+ * Tab completion (#149). Tab completes the word that ends at the cursor, split as exec_cmd splits the line:
+ * - the line's first word from the commands (EXPORT_KSYMBOL), as exec_cmd matches them, case and all;
+ * - any other word as a path, from the files and directories in the directory it names before its last '/', or the
+ *   current one, in any case, as the file system matches names.
+ * One match completes the word, with a space after it, or after a directory's '/', nothing, so Tab goes on into it.
+ * Several complete as far as they agree, and Tab again lists them below the line. A word with a space in it is quoted,
+ * and the quote closed once it's complete. Text after the cursor stays as it is. Nothing completes an empty line.
+ */
+
+/* The most names completion collects. A directory with more completes nothing */
+#define SHELL_COMPLETE_MAX 1000
+
+struct shell_completion {
+	/**
+	 * The word that ends at the cursor: where it starts in the line, which of the line's words it is, from 0, whether
+	 * it has a quote, and its text before the cursor without quotes, as the command will get it
+	 */
+	int start;
+	int index;
+	bool_t quoted;
+	char text[SHELL_LINE_MAX];
+	int length;
+
+	/* What's matched: the text after prefix, its last '/', or all of it for a command */
+	int prefix;
+	bool_t ignore_case;
+
+	/* The names that match, each kalloc'd, a directory's with a '/' after it, without repeats */
+	char** names;
+	int count;
+	int capacity;
+	bool_t failed;
+
+	/* The directory listed, and its entries as they're read */
+	char directory[SHELL_LINE_MAX];
+	struct fs_dirent entry;
+
+	/* The word completed, quotes and all, to put in place of what's typed */
+	char word[SHELL_LINE_MAX + FS_NAME_MAX + 4];
+	int word_length;
+};
+
+static char __shell_lower(char c)
+{
+	return c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c;
+}
+
+static bool_t __shell_same_char(char a, char b, bool_t ignore_case)
+{
+	return ignore_case ? __shell_lower(a) == __shell_lower(b) : a == b;
+}
+
+/* Finds the word that ends at the cursor, as __scan_words in kernel/kutils.c splits a line */
+static void __shell_find_word(struct shell* sh, struct shell_completion* c)
+{
+	bool_t in_word = false;
+	bool_t quoted = false;
+	c->index = 0;
+
+	for (int i = 0; i < sh->line.cursor; i++){
+		char ch = sh->buffer[i];
+		bool_t separator = !quoted && (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r');
+		if(separator){
+			if(in_word) c->index++;
+			in_word = false;
+			continue;
+		}
+
+		if(!in_word){
+			c->start = i;
+			c->quoted = false;
+			c->length = 0;
+			in_word = true;
+		}
+		if(ch == '"'){
+			quoted = !quoted;
+			c->quoted = true;
+			continue;
+		}
+		c->text[c->length++] = ch;
+	}
+
+	/* After a separator, or at the line's start, the word is the empty one at the cursor */
+	if(!in_word){
+		c->start = sh->line.cursor;
+		c->quoted = false;
+		c->length = 0;
+	}
+	c->text[c->length] = 0;
+}
+
+/* Adds name to the matches, unless it's there already. A directory's gets a '/' after it */
+static void __shell_add_match(struct shell_completion* c, const char* name, bool_t directory)
+{
+	if(c->failed) return;
+	if(c->count == SHELL_COMPLETE_MAX){
+		c->failed = true;
+		return;
+	}
+
+	int length = strlen(name);
+	char* copy = kalloc_try(length + 2);
+	if(copy == NULL){
+		c->failed = true;
+		return;
+	}
+	memcpy(copy, name, length);
+	if(directory) copy[length++] = '/';
+	copy[length] = 0;
+
+	/* A command can be exported twice */
+	for (int i = 0; i < c->count; i++){
+		if(strcmp(c->names[i], copy) == 0){
+			kfree(copy);
+			return;
+		}
+	}
+
+	if(c->count == c->capacity){
+		int capacity = c->capacity > 0 ? 2 * c->capacity : 32;
+		char** names = kalloc_try(capacity * sizeof(char*));
+		if(names == NULL){
+			kfree(copy);
+			c->failed = true;
+			return;
+		}
+		if(c->count > 0) memcpy(names, c->names, c->count * sizeof(char*));
+		kfree(c->names);
+		c->names = names;
+		c->capacity = capacity;
+	}
+	c->names[c->count++] = copy;
+}
+
+/* Whether name starts with what's typed of it */
+static bool_t __shell_matches(struct shell_completion* c, const char* name)
+{
+	for (int i = c->prefix; i < c->length; i++){
+		char n = name[i - c->prefix];
+		if(n == 0 || !__shell_same_char(n, c->text[i], c->ignore_case)) return false;
+	}
+	return true;
+}
+
+/* Collects the commands that the word could be */
+static void __shell_match_commands(struct shell_completion* c)
+{
+	c->prefix = 0;
+	c->ignore_case = false;
+
+	const char* name;
+	for (int i = 0; (name = ksyms_command(i)) != NULL; i++){
+		if(__shell_matches(c, name)) __shell_add_match(c, name, false);
+	}
+}
+
+/* Collects the files and directories that the word could be: in the directory before its last '/', or the current one */
+static void __shell_match_files(struct shell_completion* c)
+{
+	int slash = -1;
+	for (int i = 0; i < c->length; i++){
+		if(c->text[i] == '/') slash = i;
+	}
+	c->prefix = slash + 1;
+	c->ignore_case = true;
+
+	if(slash < 0){
+		memcpy(c->directory, ".", 2);
+	} else {
+		memcpy(c->directory, c->text, slash + 1);
+		c->directory[slash + 1] = 0;
+	}
+
+	int fd = fs_open(c->directory, FS_FILE_FLAG_READ);
+	if(fd < 0) return;
+
+	/* A file that isn't a directory reads as one with nothing in it */
+	while(fs_readdir(fd, &c->entry) == 1){
+		if(__shell_matches(c, c->entry.name)){
+			__shell_add_match(c, c->entry.name, (c->entry.attributes & FS_ATTR_DIRECTORY) != 0);
+		}
+	}
+	fs_close(fd);
+}
+
+/* How far the matches agree, from the first: the most the word can be completed */
+static int __shell_common_length(struct shell_completion* c)
+{
+	int common = strlen(c->names[0]);
+	for (int i = 1; i < c->count; i++){
+		int j = 0;
+		while(j < common && c->names[i][j] != 0 && __shell_same_char(c->names[0][j], c->names[i][j], c->ignore_case)) j++;
+		common = j;
+	}
+	return common;
+}
+
+/**
+ * Makes the word completed: what was typed before the name, then as much of the matches' names as they agree on,
+ * in the first's case. In quotes if what was typed had one, or the word has a space, closed once it's complete.
+ */
+static void __shell_complete_word(struct shell* sh, struct shell_completion* c)
+{
+	const char* name = c->names[0];
+	int common = __shell_common_length(c);
+	bool_t complete = c->count == 1;
+	bool_t directory = complete && common > 0 && name[common - 1] == '/';
+
+	bool_t quote = c->quoted;
+	for (int i = 0; i < c->prefix; i++){
+		if(c->text[i] == ' ') quote = true;
+	}
+	for (int i = 0; i < common; i++){
+		if(name[i] == ' ') quote = true;
+	}
+
+	int n = 0;
+	if(quote) c->word[n++] = '"';
+	memcpy(c->word + n, c->text, c->prefix);
+	n += c->prefix;
+	memcpy(c->word + n, name, common);
+	n += common;
+	if(quote && complete) c->word[n++] = '"';
+
+	/* A space to go on with the next word, unless one's there already */
+	char next = sh->buffer[sh->line.cursor];
+	if(complete && !directory && next != ' ' && next != '\t') c->word[n++] = ' ';
+	c->word_length = n;
+}
+
+/* Sorts the matches by name, case aside, for listing */
+static void __shell_sort_matches(struct shell_completion* c)
+{
+	for (int i = 1; i < c->count; i++){
+		char* name = c->names[i];
+		int j = i;
+		while(j > 0){
+			const char* a = c->names[j - 1];
+			const char* b = name;
+			while(*a && __shell_lower(*a) == __shell_lower(*b)){
+				a++;
+				b++;
+			}
+			if(__shell_lower(*a) <= __shell_lower(*b)) break;
+			c->names[j] = c->names[j - 1];
+			j--;
+		}
+		c->names[j] = name;
+	}
+}
+
+/**
+ * Lists the matches below the line, as bash does: the prompt and line as they are, then the names in columns as wide
+ * as the window allows, down each column first, then the prompt and line again, with the cursor where it was.
+ */
+static void __shell_list_matches(struct shell* sh, struct shell_completion* c)
+{
+	struct terminal* term = $process->current->term;
+	__shell_sort_matches(c);
+
+	int widest = 0;
+	for (int i = 0; i < c->count; i++){
+		int length = strlen(c->names[i]);
+		if(length > widest) widest = length;
+	}
+
+	/* Two spaces between columns, and none after the last */
+	int width = widest + 2;
+	int per_row = (terminal_columns(term) + 2) / width;
+	if(per_row < 1) per_row = 1;
+	int rows = (c->count + per_row - 1) / per_row;
+
+	char* row = kalloc_try(per_row * width + 1);
+	if(row == NULL) return;
+
+	terminal_hide_input(term);
+	twritef("%s%s\n", sh->prompt, sh->buffer);
+	for (int r = 0; r < rows; r++){
+		int n = 0;
+		for (int col = 0; col < per_row; col++){
+			int i = col * rows + r;
+			if(i >= c->count) break;
+
+			int length = strlen(c->names[i]);
+			memcpy(row + n, c->names[i], length);
+			n += length;
+			if(i + rows < c->count){
+				for (; length < width; length++) row[n++] = ' ';
+			}
+		}
+		row[n] = 0;
+		twritef("%s\n", row);
+	}
+	kfree(row);
+
+	__shell_show_line(sh);
+}
+
+/* Tab: completes the word that ends at the cursor, or with again, after a Tab that left it as it was, lists its matches */
+static void __shell_complete(struct shell* sh, bool_t again)
+{
+	/* Too big for the stack. Without the memory, Tab does nothing */
+	struct shell_completion* c = kalloc_try(sizeof(struct shell_completion));
+	if(c == NULL) return;
+	memset(c, 0, sizeof(struct shell_completion));
+
+	__shell_find_word(sh, c);
+	if(c->index == 0 && c->length == 0){
+		/* Nothing typed, so there's nothing to complete */
+		kfree(c);
+		return;
+	}
+
+	if(c->index == 0){
+		__shell_match_commands(c);
+	} else {
+		__shell_match_files(c);
+	}
+
+	if(!c->failed && c->count > 0){
+		__shell_complete_word(sh, c);
+		int typed = sh->line.cursor - c->start;
+		bool_t same = c->word_length == typed && memcmp(sh->buffer + c->start, c->word, typed) == 0;
+
+		if(!same){
+			/* A word too long for the line is left as it was */
+			if(terminal_line_replace(&sh->line, c->start, sh->line.cursor, c->word, c->word_length)){
+				__shell_show_line(sh);
+			}
+		} else if(again && c->count > 1){
+			__shell_list_matches(sh, c);
+		}
+	}
+
+	for (int i = 0; i < c->count; i++){
+		kfree(c->names[i]);
+	}
+	kfree(c->names);
+	kfree(c);
+}
+
+/**
  * Handles a key typed at the shell: Up and Down go through the history, Enter runs the whole line, wherever the cursor
- * is, and the rest edit the line (terminal_line_key).
+ * is, Tab completes the word before the cursor, and the rest edit the line (terminal_line_key).
  */
 static void shell_put(struct shell* sh, unsigned char c)
 {
 	unsigned char uc = c;
+
+	/* A second Tab in a row lists what the first couldn't choose between */
+	bool_t again = sh->tabbed;
+	sh->tabbed = uc == '\t';
+	if(uc == '\t'){
+		__shell_complete(sh, again);
+		return;
+	}
 
 	/* Editing a command brought back changes only the line, not the history: Enter adds it as a new command */
 	if(uc == ARROW_UP){
@@ -792,7 +1145,8 @@ static void __shell_type_pending(struct shell* sh)
 			continue;
 		}
 
-		/* What doesn't fit is left out */
+		/* What doesn't fit is left out. Typed between two Tabs, it keeps the second from listing */
+		sh->tabbed = false;
 		if(terminal_line_insert(&sh->line, c)){
 			shown = false;
 		}

@@ -567,6 +567,26 @@ bool_t terminal_line_insert(struct terminal_line* line, char c)
 	return true;
 }
 
+/**
+ * Replaces line's characters from start up to end with length characters of text, and puts the cursor after them: how
+ * the shell's Tab completion puts a word in.
+ * @return false, changing nothing, if the line would be too long
+ */
+bool_t terminal_line_replace(struct terminal_line* line, int start, int end, const char* text, int length)
+{
+	if(start < 0 || end < start || end > line->length || length < 0) return false;
+
+	int new_length = line->length - (end - start) + length;
+	if(new_length > line->size - 1) return false;
+
+	/* The 0 after the text moves along with it */
+	memmove(line->buffer + start + length, line->buffer + end, line->length - end + 1);
+	memcpy(line->buffer + start, text, length);
+	line->length = new_length;
+	line->cursor = start + length;
+	return true;
+}
+
 /* Deletes the character after line's cursor, which has to have one */
 static void __terminal_line_delete(struct terminal_line* line)
 {
@@ -1959,6 +1979,17 @@ void terminal_set_input(struct terminal* term, const char* prompt, const char* t
 		__terminal_commit_graphics(term);
 	}
 	terminal_unlock(term);
+}
+
+/* The columns of text a terminal's window shows now, for lining text up in columns: 80 for one without a window */
+int terminal_columns(struct terminal* term)
+{
+	if(term == NULL) return 80;
+
+	terminal_lock(term);
+	int columns = term->screen != NULL && term->ops->commit == __terminal_commit_graphics ? __terminal_columns(term->screen) : 80;
+	terminal_unlock(term);
+	return columns;
 }
 
 /* Makes the terminal's next redraw a full one: after something else may have drawn into its window */
