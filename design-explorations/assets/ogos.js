@@ -225,7 +225,7 @@
     'DOS & BIOS', 'Games & arcade', 'Demoscene & early web', 'OgOs internals', 'Print & packaging',
     'Beyond computing',
   ];
-  OG.PALETTES = ['VGA 16', 'Rainbow', 'Mono', 'Phosphor', 'Neon', 'Pastel', 'Earthy', 'Primary', 'Corporate', 'Metallic'];
+  OG.PALETTES = ['VGA 16', 'Rainbow', 'Mono', 'Phosphor', 'Neon', 'Pastel', 'Earthy', 'Primary', 'Corporate', 'Metallic', 'Desktop Blue'];
   OG.RISKS = ['Safe', 'Bold', 'Wild'];
 
   // Problems with a direction's fields, as strings. The preview sheet and the

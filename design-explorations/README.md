@@ -1,6 +1,6 @@
 # OgOs design explorations
 
-100 logo and brand directions for renaming RetrOS-32 to OgOs, in a dashboard you open in a browser.
+110 logo and brand directions for renaming RetrOS-32 to OgOs, in a dashboard you open in a browser. Directions 101 to 110 are a second round, built from feedback on the first hundred.
 
 Open `index.html`. It loads its fonts from Google Fonts, so it needs a network connection; without one, the pixel-drawn logos still render and the rest fall back to system fonts.
 
@@ -25,5 +25,6 @@ Open `index.html`. It loads its fonts from Google Fonts, so it needs a network c
 | `directions/c-games.js` | Games, the demoscene and the early web |
 | `directions/d-internals.js` | The OS's own internals, and type- and geometry-led marks |
 | `directions/e-beyond.js` | From outside computing: print, signage, heraldry, craft, mascots |
+| `directions/f-round-two.js` | Round two, 101 to 110: riffs on the RetrOS frame (#46), the isometric style (#53), the mission patch (#52), the 9x button (#03), the 88x31 badge (#60), the four panes (#1) and the four squares (#78), all in the Desktop Blue palette |
 
 Each direction is an `OG.add({...})` call with its tags, palette and notes, and two functions returning SVG: `logo(word)`, the lockup on a 480×300 canvas (VGA's 320×200 shape), and `icon()`, the mark on 64×64. `logo` is called with the capitalization to draw.
